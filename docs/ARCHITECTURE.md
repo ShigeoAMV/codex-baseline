@@ -34,7 +34,10 @@ origin/revision/dirty state and payload hash are printed, and mutation requires
 acknowledgement. After verification, installers copy the exact payload into a
 private temporary snapshot, reverify it, and build every candidate only from
 that frozen snapshot, closing the verify-to-use window in a mutable checkout.
-Publisher authenticity remains a release-distribution concern.
+On Windows the snapshot has a protected caller-owned DACL, stable native
+directory identity, and a second owner/DACL/manifest/full-payload check directly
+before candidate construction. Publisher authenticity remains a
+release-distribution concern.
 
 ## Ownership and precedence
 

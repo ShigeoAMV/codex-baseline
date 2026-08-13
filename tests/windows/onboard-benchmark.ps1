@@ -167,6 +167,28 @@ try {
     Assert-True ([System.IO.File]::ReadAllText($concurrentAgents, $script:Utf8NoBom) -eq 'concurrent writer wins') 'CAS rejection must preserve the concurrent writer content'
     Assert-True (-not ([System.IO.File]::ReadAllText($concurrentAgents, $script:Utf8NoBom) -match 'onboarding:begin')) 'CAS rejection must not add a managed block'
 
+    $sharedAclFixture = Join-Path $script:TestRoot 'shared-acl-apply'
+    [System.IO.Directory]::CreateDirectory($sharedAclFixture) | Out-Null
+    $sharedAclAgents = Join-Path $sharedAclFixture 'AGENTS.md'
+    $sharedAclBytes = $script:Utf8NoBom.GetBytes('shared ACL original')
+    [System.IO.File]::WriteAllBytes($sharedAclAgents, $sharedAclBytes)
+    $sharedAclDirectory = New-Object System.IO.DirectoryInfo($sharedAclFixture)
+    $sharedAcl = $sharedAclDirectory.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+    $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+    $sharedRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $usersSid,
+        [System.Security.AccessControl.FileSystemRights]::Delete,
+        [System.Security.AccessControl.InheritanceFlags]::None,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $sharedAcl.AddAccessRule($sharedRule) | Out-Null
+    $sharedAclDirectory.SetAccessControl($sharedAcl)
+    $sharedAclOutput = Invoke-Baseline @('onboard', '-Apply', '-AcknowledgeExistingInstructions', '-Repository', $sharedAclFixture) 1
+    Assert-True ($sharedAclOutput -match 'shared/untrusted parent ACL') 'onboarding apply must reject broad group delete rights before mutation'
+    Assert-True ([System.Linq.Enumerable]::SequenceEqual($sharedAclBytes, [System.IO.File]::ReadAllBytes($sharedAclAgents))) 'shared ACL rejection must preserve exact AGENTS bytes'
+    Assert-True (-not ([System.IO.File]::ReadAllText($sharedAclAgents, $script:Utf8NoBom) -match 'onboarding:begin')) 'shared ACL rejection must not add a managed block'
+
     $rootSwapFixture = Join-Path $script:TestRoot 'root-swap-apply'
     $rootSwapOutside = Join-Path $script:TestRoot 'root-swap-outside'
     $rootSwapOriginal = '{0}.codex-baseline-test-original' -f $rootSwapFixture

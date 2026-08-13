@@ -1200,7 +1200,7 @@ cb_uninstall() {
 cb_doctor() {
   local current state failures=0 warnings=0 codex_version='not-found' codex_number='' agents_file markers
   local current_dir obj kind target installed live managed_total=0 managed_ok=0 skill_count=0
-  local manifest manifest_root manifest_error_file manifest_error='' minimum_codex='' research_checked='' research_review_by='' research_state=unknown platform=linux capabilities=unknown
+  local manifest manifest_root manifest_error_file manifest_error='' minimum_codex='' tested_codex='' research_checked='' research_review_by='' research_state=unknown platform=linux capabilities=unknown
   local baseline_version='' provenance_scope='local-source' provenance_version='' provenance_trust='' provenance_hash=''
   local codex_verification=not-found marker_begin marker_end transaction_json baseline_version_json provenance_version_json provenance_trust_json provenance_hash_json research_checked_json research_review_json
   local dependency dependency_state=verified config_state=unverified-codex-not-found deprecated_state=unverified-codex-not-found
@@ -1232,10 +1232,16 @@ cb_doctor() {
       provenance_trust=$(sed -n 's/^  "source_trust": "\([A-Za-z0-9._-]*\)",$/\1/p' "$manifest")
       provenance_hash=$(sed -n 's/^  "payload_hash": "\([0-9a-f]*\)",$/\1/p' "$manifest")
       minimum_codex=$(sed -n 's/^  "minimum_codex": "\([0-9.]*\)",$/\1/p' "$manifest")
+      tested_codex=$(sed -n 's/^  "tested_codex": "\([0-9.]*\)",$/\1/p' "$manifest")
       if [[ ! $minimum_codex =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         failures=$((failures + 1))
         failure_messages+=('Source manifest minimum_codex is malformed.')
         minimum_codex=''
+      fi
+      if [[ ! $tested_codex =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        failures=$((failures + 1))
+        failure_messages+=('Source manifest tested_codex is malformed.')
+        tested_codex=''
       fi
     else
       IFS= read -r manifest_error <"$manifest_error_file" || true
@@ -1278,6 +1284,12 @@ cb_doctor() {
     if [[ -n $minimum_codex && -n $codex_number ]] && [[ $(printf '%s\n%s\n' "$minimum_codex" "$codex_number" | sort -V | head -n 1) != "$minimum_codex" ]]; then
       failures=$((failures + 1))
       failure_messages+=("Codex is older than the supported minimum version $minimum_codex.")
+    fi
+    if [[ -n $tested_codex && -n $codex_number && $codex_number != "$tested_codex" ]] &&
+      [[ $(printf '%s\n%s\n' "$tested_codex" "$codex_number" | sort -V | head -n 1) == "$tested_codex" ]]; then
+      capabilities=unverified-future-version
+      warnings=$((warnings + 1))
+      warning_messages+=("Codex $codex_number is newer than the tested version $tested_codex; volatile capabilities remain unverified.")
     fi
   else
     failures=$((failures + 1))

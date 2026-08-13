@@ -351,6 +351,12 @@ cb_verify_source_manifest() {
   grep -Fqx '  "contract": "codex-baseline-operations/v1",' "$operations" || cb_die 'operations contract identity mismatch'
   grep -Fqx '  "owned_text_encoding": "utf-8-no-bom",' "$operations" || cb_die 'operations encoding contract mismatch'
   grep -Fqx '  "owned_line_endings": "lf",' "$operations" || cb_die 'operations line-ending contract mismatch'
+  grep -Fqx '  "transaction_states": ["planned", "prepared", "committing", "recovering", "committed", "rolled-back"],' "$operations" || cb_die 'operations transaction-state contract mismatch'
+  grep -Fqx '  "object_states": ["planned", "prepared", "moving-old", "old-moved", "new-moved", "committed", "unchanged", "rolled-back"],' "$operations" || cb_die 'operations object-state contract mismatch'
+  grep -Fqx '  "operations": ["install", "update", "rollback", "uninstall"],' "$operations" || cb_die 'operations command inventory mismatch'
+  grep -Fqx '    "doctor": "codex-baseline-doctor/v1",' "$operations" || cb_die 'operations doctor-report contract mismatch'
+  grep -Fqx '    "onboarding": "codex-baseline-onboarding/v1",' "$operations" || cb_die 'operations onboarding-report contract mismatch'
+  grep -Fqx '    "benchmark": "codex-baseline-benchmark/v1"' "$operations" || cb_die 'operations benchmark-report contract mismatch'
   [[ $(grep -c '^    {"id": ' "$operations") -eq 8 ]] || cb_die 'operations object inventory must contain exactly eight objects'
   for line in \
     '    {"id": "00", "kind": "block", "root": "codex_home", "destination": "AGENTS.active.md", "source": "baseline/global/AGENTS.block.md"},' \

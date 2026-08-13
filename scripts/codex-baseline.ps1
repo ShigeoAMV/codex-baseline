@@ -46,6 +46,7 @@ $script:SourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'
 $script:LockHeld = $false
 $script:ActiveTransaction = $null
 $script:MutationStarted = $false
+$script:TrustedPrivateDirectorySids = @('S-1-5-18', 'S-1-5-32-544')
 
 function Write-CbError {
     param([string]$Message)
@@ -655,8 +656,22 @@ function Read-CbManifest {
         throw 'Operations contract identity or encoding is unsupported.'
     }
     $expectedOperations = @('install', 'update', 'rollback', 'uninstall')
+    $expectedTransactionStates = @('planned', 'prepared', 'committing', 'recovering', 'committed', 'rolled-back')
+    $expectedObjectStates = @('planned', 'prepared', 'moving-old', 'old-moved', 'new-moved', 'committed', 'unchanged', 'rolled-back')
+    if ((@($operations.transaction_states) -join ',') -ne ($expectedTransactionStates -join ',')) {
+        throw 'Operations contract transaction-state inventory is invalid.'
+    }
+    if ((@($operations.object_states) -join ',') -ne ($expectedObjectStates -join ',')) {
+        throw 'Operations contract object-state inventory is invalid.'
+    }
     if ((@($operations.operations) -join ',') -ne ($expectedOperations -join ',')) {
         throw 'Operations contract command inventory is invalid.'
+    }
+    Assert-CbExactProperties $operations.reports @('doctor', 'onboarding', 'benchmark') 'Operations reports'
+    if ([string]$operations.reports.doctor -ne 'codex-baseline-doctor/v1' -or
+        [string]$operations.reports.onboarding -ne 'codex-baseline-onboarding/v1' -or
+        [string]$operations.reports.benchmark -ne 'codex-baseline-benchmark/v1') {
+        throw 'Operations contract report inventory is invalid.'
     }
     $expectedObjects = @{
         '00' = @('block', 'codex_home', 'AGENTS.active.md', 'baseline/global/AGENTS.block.md')
@@ -1100,9 +1115,134 @@ function Get-CbAgentsFile {
     return $normal
 }
 
+function Initialize-CbNativeDirectoryIdentity {
+    if ($null -ne ('CodexBaseline.InstallerNative' -as [type])) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace CodexBaseline {
+    public static class InstallerNative {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FILETIME { public uint Low; public uint High; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BY_HANDLE_FILE_INFORMATION {
+            public uint FileAttributes;
+            public FILETIME CreationTime;
+            public FILETIME LastAccessTime;
+            public FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string path, uint access, uint share, IntPtr security,
+            uint creation, uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle handle, out BY_HANDLE_FILE_INFORMATION information);
+
+        public static string GetDirectoryIdentity(string path) {
+            const uint OPEN_EXISTING = 3;
+            const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+            const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+            using (SafeFileHandle handle = CreateFileW(
+                path, 0, 7, IntPtr.Zero, OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                IntPtr.Zero)) {
+                if (handle.IsInvalid) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+                BY_HANDLE_FILE_INFORMATION information;
+                if (!GetFileInformationByHandle(handle, out information)) {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                return String.Format("{0:X8}:{1:X8}:{2:X8}",
+                    information.VolumeSerialNumber,
+                    information.FileIndexHigh,
+                    information.FileIndexLow);
+            }
+        }
+    }
+}
+'@
+}
+
+function Get-CbDirectoryIdentity {
+    param([string]$Path)
+    Initialize-CbNativeDirectoryIdentity
+    return [CodexBaseline.InstallerNative]::GetDirectoryIdentity((Get-CbFullPath $Path))
+}
+
+function New-CbPrivateDirectorySecurity {
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    if ($null -eq $currentSid) { throw 'Cannot determine the current Windows user SID.' }
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner($currentSid)
+    foreach ($sidText in @($currentSid.Value) + $script:TrustedPrivateDirectorySids) {
+        $sid = New-Object System.Security.Principal.SecurityIdentifier($sidText)
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sid,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $security.AddAccessRule($rule) | Out-Null
+    }
+    return $security
+}
+
+function Assert-CbPrivateDirectory {
+    param([string]$Path)
+    $item = Get-CbItem $Path
+    if ($null -eq $item) { throw "Private temporary directory is missing: $Path" }
+    Assert-CbOrdinaryItem $item 'tree'
+    Assert-CbExistingAncestorsSafe $item.FullName
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $trustedSids = @($currentSid) + $script:TrustedPrivateDirectorySids
+    $acl = Get-Acl -LiteralPath $item.FullName -ErrorAction Stop
+    $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    if ($ownerSid -ne $currentSid) {
+        throw "Private temporary directory owner changed: $($item.FullName) ($ownerSid)"
+    }
+    if (-not $acl.AreAccessRulesProtected) {
+        throw "Private temporary directory inherits access rules: $($item.FullName)"
+    }
+    $currentHasFullControl = $false
+    foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+        $sid = $rule.IdentityReference.Value
+        if ($sid -notin $trustedSids) {
+            throw "Private temporary directory grants access to an untrusted SID: $($item.FullName) ($sid)"
+        }
+        if ($sid -eq $currentSid -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
+                [System.Security.AccessControl.FileSystemRights]::FullControl) {
+            $currentHasFullControl = $true
+        }
+    }
+    if (-not $currentHasFullControl) {
+        throw "Private temporary directory does not grant the current user full control: $($item.FullName)"
+    }
+}
+
 function New-CbTemporaryDirectory {
-    $path = Join-Path ([System.IO.Path]::GetTempPath()) ('codex-baseline-{0}' -f [guid]::NewGuid().ToString('N'))
-    [System.IO.Directory]::CreateDirectory($path) | Out-Null
+    $temporaryRoot = [System.IO.Path]::GetTempPath()
+    Assert-CbRawLocalRootPath $temporaryRoot 'Windows temporary root'
+    Assert-CbExistingAncestorsSafe $temporaryRoot
+    $path = Join-Path $temporaryRoot ('codex-baseline-{0}' -f [guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($path, (New-CbPrivateDirectorySecurity)) | Out-Null
+    Assert-CbPrivateDirectory $path
     return $path
 }
 
@@ -1145,12 +1285,54 @@ function New-CbVerifiedSourceSnapshot {
         return [pscustomobject]@{
             Root = $snapshot
             Manifest = $snapshotManifest
+            DirectoryIdentity = Get-CbDirectoryIdentity $snapshot
+            ManifestHash = $expectedManifestHash
+            PayloadHash = $expectedPayloadHash
+            Version = $expectedVersion
         }
     }
     catch {
         if (Test-CbExists $snapshot) { Remove-CbSafeItem $snapshot }
         throw
     }
+}
+
+function Assert-CbVerifiedSourceSnapshot {
+    param($Snapshot)
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+        $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY -eq '1') {
+        $snapshotDirectory = New-Object System.IO.DirectoryInfo([string]$Snapshot.Root)
+        $acl = $snapshotDirectory.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+        $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $users,
+            [System.Security.AccessControl.FileSystemRights]::Modify,
+            [System.Security.AccessControl.InheritanceFlags]::None,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $acl.AddAccessRule($rule) | Out-Null
+        $snapshotDirectory.SetAccessControl($acl)
+    }
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+        $env:CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY -eq '1') {
+        [System.IO.File]::AppendAllText(
+            (Join-Path ([string]$Snapshot.Root) 'baseline\global\AGENTS.block.md'),
+            "`nsnapshot-race-test`n",
+            $script:Utf8NoBom
+        )
+    }
+    Assert-CbPrivateDirectory ([string]$Snapshot.Root)
+    if ((Get-CbDirectoryIdentity ([string]$Snapshot.Root)) -ne [string]$Snapshot.DirectoryIdentity) {
+        throw 'Verified source snapshot directory identity changed before use.'
+    }
+    $manifest = Read-CbManifest ([string]$Snapshot.Root)
+    if ((Get-CbFileHash (Join-Path ([string]$Snapshot.Root) 'baseline\manifest.json')) -ne [string]$Snapshot.ManifestHash -or
+        [string]$manifest.payload_hash -ne [string]$Snapshot.PayloadHash -or
+        [string]$manifest.version -ne [string]$Snapshot.Version) {
+        throw 'Verified source snapshot changed before use.'
+    }
+    return $manifest
 }
 
 function New-CbRuntimeCandidate {
@@ -1724,7 +1906,7 @@ function Invoke-CbInstallLike {
     $sourceSnapshot = New-CbVerifiedSourceSnapshot $manifest
     $temporaryRoot = $null
     try {
-        $manifest = $sourceSnapshot.Manifest
+        $manifest = Assert-CbVerifiedSourceSnapshot $sourceSnapshot
         Initialize-CbPaths
         if ($DryRun) {
             if (Test-CbExists $script:PendingPath) {
@@ -1739,6 +1921,7 @@ function Invoke-CbInstallLike {
             Recover-CbPending
         }
         $temporaryRoot = New-CbTemporaryDirectory
+        $manifest = Assert-CbVerifiedSourceSnapshot $sourceSnapshot
         $current = Get-CbCurrentTransaction
         $objects = @(Get-CbInstallObjects $manifest $sourceSnapshot.Root $temporaryRoot $current)
         $changed = @($objects | Where-Object { $_.Change })
@@ -1962,6 +2145,7 @@ function Invoke-CbDoctor {
     $researchState = 'invalid'
     $sourceManifest = $null
     $minimumCodex = $null
+    $testedCodex = $null
     $sourceProvenance = [pscustomobject]@{
         scope = 'unavailable'
         version = $null
@@ -1981,6 +2165,11 @@ function Invoke-CbDoctor {
             throw 'Source manifest minimum_codex is malformed.'
         }
         $minimumCodex = [version]$minimumText
+        $testedText = [string]$sourceManifest.tested_codex
+        if ($testedText -notmatch '^\d+\.\d+\.\d+$') {
+            throw 'Source manifest tested_codex is malformed.'
+        }
+        $testedCodex = [version]$testedText
         $researchChecked = [string]$sourceManifest.research_checked
         $researchReviewBy = [string]$sourceManifest.research_review_by
     }
@@ -1997,8 +2186,11 @@ function Invoke-CbDoctor {
                 if (-not $versionMatch.Success) {
                     $failures.Add('Native Codex version output does not contain a semantic version.') | Out-Null
                 }
-                elseif ($null -ne $minimumCodex -and ([version]$versionMatch.Groups[1].Value) -lt $minimumCodex) {
-                    $failures.Add("Native Codex is older than the supported minimum version $minimumCodex.") | Out-Null
+                else {
+                    $detectedCodex = [version]$versionMatch.Groups[1].Value
+                    if ($null -ne $minimumCodex -and $detectedCodex -lt $minimumCodex) {
+                        $failures.Add("Native Codex is older than the supported minimum version $minimumCodex.") | Out-Null
+                    }
                 }
                 & codex --strict-config --version *> $null
                 if ($LASTEXITCODE -eq 0) {
@@ -2022,6 +2214,12 @@ function Invoke-CbDoctor {
                 else {
                     $nativeCapabilities = 'degraded'
                     $warnings.Add('Native Codex capability probe is degraded.') | Out-Null
+                }
+                if ($versionMatch.Success -and $null -ne $testedCodex -and
+                    ([version]$versionMatch.Groups[1].Value) -gt $testedCodex) {
+                    $nativeCapabilities = 'unverified-future-version'
+                    $warnings.Add(("Native Codex {0} is newer than the tested version {1}; volatile capabilities remain unverified." -f
+                        $versionMatch.Groups[1].Value, $testedCodex)) | Out-Null
                 }
             }
             else {

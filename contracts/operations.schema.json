@@ -9,9 +9,30 @@
     "contract": {"const": "codex-baseline-operations/v1"},
     "owned_text_encoding": {"const": "utf-8-no-bom"},
     "owned_line_endings": {"const": "lf"},
-    "transaction_states": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "object_states": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "operations": {"type": "array", "items": {"enum": ["install", "update", "rollback", "uninstall"]}, "uniqueItems": true},
+    "transaction_states": {
+      "type": "array", "minItems": 6, "maxItems": 6,
+      "prefixItems": [
+        {"const": "planned"}, {"const": "prepared"}, {"const": "committing"},
+        {"const": "recovering"}, {"const": "committed"}, {"const": "rolled-back"}
+      ],
+      "items": false
+    },
+    "object_states": {
+      "type": "array", "minItems": 8, "maxItems": 8,
+      "prefixItems": [
+        {"const": "planned"}, {"const": "prepared"}, {"const": "moving-old"},
+        {"const": "old-moved"}, {"const": "new-moved"}, {"const": "committed"},
+        {"const": "unchanged"}, {"const": "rolled-back"}
+      ],
+      "items": false
+    },
+    "operations": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "prefixItems": [
+        {"const": "install"}, {"const": "update"}, {"const": "rollback"}, {"const": "uninstall"}
+      ],
+      "items": false
+    },
     "objects": {
       "type": "array", "minItems": 8, "maxItems": 8,
       "items": {

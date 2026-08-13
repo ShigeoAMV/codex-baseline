@@ -133,6 +133,25 @@ try {
     Assert-True ($racyExit -eq 1 -and $racyOutput -match 'Payload byte length mismatch|changed while creating the verified snapshot') 'source mutation between verification and snapshot must fail closed'
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'source-race rejection must not create AGENTS_HOME'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) 'source-race rejection must not mutate state'
+
+    Set-TestEnvironment (Join-Path $script:TestRoot 'snapshot-acl-home') | Out-Null
+    $env:CODEX_BASELINE_TESTING = '1'
+    $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY = '1'
+    $snapshotAclOutput = Invoke-Baseline @('install') 1
+    Remove-Item Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY
+    Remove-Item Env:\CODEX_BASELINE_TESTING
+    Assert-True ($snapshotAclOutput -match 'untrusted SID') ("verified source snapshot must reject a broadened DACL before mutation; output: {0}" -f $snapshotAclOutput)
+    Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'snapshot ACL rejection must not create AGENTS_HOME'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) 'snapshot ACL rejection must not create baseline state'
+
+    Set-TestEnvironment (Join-Path $script:TestRoot 'snapshot-content-home') | Out-Null
+    $env:CODEX_BASELINE_TESTING = '1'
+    $env:CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY = '1'
+    $snapshotContentOutput = Invoke-Baseline @('install') 1
+    Remove-Item Env:\CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY
+    Remove-Item Env:\CODEX_BASELINE_TESTING
+    Assert-True ($snapshotContentOutput -match 'Payload byte length mismatch|Payload hash mismatch') 'verified source snapshot must be rehashed immediately before use'
+    Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'snapshot content rejection must occur before managed-home mutation'
     $testHome = Set-TestEnvironment (Join-Path $script:TestRoot 'main')
 
     $codexStubDirectory = Join-Path $script:TestRoot 'codex-stub'
@@ -165,6 +184,12 @@ exit 1
         [System.IO.File]::WriteAllText($codexStub, $oldStub, $script:Utf8NoBom)
         $oldDoctor = Invoke-Baseline -Arguments @('doctor', '-Json') -ExpectedExit 1 | ConvertFrom-Json
         Assert-True ((@($oldDoctor.failures) -join "`n") -match 'older than the supported minimum version 0\.147\.0') 'doctor must enforce the manifest-declared native Codex minimum'
+
+        $futureStub = $currentStub.Replace('0.147.0', '0.148.0')
+        [System.IO.File]::WriteAllText($codexStub, $futureStub, $script:Utf8NoBom)
+        $futureDoctor = Invoke-Baseline @('doctor', '-Json') | ConvertFrom-Json
+        Assert-True ($futureDoctor.native_capabilities -eq 'unverified-future-version') 'doctor must not claim volatile capabilities verified on an untested future Codex version'
+        Assert-True ((@($futureDoctor.warnings) -join "`n") -match 'newer than the tested version 0\.147\.0') 'doctor must explain future-version uncertainty'
     }
     finally {
         $env:Path = $savedPath
@@ -380,6 +405,12 @@ finally {
     }
     if (Test-Path Env:\CODEX_BASELINE_TEST_MUTATE_SOURCE_AFTER_VERIFY) {
         Remove-Item Env:\CODEX_BASELINE_TEST_MUTATE_SOURCE_AFTER_VERIFY
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY
     }
     if (Test-Path Env:\CODEX_BASELINE_TESTING) {
         Remove-Item Env:\CODEX_BASELINE_TESTING

@@ -6,6 +6,8 @@ Version 0.1.0 is a local release candidate. The installable payload is pinned by
 path, byte length, per-file SHA-256, and aggregate digest, and both installers
 freeze a reverified private snapshot before use. This proves internal integrity
 relative to the checked-out manifest. It does not authenticate a publisher.
+The consolidated current evidence and explicit missing gates are in the
+[release candidate report](RELEASE-CANDIDATE-REPORT.md).
 
 No public verified release is claimed until all of these are true:
 

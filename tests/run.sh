@@ -47,6 +47,9 @@ test_static_quality() {
   done
   jq -e '
     .contract == "codex-baseline-operations/v1" and
+    .transaction_states == ["planned","prepared","committing","recovering","committed","rolled-back"] and
+    .object_states == ["planned","prepared","moving-old","old-moved","new-moved","committed","unchanged","rolled-back"] and
+    .operations == ["install","update","rollback","uninstall"] and
     (.objects | length) == 8 and
     ([.objects[].id] | sort) == ["00","10","11","12","13","20","30","31"] and
     .reports == {doctor:"codex-baseline-doctor/v1",onboarding:"codex-baseline-onboarding/v1",benchmark:"codex-baseline-benchmark/v1"}
@@ -145,6 +148,16 @@ test_dry_run_and_lifecycle() {
   set -e
   [[ $status -ne 0 ]]
   jq -e '.native_capabilities == "verified" and any(.failures[]; test("older than the supported minimum version 0.147.0"))' "$root/old-doctor.json" >/dev/null
+  mkdir -p -- "$root/future-codex"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ ${1:-} == --version || ${1:-} == --strict-config ]]; then printf "%s\n" "codex-cli 0.148.0"; exit 0; fi' \
+    'if [[ ${1:-} == features && ${2:-} == list ]]; then printf "%s\n" "goals stable true" "multi_agent stable true" "skill_search stable true"; exit 0; fi' \
+    'exit 1' >"$root/future-codex/codex"
+  chmod 0755 "$root/future-codex/codex"
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" PATH="$root/future-codex:$PATH" \
+    "$TEST_ROOT/scripts/codex-baseline.sh" doctor --json >"$root/future-doctor.json"
+  jq -e '.failure_count == 0 and .native_capabilities == "unverified-future-version" and any(.warnings[]; test("newer than the tested version 0.147.0"))' "$root/future-doctor.json" >/dev/null
   baseline "$root" rollback --dry-run >"$root/rollback-dry.log"
   baseline "$root" rollback >"$root/rollback.log"
   cmp <(printf 'custom-before\n') "$root/home/.codex/AGENTS.md"

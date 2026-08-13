@@ -46,7 +46,7 @@ independent audits.
 - Environment: Ubuntu 26.04 under WSL2, Linux kernel 6.18.33.2.
 - Codex CLI: 0.147.0, reported current by `codex doctor` on 2026-08-13.
 - Codex health: 17 checks OK, one idle app server, zero warnings/failures.
-- Native Windows PowerShell 5.1 is reachable from WSL; 83 lifecycle and 58
+- Native Windows PowerShell 5.1 is reachable from WSL; 90 lifecycle and 61
   onboarding/benchmark assertions pass. Native Windows Codex is not installed.
 - Node.js 24.18.0 is available in WSL. It is not yet accepted as a universal
   runtime dependency.
@@ -73,7 +73,8 @@ independent audits.
 
 ## Next action
 
-Run fresh security, architecture/maintainability, and conformance reviews
-against the immutable evidence revision, fix justified findings and rerun
-affected checks. Then run live evaluation when its dedicated credential is
-available and close traceability only against receipts.
+Commit the reconciled security/contract/evidence candidate, obtain fresh
+read-only delta reviews, record their dispositions, and run both complete
+platform suites on exactly the final clean revision. Then run live evaluation
+when its dedicated credential is available and close traceability only against
+the resulting real-model receipts.

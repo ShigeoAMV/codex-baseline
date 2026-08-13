@@ -24,7 +24,24 @@ onboarding conflict acknowledgement. The executed receipts are in
 
 ## Review status
 
-No critical finding was reported. Public publication remains blocked on owner
-publisher identity/license; real live benchmark security evidence remains
-partial. A fresh final security review against an immutable revision is still
-required before the local release candidate can be signed off.
+The second fresh read-only review inspected clean commit `46ba57b` and reported
+no critical finding, two cross-platform local-RC highs, and one public-only high:
+
+- Windows source snapshots inherited `%TEMP%` ACLs and were not revalidated
+  immediately before use. Closed in the candidate: snapshot creation now
+  requires a local reparse-free temporary root, protected owner-bound DACL,
+  native directory identity, and a second complete manifest/payload verification.
+  Native tests weaken the post-verify DACL and mutate post-verify content; both
+  fail before managed-home mutation.
+- Windows onboarding trusted every group in the caller token and did not verify
+  owners. Closed in the candidate: only the caller, SYSTEM, and Administrators
+  are trusted for mutation-capable ACEs, path owners are allowlisted, and a
+  `BUILTIN\\Users` Delete-right test proves exact AGENTS bytes remain unchanged.
+- Public publisher authenticity remains intentionally open and external.
+
+The review also found eager Windows directory materialization; the collector now
+uses lazy enumeration and stops as soon as `MaxVisited` is exceeded. Residual
+live-run risks remain explicit: the API parent carries the dedicated key, and
+`prlimit` is not an aggregate cgroup/PID/disk quota. A final read-only delta
+review of the immutable candidate is still required; this record does not claim
+that review before it happens.

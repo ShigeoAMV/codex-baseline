@@ -9,7 +9,7 @@
   "line_endings": "lf",
   "global_block": "baseline/global/AGENTS.block.md",
   "source_trust": "unsigned-local-source",
-  "payload_hash": "23c8a3dc7087fce163aa78ede49561a2ebbd9d542a4cab41160bce187f744c51",
+  "payload_hash": "31387f17bca35d4374ee51711ae2da02fe2dfc6780b3fd47c45951ac8c946b7f",
   "payload": [
     {"path": "VERSION", "bytes": 6, "sha256": "e9dd8507f4bf0c6f42458e41aea833ad0bd3f6127272335eee9bf4d58541ed67"},
     {"path": "baseline/agents/codex-baseline-reviewer.toml", "bytes": 681, "sha256": "a57f9fb2d3989820f743020564da329445ad5362386bb8eb40a7332678d82d65"},
@@ -67,10 +67,10 @@
     {"path": "benchmarks/verifiers/small-js-bug.sh", "bytes": 444, "sha256": "576209d57ce0cdf4c29bc540c21c1f25246170052a39df9829bc708a2c5376ab"},
     {"path": "scripts/benchmark.ps1", "bytes": 8644, "sha256": "cfc04130da33a5fe99328d24ce522f82cd706c74153850edf70a3a792b6b7b29"},
     {"path": "scripts/benchmark.sh", "bytes": 22205, "sha256": "0dc8c8dbb85a580bacec4037a1df30093d4d8505889eecf4b3bc39a8659c48fc"},
-    {"path": "scripts/codex-baseline.ps1", "bytes": 96256, "sha256": "47cfd19a10c4048401a1883516a3b430becafc9dbee10d44d4dbcab1e5476060"},
-    {"path": "scripts/codex-baseline.sh", "bytes": 66174, "sha256": "c6a531080811a7d09318c4b8c3649100735e772a34071ae5ce49577c23ad425a"},
-    {"path": "scripts/lib/common.sh", "bytes": 15678, "sha256": "0d1c5906fdaf11fd90e3f0f716a0e9c4a7cec598e79d9b5d81d4c96011dbac59"},
-    {"path": "scripts/onboard.ps1", "bytes": 36140, "sha256": "a5b47c6b0e38a070207027d570d882f0d1c2003da83097ad1bc031b91c2bb7d3"},
+    {"path": "scripts/codex-baseline.ps1", "bytes": 106146, "sha256": "dc1626e5e44b3c56dd3b1673fbbc7acf381be2516a67c737d3540e65e3fec87c"},
+    {"path": "scripts/codex-baseline.sh", "bytes": 66904, "sha256": "6c4d40f1a80255cd73d38f0283b980de68e732af5c9fc2f57e1aeeab72d13515"},
+    {"path": "scripts/lib/common.sh", "bytes": 16614, "sha256": "2fe4e8291b8a01ffce1db40acb26f442add4d4fb0b98d79aec7531829d35a265"},
+    {"path": "scripts/onboard.ps1", "bytes": 36818, "sha256": "b58c1dd1e3bc1c86fc388934ad5d0e5d2559004e6011ed70271cd911e440f44f"},
     {"path": "scripts/onboard.sh", "bytes": 23148, "sha256": "77d5c9a817c2560893b0b70da350b77540a71c7816d7476bb11ba435e4b8f51e"}
   ]
 }

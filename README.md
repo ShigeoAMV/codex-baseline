@@ -120,6 +120,7 @@ private holdouts or an external worker unable to mount this source/verifier.
 - [Benchmark design](docs/BENCHMARKS.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Release and provenance](docs/RELEASE.md)
+- [Release candidate report](docs/RELEASE-CANDIDATE-REPORT.md)
 - [Research evidence](docs/research/EVIDENCE.md)
 - [Architecture decisions](docs/research/DECISIONS.md)
 - [Dogfood DEEP-work contract](docs/examples/DEEP-WORK-PLAN.md)
@@ -128,8 +129,8 @@ private holdouts or an external worker unable to mount this source/verifier.
 ## Support truth
 
 The release candidate is executed on WSL2/Linux (11 end-to-end test groups) and
-in native Windows PowerShell 5.1 through WSL interoperability (83 lifecycle and
-58 onboarding/benchmark assertions). A native-Codex test double proves Windows
+in native Windows PowerShell 5.1 through WSL interoperability (90 lifecycle and
+61 onboarding/benchmark assertions). A native-Codex test double proves Windows
 Doctor version/capability logic; the real native Windows Codex binary is not
 installed and remains `not verified`. Codex App behavior is
 based on current official product contracts plus CLI prompt-input probes, not a

@@ -26,12 +26,16 @@ live files changed after planning, and network content are untrusted.
   `-LiteralPath`, raw local-drive validation, and Junction/reparse tests.
 - Every installable source file is pinned by path, byte length, and SHA-256 plus
   an aggregate digest. Unsigned local source is labelled and requires explicit
-  acknowledgement; a private reverified source snapshot is frozen before any
-  candidate is built, and verification happens before target/state mutation.
+  acknowledgement; Windows creates the verified snapshot under a local,
+  reparse-free temp root with a protected DACL owned by the caller and limited
+  to caller/SYSTEM/Administrators. Directory identity, owner/DACL, manifest, and
+  every payload hash are checked again immediately before candidate construction.
 - Onboarding apply requires explicit acknowledgement when existing AI
   instructions need reconciliation. Unix anchors discovery and mutation to an
   open repository directory; Windows combines native directory identity checks
-  with a fail-closed private-ACL requirement.
+  with a fail-closed owner/private-ACL requirement. A Windows repository whose
+  ancestors grant mutation-capable rights to broad groups must be moved to a
+  private location or have its ACL narrowed before apply; preview still works.
 - Benchmark workspaces/homes are per-arm. Real Codex auth/session files are
   never read or mounted. A dedicated key reaches only the Codex parent; tool
   shells exclude key variables and deny `/proc`/network. Workers and verifiers
@@ -41,8 +45,9 @@ live files changed after planning, and network content are untrusted.
 
 The Unix directory-descriptor boundary and Windows identity/ACL checks detect
 the tested rename/link races, but they are not a hostile concurrent-kernel or
-administrator boundary. ACL, owner, ADS, xattrs, and every Windows attribute are
-outside portable exact-restore scope. The source manifest proves layout/version consistency but
+administrator boundary. Administrators and SYSTEM are explicit Windows trust
+principals. ACL, owner, ADS, xattrs, and every Windows attribute are outside
+portable exact-restore scope. The source manifest proves layout/version consistency but
 not publisher authenticity; public releases need signed immutable artifacts and
 a documented trust root. The API key necessarily exists in the Codex parent
 process environment during a live benchmark, and a hostile host/admin remains
@@ -59,7 +64,8 @@ and path-tampered journals, corrupt recovery preimages, concurrent whole-file
 guidance edits, untrusted package scripts that must never execute, sensitive
 filenames, bounded traversal, onboarding apply races, dry-run null mutation,
 managed drift, hard interruption/recovery, exact AGENTS restoration, path spaces
-in risk fixtures, source-payload tampering, credential-boundary behavior, and
-static shell analysis. Before a release, independently review both installers
+in risk fixtures, source-payload tampering, post-verify snapshot DACL/content
+mutation, broad-group onboarding Delete rights, credential-boundary behavior,
+and static shell analysis. Before a release, independently review both installers
 for injection, path handling, deletion scope, credentials, update provenance,
 transaction ambiguity, and benchmark isolation.

@@ -10,7 +10,9 @@ managed paths, strict-config acceptance, whether the current Codex probe
 reported deprecated/unsupported settings, and the explicit boundary that
 user-owned hooks are preserved but not enumerated. Unix and Windows JSON share
 `codex-baseline-doctor/v1`; platform-specific verification labels remain
-explicit. JSON is intended for automation.
+explicit. Versions newer than manifest `tested_codex` still receive strict and
+feature probes but are labelled `unverified-future-version` rather than assumed
+compatible. JSON is intended for automation.
 
 The state lives below `$CODEX_HOME/codex-baseline/state` (the equivalent native
 Windows path on Windows). Inspect it, but do not hand-edit an active journal.

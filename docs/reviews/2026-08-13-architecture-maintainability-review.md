@@ -20,7 +20,22 @@ disposition pass and is not the final immutable-revision sign-off.
 
 ## Review status
 
-The critical immutable-revision finding is closed. A fresh final
-architecture/maintainability review against the resulting evidence revision is
-still required; this record proves dogfood feedback and disposition, not final
-completion.
+The second fresh read-only review inspected clean commit `46ba57b` and found no
+critical issue. Its actionable findings are disposed as follows:
+
+- Exact-revision tests: still a release procedure item; both full suites will be
+  rerun after the final evidence commit, with the external attestation bound to
+  that exact `HEAD` to avoid a self-referential receipt commit.
+- Future Codex versions: closed in the candidate. Both Doctors parse
+  `tested_codex`, continue probes, and label newer versions
+  `unverified-future-version`; Unix and native Windows tests cover 0.148.0.
+- Operations contract overclaim: closed by narrowing D017 to shared inventories
+  and report IDs, making schema arrays exact, and validating exact states,
+  commands, reports, and objects in both native manifest readers/tests.
+- Direct onboarding semantics and planning/resume/context/runtime activation
+  proof: not disguised as implementation completion. R06, R11, R15, R17, R24,
+  R25, and R35 are now `partial` until the named runtime evidence exists.
+
+A final read-only delta review against the immutable candidate is still required;
+this record proves that the second-round findings drove changes, not final
+mission completion.

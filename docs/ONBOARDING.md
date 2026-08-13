@@ -33,8 +33,13 @@ hashes the preimage, rechecks it immediately before atomic replacement, and
 fails closed on a concurrent edit or link/reparse change. Unix applies through
 an anchored repository directory descriptor; Windows repeatedly checks native
 directory identity and rejects apply paths whose ACL permits untrusted parent or
-child deletion. A failed Windows replacement restores the verified in-memory
-preimage without trusting a corrupt backup.
+child deletion or whose owner is outside the caller/SYSTEM/Administrators/
+TrustedInstaller boundary. Broad token groups are not trusted merely because
+the caller belongs to them. Apply from a private repository path; on shared
+volumes, use preview only until owner/ACL checks are satisfied. A failed Windows
+replacement restores the verified in-memory preimage without trusting a corrupt
+backup. Windows enumeration is lazy, so `MaxVisited` stops a high-fan-out
+directory without first materializing all entries.
 
 The generated block carries only allowlisted path strings for likely source
 roots, architecture evidence, generated-file signals, and risk-sensitive paths.

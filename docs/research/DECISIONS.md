@@ -82,7 +82,7 @@ ownership semantics.
 
 ```text
 planned -> prepared -> committing -> committed
-                 \-> recovery-required -> recovering -> rolled-back
+                 \-> recovering -> rolled-back
 ```
 
 - Acquire one exclusive baseline-state lock before planning; refuse a live or
@@ -414,10 +414,13 @@ whole baseline-owned objects and follow the same three-way transaction rules.
 
 ## D017 - Cross-platform operations contract
 
-**Decision:** Bash and PowerShell implementations consume the same versioned
-JSON operations manifest and golden vectors. The contract defines UTF-8 without
-BOM, LF for baseline-owned text payloads, byte hashing, timestamps, path kinds,
-state transitions, errors, and portable metadata. PowerShell 5.1 uses
+**Decision:** Bash and PowerShell implementations validate the same versioned
+JSON operations inventory and golden report shapes. The shared data contract
+defines UTF-8 without BOM, LF for baseline-owned text payloads, the exact
+operation/object inventories, state labels, and report identifiers. Native
+implementations own transition logic, timestamps, error details, hashing, and
+platform metadata; parity and recovery behavior are enforced by executable
+platform tests rather than claimed to be generated from JSON. PowerShell 5.1 uses
 `Set-StrictMode`, terminating errors, `-LiteralPath`, and explicit .NET byte/file
 APIs rather than encoding-sensitive cmdlets.
 

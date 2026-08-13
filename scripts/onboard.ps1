@@ -194,11 +194,26 @@ function Get-ObRuleSid {
     }
 }
 
+function Get-ObOwnerSid {
+    param($Acl, [string]$Path)
+    try {
+        return $Acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    }
+    catch {
+        throw "Cannot resolve the ACL owner for safe onboarding apply: $Path"
+    }
+}
+
 function Assert-ObPrivateApplyPath {
     param([string]$Path)
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $trustedSids = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544')
-    foreach ($group in @($identity.Groups)) { $trustedSids += $group.Value }
+    $trustedAccessSids = @($identity.User.Value, 'S-1-5-18', 'S-1-5-32-544')
+    $trustedOwnerSids = @(
+        $identity.User.Value,
+        'S-1-5-18',
+        'S-1-5-32-544',
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+    )
     $cursor = [System.IO.Path]::GetFullPath($Path)
     while ($true) {
         $parent = [System.IO.Directory]::GetParent($cursor)
@@ -208,11 +223,15 @@ function Assert-ObPrivateApplyPath {
             [pscustomobject]@{ Path = $parent.FullName; Right = [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles }
         )) {
             $acl = Get-Acl -LiteralPath $check.Path -ErrorAction Stop
+            $ownerSid = Get-ObOwnerSid $acl $check.Path
+            if ($ownerSid -notin $trustedOwnerSids) {
+                throw "Onboarding apply is disabled for an untrusted path owner: $($check.Path) ($ownerSid)"
+            }
             foreach ($rule in @($acl.Access)) {
                 if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
                 if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
                 $sid = Get-ObRuleSid $rule
-                if ($sid -in $trustedSids) { continue }
+                if ($sid -in $trustedAccessSids) { continue }
                 if (($rule.FileSystemRights -band $check.Right) -ne 0) {
                     throw "Onboarding apply is disabled for a shared/untrusted parent ACL: $($check.Path) ($sid)"
                 }
@@ -338,11 +357,12 @@ function Add-ObFile {
 function Visit-ObDirectory {
     param([string]$Directory, [string]$RelativePrefix, [int]$Depth)
     if ($Depth -gt $MaxDepth) { return }
-    foreach ($child in @(Get-ChildItem -LiteralPath $Directory -Force -ErrorAction Stop)) {
+    foreach ($childPath in [System.IO.Directory]::EnumerateFileSystemEntries($Directory)) {
         $script:VisitedCount++
         if ($script:VisitedCount -gt $MaxVisited) {
             throw "Visited entry limit exceeded ($MaxVisited); narrow the repository or raise -MaxVisited deliberately."
         }
+        $child = Get-Item -LiteralPath $childPath -Force -ErrorAction Stop
         if (($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             $script:LinksSkipped++
             continue
