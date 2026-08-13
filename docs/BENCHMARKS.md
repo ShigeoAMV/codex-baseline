@@ -17,16 +17,27 @@ codex-baseline benchmark --static
 ```
 
 Live release evaluation consumes quota. Run the three commands directly from
-the reviewed checkout so every receipt covers the same full source scope:
+the reviewed checkout so every receipt covers the same full source scope. First
+record the SHA-256 of the exact reviewed Codex executable; the runner freezes
+that executable and refuses a mismatch rather than trusting a PATH name or a
+self-reported version:
 
 ```bash
+CODEX_BIN=$(readlink -f "$(command -v codex)")
+CODEX_SHA256=$(sha256sum -- "$CODEX_BIN" | awk '{print $1}')
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256="$CODEX_SHA256" \
   scripts/benchmark.sh --live --repetitions 3
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256="$CODEX_SHA256" \
   scripts/routing-probe.sh --repetitions 3
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256="$CODEX_SHA256" \
   scripts/benchmark.sh --canary
 ```
+
+Execute the script paths directly; do not prefix them with an ambient `bash`.
+`--expected-codex-sha256 HASH` is equivalent to the hash environment variable.
 
 All three live commands are Linux/WSL-only in v0.1.0. `--tasks` and
 `--repetitions` apply to paired mode, not Canary mode; mode flags are mutually
@@ -35,8 +46,10 @@ service gets a slightly longer hard runtime and whole-control-group kill.
 
 Shared ChatGPT/Codex authentication is deliberately unsupported. Create a
 dedicated, short-lived API key with the narrowest practical budget/permissions;
-do not reuse the normal Codex session. After the fixed trusted `/bin/bash`
-interpreter starts, the runner immediately copies the input value to a
+do not reuse the normal Codex session. The executable entrypoint first starts
+fixed `/bin/sh`, removes Bash startup influences, and enters fixed `/bin/bash -p`;
+privileged mode here only suppresses `BASH_ENV`, inherited functions, and
+option variables and is dropped immediately. The runner then copies the input value to a
 non-exported variable and unsets all credential variables before runner path
 discovery or a runner-invoked helper. The final cgroup service receives two
 bounded lines on stdin; its launcher exports the key only for the Codex parent.
@@ -59,7 +72,8 @@ subagent events, installed baseline-layer bytes, and tokens where emitted by
 JSONL. Retry count and review findings are explicit `null` because stable JSONL
 does not expose a reliable retry concept and these tasks have no separate
 reviewer. Run metadata contains Codex/model, source revision/dirty state, full
-evaluated-source hash, manifest hash, auth handling, and isolation label. Every
+evaluated-source hash, manifest hash, caller-pinned and observed Codex binary
+hashes, auth handling, and isolation label. Every
 arm rechecks the frozen source hash; changing code, docs, fixtures, or verifiers
 mid-run invalidates the experiment. An interrupted run retains `status: running`
 plus `INVALID.md`. `summary.json` retains every paired per-task delta, aggregate
@@ -89,9 +103,12 @@ resource limits, a 60-second timeout, a private read-only verifier copy, and onl
 a bounded temporary overlay writable. A systemd user cgroup bounds aggregate
 memory/swap, processes, CPU share, and runtime for the whole process tree;
 Bubblewrap tmpfs mounts bound mutable bytes, while `prlimit` adds per-process
-file-size, descriptor, address-space, CPU and core-dump limits. Git uses an isolated
-HOME, disabled hooks, empty templates, and no
-system/global config. The result label is `os-sandboxed-local-cgroup`.
+file-size, descriptor, address-space, CPU and core-dump limits. Trusted Git
+metadata is built outside the worker, mounted read-only at `/workspace/.git`,
+excluded from worker export, and hash-checked around use. Changed-path metrics
+run through host-owned Git only in a separate networkless cgroup/Bubblewrap
+sandbox with system/global config, hooks, fsmonitor, textconv, and ignores
+disabled. The result label is `os-sandboxed-local-cgroup`.
 Before a worker scan or export, the launcher stops and kills every residual
 process except itself and Bubblewrap's private PID-1 reaper; a non-zombie
 survivor invalidates the run.

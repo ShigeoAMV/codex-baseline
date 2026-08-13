@@ -40,13 +40,17 @@ live files changed after planning, and network content are untrusted.
   ancestors grant mutation-capable rights to broad groups must be moved to a
   private location or have its ACL narrowed before apply; preview still works.
 - Benchmark workspaces/homes are per-arm. Real Codex auth/session files are
-  never read or mounted. After the fixed root-owned `/bin/bash` bootstrap, the
-  trusted runner captures the dedicated input into a non-exported variable
-  before runner path discovery, unsets credential variables, and transfers two
+  never read or mounted. Fixed `/bin/sh` enters fixed `/bin/bash -p`, suppressing
+  `BASH_ENV`, inherited functions, PATH-selected interpreters, and inherited
+  option variables before the trusted runner captures the dedicated input into
+  a non-exported variable. Privileged mode is dropped immediately; it requests
+  no OS privilege. The runner unsets credential variables and transfers two
   bounded lines through the final systemd service stdin pipe. There is no
   background credential writer. Key-touching scanners and system-boundary tools
   use fixed root-owned paths; mutable user Codex/Node executables are copied
   without reflinks, hashed before/after, and only the private frozen copies run.
+  Live release evidence additionally requires the caller-pinned Codex SHA-256
+  to match; both expected and observed hashes are recorded.
   Tool shells exclude key variables and deny `/proc`/network. Workers and
   verifiers run in separate Bubblewrap namespaces under aggregate user-cgroup
   memory/swap/process/CPU/runtime limits; byte-bounded tmpfs mounts constrain
@@ -62,6 +66,10 @@ live files changed after planning, and network content are untrusted.
   The live containment canary scans all numeric `/proc/*/environ` for a readable
   key carrier and uses only a preflighted loopback listener with host postflight
   and exact hit count; no external canary request is made.
+- Paired task Git metadata is constructed outside the worker, mounted read-only,
+  excluded from export, and hash-checked. Changed-path inspection runs host Git
+  only inside a separate networkless cgroup/Bubblewrap sandbox with trusted
+  metadata and local/system/global execution features disabled.
 
 ## Explicit limitations
 

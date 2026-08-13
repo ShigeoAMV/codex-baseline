@@ -45,5 +45,19 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"pass": {"const": true}}, "required": ["pass"]},
+      "then": {
+        "properties": {
+          "process_exit": {"const": 0},
+          "turns": {"minimum": 1},
+          "commands": {"const": 0},
+          "file_changes": {"const": 0},
+          "actual": {"type": "object"}
+        }
+      }
+    }
+  ]
 }

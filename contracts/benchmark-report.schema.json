@@ -21,6 +21,8 @@
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "manifest_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "codex_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "expected_codex_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "codex_identity": {"const": "caller-pinned-sha256"},
     "node_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "auth": {"type": "string"},
     "tool_network_target": {"type": "string"},
@@ -36,7 +38,7 @@
         "required": ["mode"]
       },
       "then": {
-        "required": ["created", "codex", "model", "source_revision", "source_dirty", "source_hash", "codex_binary_hash", "node_binary_hash", "auth", "tool_network_target", "resource_profile"],
+        "required": ["created", "codex", "model", "source_revision", "source_dirty", "source_hash", "codex_binary_hash", "expected_codex_binary_hash", "codex_identity", "node_binary_hash", "auth", "tool_network_target", "resource_profile"],
         "properties": {
           "platform": {"enum": ["linux", "wsl2"]},
           "isolation": {"const": "os-sandboxed-local-cgroup"},
@@ -51,7 +53,7 @@
     {
       "if": {"properties": {"mode": {"const": "live-paired"}}, "required": ["mode"]},
       "then": {
-        "required": ["created", "codex", "model", "source_revision", "source_dirty", "source_hash", "manifest_hash", "codex_binary_hash", "node_binary_hash", "auth", "account_service_tier", "resource_profile"],
+        "required": ["created", "codex", "model", "source_revision", "source_dirty", "source_hash", "manifest_hash", "codex_binary_hash", "expected_codex_binary_hash", "codex_identity", "node_binary_hash", "auth", "account_service_tier", "resource_profile"],
         "properties": {
           "platform": {"enum": ["linux", "wsl2"]},
           "isolation": {"const": "os-sandboxed-local-cgroup"},

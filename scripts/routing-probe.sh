@@ -1,4 +1,19 @@
-#!/bin/bash
+#!/bin/sh
+# shellcheck shell=bash
+
+# Use a fixed privileged-mode Bash only for startup. This prevents BASH_ENV,
+# inherited functions, and option variables from running before the dedicated
+# key is captured and removed. No OS privilege is requested or retained.
+case ${BASH_VERSION-}:$- in
+  ?*:*p*) ;;
+  *)
+    unset BASH_ENV ENV SHELLOPTS BASHOPTS CDPATH GLOBIGNORE 2>/dev/null || :
+    exec /bin/bash -p "$0" "$@"
+    exit 127
+    ;;
+esac
+unset BASH_ENV ENV CDPATH GLOBIGNORE 2>/dev/null || :
+set +p
 
 set +x
 set -Eeuo pipefail
@@ -11,7 +26,9 @@ umask 077
 # variable is deliberately non-exported and is exposed only by exec_clean_environment.
 ROUTING_INPUT_KEY=${CODEX_BASELINE_BENCHMARK_API_KEY-}
 export -n ROUTING_INPUT_KEY 2>/dev/null || true
-unset CODEX_BASELINE_BENCHMARK_API_KEY OPENAI_API_KEY CODEX_API_KEY
+ROUTING_EXPECTED_CODEX_HASH=${CODEX_BASELINE_EXPECTED_CODEX_SHA256-}
+export -n ROUTING_EXPECTED_CODEX_HASH 2>/dev/null || true
+unset CODEX_BASELINE_BENCHMARK_API_KEY CODEX_BASELINE_EXPECTED_CODEX_SHA256 OPENAI_API_KEY CODEX_API_KEY
 ROUTING_INPUT_PATH=${PATH:-/usr/bin:/bin}
 PATH=/usr/bin:/bin
 export PATH
@@ -72,6 +89,7 @@ routing_cleanup() {
 routing_usage() {
   cat <<'EOF'
 Usage: routing-probe.sh [--repetitions N] [--output DIR] [--model MODEL]
+                        [--expected-codex-sha256 HASH]
 
 Runs schema-constrained, read-only, ephemeral live Codex routing and behavior
 probes on Linux/WSL. Behavior cases exercise research-first ambiguity handling,
@@ -92,6 +110,9 @@ routing_parse() {
         ROUTING_REPETITIONS=$2; shift ;;
       --output) [[ $# -ge 2 ]] || cb_die 'missing output'; ROUTING_OUTPUT=$2; shift ;;
       --model) [[ $# -ge 2 ]] || cb_die 'missing model'; ROUTING_MODEL=$2; shift ;;
+      --expected-codex-sha256)
+        [[ $# -ge 2 ]] || cb_die 'missing expected Codex hash'
+        ROUTING_EXPECTED_CODEX_HASH=$2; shift ;;
       --timeout-seconds)
         [[ $# -ge 2 && $2 =~ ^[1-9][0-9]*$ && $2 -le 1800 ]] || cb_die 'timeout must be an integer from 1 through 1800'
         ROUTING_TIMEOUT_SECONDS=$2; shift ;;
@@ -166,11 +187,14 @@ routing_freeze_source_and_tools() {
   ROUTING_EVAL_ROOT=$snapshot
   eval_validate_system_boundary
   eval_require_cgroup_boundary
+  eval_validate_expected_codex_hash "$ROUTING_EXPECTED_CODEX_HASH"
   tool_root="$ROUTING_TEMP/tools"
   mkdir -- "$tool_root"
   ROUTING_CODEX_PATH="$tool_root/codex"
   ROUTING_NODE_PATH="$tool_root/node"
   ROUTING_CODEX_HASH=$(eval_freeze_executable codex "$CB_SOURCE_ROOT" "$ROUTING_CODEX_PATH")
+  [[ $ROUTING_CODEX_HASH == "$ROUTING_EXPECTED_CODEX_HASH" ]] ||
+    cb_die 'resolved Codex executable does not match the caller-pinned SHA-256'
   ROUTING_NODE_HASH=$(eval_freeze_executable node "$CB_SOURCE_ROOT" "$ROUTING_NODE_PATH")
 }
 
@@ -201,9 +225,9 @@ routing_prepare() {
   jq -nc --arg created "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg codex "$codex_version" \
     --arg model "${ROUTING_MODEL:-account-default}" --arg platform "$platform" --arg revision "$source_revision" \
     --argjson dirty "$source_dirty" --arg source_hash "$ROUTING_FROZEN_SOURCE_HASH" \
-    --arg codex_binary_hash "$ROUTING_CODEX_HASH" --arg node_binary_hash "$ROUTING_NODE_HASH" \
+    --arg codex_binary_hash "$ROUTING_CODEX_HASH" --arg expected_codex_binary_hash "$ROUTING_EXPECTED_CODEX_HASH" --arg node_binary_hash "$ROUTING_NODE_HASH" \
     --argjson repetitions "$ROUTING_REPETITIONS" --argjson routing_cases "$routing_cases" --argjson behavior_cases "$behavior_cases" \
-    '{schema:1,contract:"codex-baseline-routing-run/v1",platform:$platform,mode:"live-routing-and-behavior",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,host_checks_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,node_binary_hash:$node_binary_hash,repetitions:$repetitions,routing_cases:$routing_cases,behavior_cases:$behavior_cases,auth:"dedicated-api-key-stdin-pipe",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
+    '{schema:1,contract:"codex-baseline-routing-run/v1",platform:$platform,mode:"live-routing-and-behavior",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,host_checks_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,expected_codex_binary_hash:$expected_codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,repetitions:$repetitions,routing_cases:$routing_cases,behavior_cases:$behavior_cases,auth:"dedicated-api-key-stdin-pipe",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
     >"$ROUTING_OUTPUT/run.json"
   : >"$ROUTING_OUTPUT/results.jsonl"
   : >"$ROUTING_OUTPUT/behavior-results.jsonl"

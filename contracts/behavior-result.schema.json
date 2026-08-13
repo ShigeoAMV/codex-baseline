@@ -21,5 +21,20 @@
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "prompt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "actual": {"type": ["object", "null"]}
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"pass": {"const": true}}, "required": ["pass"]},
+      "then": {
+        "properties": {
+          "process_exit": {"const": 0},
+          "verifier_exit": {"const": 0},
+          "turns": {"minimum": 1},
+          "commands": {"const": 1},
+          "file_changes": {"const": 0},
+          "actual": {"type": "object"}
+        }
+      }
+    }
+  ]
 }

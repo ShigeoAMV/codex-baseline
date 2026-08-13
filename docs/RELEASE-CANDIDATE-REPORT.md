@@ -123,7 +123,8 @@ existing instructions only after reconciling the reported paths.
 
 The dedicated-key live run must execute all ten paired tasks for three
 repetitions, `scripts/routing-probe.sh --repetitions 3`, and
-`scripts/benchmark.sh --canary`, then preserve only safe receipts and report
+`scripts/benchmark.sh --canary`, each with the independently recorded expected
+Codex binary SHA-256, then preserve only safe receipts and report
 inconclusive results honestly. Native Windows Codex, separate bare-metal Linux
 distributions, and a full App/IDE matrix remain explicitly unverified/partial.
 Public redistribution

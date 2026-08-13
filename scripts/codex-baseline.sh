@@ -1,8 +1,35 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# shellcheck shell=bash
 
+# Enter Bash through a fixed privileged-mode bootstrap. Bash privileged mode
+# ignores BASH_ENV, inherited shell functions, SHELLOPTS, BASHOPTS, CDPATH and
+# GLOBIGNORE during startup. The script drops that mode immediately afterwards;
+# it is a startup hygiene boundary, not an OS privilege request.
+case ${BASH_VERSION-}:$- in
+  ?*:*p*) ;;
+  *)
+    unset BASH_ENV ENV SHELLOPTS BASHOPTS CDPATH GLOBIGNORE 2>/dev/null || :
+    exec /bin/bash -p "$0" "$@"
+    exit 127
+    ;;
+esac
+unset BASH_ENV ENV CDPATH GLOBIGNORE 2>/dev/null || :
+set +p
+
+set +x
 set -Eeuo pipefail
+set +a
 IFS=$'\n\t'
 umask 077
+
+# A wrapper-dispatched live benchmark reaches this dispatcher before the
+# benchmark runner can scrub its environment. Retain only a non-exported shell
+# value and remove every recognized API-key variable before path discovery or
+# any external helper. The value is re-exported only for the final exec into the
+# separately bootstrapped benchmark entrypoint.
+CB_DISPATCH_BENCHMARK_KEY=${CODEX_BASELINE_BENCHMARK_API_KEY-}
+export -n CB_DISPATCH_BENCHMARK_KEY 2>/dev/null || true
+unset CODEX_BASELINE_BENCHMARK_API_KEY OPENAI_API_KEY CODEX_API_KEY
 
 CB_SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 CB_SOURCE_ROOT=$(cd -- "$CB_SCRIPT_DIR/.." && pwd -P)
@@ -1425,6 +1452,8 @@ main() {
       exec "$CB_SCRIPT_DIR/onboard.sh" "$@"
       ;;
     benchmark)
+      CODEX_BASELINE_BENCHMARK_API_KEY=$CB_DISPATCH_BENCHMARK_KEY
+      export CODEX_BASELINE_BENCHMARK_API_KEY
       exec "$CB_SCRIPT_DIR/benchmark.sh" "$@"
       ;;
     help|-h|--help) cb_usage ;;

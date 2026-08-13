@@ -28,3 +28,9 @@ manifest version, payload checks, platform evidence, and this log together.
   storage, residual-process quiescence before artifact export, exact artifact
   path-name scans, listener postflight, and a Canary
   check covering every readable `/proc/*/environ` key carrier.
+- Prevent Bash startup hooks and PATH-selected interpreters from observing live
+  credentials; require caller-pinned Codex binary hashes in real-model receipts.
+- Keep task Git metadata read-only and outside worker exports, and run changed-
+  path inspection in a separate networkless cgroup/Bubblewrap sandbox.
+- Make successful result tuples schema-enforced and preserve caller shell-option
+  state across bounded artifact enumeration.

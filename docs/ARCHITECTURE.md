@@ -111,14 +111,18 @@ and only then a bounded hook. No model verdict edits global policy automatically
 
 Paired and routing evaluation bind the complete source (files, empty
 directories, modes, and excluded-path policy) to a private snapshot and freeze
-the selected Codex/Node bytes. Each model invocation receives a fresh
+the selected Codex/Node bytes. The caller must independently pin the expected
+Codex SHA-256; expected and observed hashes are receipt fields. Fixed-shell
+entrypoints suppress Bash startup hooks before credential capture. Each model invocation receives a fresh
 Bubblewrap filesystem without live-source/verifier access, a new worker HOME,
 and bounded tmpfs workspace. The Codex permission profile denies tool network
 and credential inheritance while the parent transport reaches the API. The
 whole process tree is aggregate-bounded by a user cgroup. A separate
 networkless, cgroup- and Bubblewrap-bounded process runs a private verifier copy;
 residual worker processes are quiesced inside the private PID namespace before
-artifact scan/export, and hashes are checked again before a receipt can complete. Routing behavior gets
+artifact scan/export, and hashes are checked again before a receipt can complete.
+Task Git metadata remains outside worker-writable storage, is mounted read-only,
+and changed-path inspection runs in another networkless sandbox. Routing behavior gets
 repository evidence only from one host-owned read-only inspector invocation.
 Canary independently checks environment, every readable key-carrier `/proc`
 entry, artifact contents/names, and a liveness-verified loopback listener. Live

@@ -166,6 +166,16 @@ if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-benchmark-fail-* ]]; then
   exit 1
 fi
 
+if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-git-metadata-* && -w $workspace/.git ]]; then
+  # This branch is an adversarial regression oracle. A vulnerable runner gives
+  # the worker writable Git metadata and later invokes host Git against it.
+  # The fsmonitor then creates a forged host-worktree change. A hardened runner
+  # mounts trusted metadata read-only, so this entire branch is unreachable.
+  printf '%s\n' '#!/bin/sh' ': > git-host-executed' 'printf "\\n"' >"$workspace/.git/codex-baseline-fsmonitor"
+  chmod 0755 -- "$workspace/.git/codex-baseline-fsmonitor"
+  /usr/bin/git -C "$workspace" config core.fsmonitor .git/codex-baseline-fsmonitor
+fi
+
 stage="$workspace/.codex-baseline-test-double.$$"
 sed 's/return left - right;/return left + right;/' "$workspace/calc.js" >"$stage"
 mv -- "$stage" "$workspace/calc.js"

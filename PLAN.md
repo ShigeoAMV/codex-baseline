@@ -1,6 +1,6 @@
 # Codex Engineering Baseline: durable progress
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14
 
 ## Objective
 
@@ -26,7 +26,7 @@ independent audits.
 - Production documentation covers daily use, maintenance, security, platforms,
   failure recovery, and research freshness.
 - Fresh security, maintainability, architecture, and original-mission audits
-  leave no unresolved critical finding.
+  leave no unresolved internal critical finding on the final fix revision.
 
 ## Milestones
 
@@ -38,7 +38,7 @@ independent audits.
 | 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, six classifications and four host-verified behavior cases; repeated real-model probes pending |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
-| 7. Dogfood and completion audit | In progress | Platform/security hardening and initial reviews reconciled; immutable revision, fresh final reviews, and traceability audit pending |
+| 7. Dogfood and completion audit | In progress | `594c535` platform reruns and three fresh audits completed; Git/credential boundary findings are being reconciled before the final immutable revision |
 
 ## Current evidence
 
@@ -55,13 +55,19 @@ independent audits.
 - Initial immutable source anchor:
   `4b0430cbb3328e40c7da837d72c770e9ac4d88b7`; the complete Unix and native
   PowerShell matrices passed from its clean tree.
+- Reconciled candidate `594c535a52d95ab285ad8127e9d304bb3e681738`
+  passed 12/12 Unix/WSL groups plus 95 and 69 native Windows assertions. Its
+  fresh reviews found a worker-Git/host boundary Critical, credential-startup
+  High, and shell-state Medium; these are not treated as signed off until the
+  current fix delta, new full reruns, and final delta reviews pass.
 
 ## Open decisions
 
 - Whether live paired results justify any claim beyond "working evaluation
   mechanism"; default is to report inconclusive results rather than overfit.
-- Whether final review finds a narrow missing deterministic control that merits
-  one more implementation pass.
+- Whether direct skill-activation telemetry becomes available; current model
+  `selected_skills` output remains explicitly probabilistic rather than a direct
+  activation event.
 
 ## External evidence inputs
 
@@ -73,12 +79,12 @@ independent audits.
 
 ## Next action
 
-Commit the reconciled candidate whose worktree suites passed 12/12 Unix/WSL,
-95 native Windows lifecycle, and 69 native Windows onboarding/benchmark
-assertions. Rerun both complete platform suites from that clean immutable
-revision and obtain fresh read-only security, architecture/maintainability, and
-original-mission conformance reviews. Reconcile any justified finding before
-live evaluation. When the dedicated credential is available, run preliminary
+Finish the accepted security fix delta: isolate worker Git metadata, sandbox
+scope inspection, harden credential entrypoints, pin Codex binary identity,
+strengthen schemas, and fix review-noted state/documentation drift. Regenerate
+the payload manifest, rerun both complete platform suites, commit the clean
+revision, rerun from it, bind the exact results through `release-attestations`,
+and obtain short final read-only delta reviews. When the dedicated credential is available, run preliminary
 evaluation, finalize and commit tracked reports, then rerun all three live
 checkout commands on that unchanged commit. Bind their safe receipt hashes
 through a detached attestation and close traceability only against the

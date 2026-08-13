@@ -73,7 +73,7 @@ refresh_test_source_manifest() {
 
 test_static_quality() {
   local schema_fixture="$TEST_TMP/schema-fixture.json" source_tree="$TEST_TMP/source-hash" snapshot="$TEST_TMP/source-snapshot"
-  local hash_before hash_after
+  local hash_before hash_after scan_tree="$TEST_TMP/evaluation-scan-state"
   bash -n "$TEST_ROOT/scripts/"*.sh "$TEST_ROOT/scripts/lib/"*.sh "$TEST_ROOT/benchmarks/verifiers/"*.sh \
     "$TEST_ROOT/tests/behavior/"*.sh "$TEST_ROOT/tests/behavior/verifiers/"*.sh
   shellcheck "$TEST_ROOT/scripts/lib/common.sh" "$TEST_ROOT/scripts/lib/evaluation.sh" "$TEST_ROOT/scripts/codex-baseline.sh" \
@@ -137,11 +137,11 @@ test_static_quality() {
     ([.required[]] | index("artifact_exact_secret_scan") != null)
   ' "$TEST_ROOT/contracts/benchmark-canary.schema.json" >/dev/null
 
-  jq -n '{schema:1,contract:"codex-baseline-benchmark/v1",platform:"wsl2",mode:"live-containment-canary",status:"completed",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:false,created:"2026-08-13T12:00:00Z",codex:"codex 0.147.0",model:"account-default",source_revision:"abc",source_dirty:false,source_hash:("0"*64),codex_binary_hash:("1"*64),node_binary_hash:("2"*64),auth:"dedicated-api-key-stdin-pipe",tool_network_target:"loopback-only",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' >"$schema_fixture"
+  jq -n '{schema:1,contract:"codex-baseline-benchmark/v1",platform:"wsl2",mode:"live-containment-canary",status:"completed",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:false,created:"2026-08-13T12:00:00Z",codex:"codex 0.147.0",model:"account-default",source_revision:"abc",source_dirty:false,source_hash:("0"*64),codex_binary_hash:("1"*64),expected_codex_binary_hash:("1"*64),codex_identity:"caller-pinned-sha256",node_binary_hash:("2"*64),auth:"dedicated-api-key-stdin-pipe",tool_network_target:"loopback-only",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' >"$schema_fixture"
   validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture"
   jq '.model_invoked = false' "$schema_fixture" >"$schema_fixture.invalid"
   assert_schema_rejects "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
-  jq -n '{schema:1,contract:"codex-baseline-benchmark/v1",platform:"linux",mode:"live-paired",status:"completed",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:true,created:"2026-08-13T12:00:00Z",codex:"codex 0.147.0",model:"account-default",source_revision:"abc",source_dirty:false,source_hash:("0"*64),manifest_hash:("1"*64),codex_binary_hash:("2"*64),node_binary_hash:("3"*64),auth:"dedicated-api-key-stdin-pipe",account_service_tier:"unknown",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' >"$schema_fixture"
+  jq -n '{schema:1,contract:"codex-baseline-benchmark/v1",platform:"linux",mode:"live-paired",status:"completed",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:true,created:"2026-08-13T12:00:00Z",codex:"codex 0.147.0",model:"account-default",source_revision:"abc",source_dirty:false,source_hash:("0"*64),manifest_hash:("1"*64),codex_binary_hash:("2"*64),expected_codex_binary_hash:("2"*64),codex_identity:"caller-pinned-sha256",node_binary_hash:("3"*64),auth:"dedicated-api-key-stdin-pipe",account_service_tier:"unknown",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' >"$schema_fixture"
   validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture"
   jq 'del(.source_hash)' "$schema_fixture" >"$schema_fixture.invalid"
   assert_schema_rejects "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
@@ -153,6 +153,34 @@ test_static_quality() {
   validate_schema "$TEST_ROOT/contracts/benchmark-canary.schema.json" "$schema_fixture"
   jq '.proc_key_carrier_secret_unreadable = false' "$schema_fixture" >"$schema_fixture.invalid"
   assert_schema_rejects "$TEST_ROOT/contracts/benchmark-canary.schema.json" "$schema_fixture.invalid"
+
+  jq -n '{schema:1,task:"small-js-bug",class:"small",arm:"baseline",repetition:1,pass:true,process_exit:0,verifier_exit:0,elapsed_ms:1,turns:1,commands:1,file_changes:1,changed_files:1,unnecessary_files:0,changed_paths:["calc.js"],unnecessary_paths:[],failed_command_events:0,subagent_events:0,input_tokens:null,output_tokens:null,baseline_layer_bytes:1,retry_count:null,review_findings:null,isolation:"os-sandboxed-local-cgroup",source_hash:("0"*64),layer_hash:("1"*64),fixture_hash:("2"*64),prompt_hash:("3"*64),verifier_hash:("4"*64)}' >"$schema_fixture"
+  validate_schema "$TEST_ROOT/contracts/benchmark-result.schema.json" "$schema_fixture"
+  jq '.process_exit = 7' "$schema_fixture" >"$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/contracts/benchmark-result.schema.json" "$schema_fixture.invalid"
+  jq -n '{schema:1,contract:"codex-baseline-routing-result/v1",id:"lean",repetition:1,pass:true,process_exit:0,elapsed_ms:1,turns:1,commands:0,file_changes:0,input_tokens:null,output_tokens:null,source_hash:("0"*64),prompt_hash:("1"*64),expected:{workflow:"LEAN",high_risk:false,skill:null},actual:{workflow:"LEAN",high_risk:false,selected_skills:[],reason:"bounded"}}' >"$schema_fixture"
+  validate_schema "$TEST_ROOT/contracts/routing-result.schema.json" "$schema_fixture"
+  jq '.commands = 1' "$schema_fixture" >"$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/contracts/routing-result.schema.json" "$schema_fixture.invalid"
+  jq -n '{schema:1,contract:"codex-baseline-behavior-result/v1",id:"deep",repetition:1,pass:true,process_exit:0,verifier_exit:0,elapsed_ms:1,turns:1,commands:1,file_changes:0,input_tokens:null,output_tokens:null,source_hash:("0"*64),prompt_hash:("1"*64),actual:{case_id:"deep"}}' >"$schema_fixture"
+  validate_schema "$TEST_ROOT/contracts/behavior-result.schema.json" "$schema_fixture"
+  jq '.actual = null' "$schema_fixture" >"$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/contracts/behavior-result.schema.json" "$schema_fixture.invalid"
+
+  mkdir -- "$scan_tree"
+  printf 'clean\n' >"$scan_tree/artifact.txt"
+  /bin/bash -c '
+    source "$1/scripts/lib/common.sh"
+    source "$1/scripts/lib/evaluation.sh"
+    set +e
+    set +o pipefail
+    eval_tree_is_clean "$2"
+    [[ $- != *e* && $(set -o | awk '\''$1 == "pipefail" { print $2 }'\'') == off ]]
+    set -e
+    set -o pipefail
+    eval_tree_is_clean "$2"
+    [[ $- == *e* && $(set -o | awk '\''$1 == "pipefail" { print $2 }'\'') == on ]]
+  ' _ "$TEST_ROOT" "$scan_tree"
 
   mkdir -p -- "$source_tree/excluded" "$source_tree/benchmark-results" "$source_tree/behavior-results" "$source_tree/.codebase-memory" "$snapshot"
   printf 'source\n' >"$source_tree/tracked.txt"
@@ -564,6 +592,7 @@ test_onboarding() {
 
 test_benchmark_contract() {
   local output="$TEST_TMP/benchmark-live" canary_output="$TEST_TMP/benchmark-canary"
+  local git_attack_output="$TEST_TMP/benchmark-git-metadata" identity_output="$TEST_TMP/benchmark-identity"
   local leak_output="$TEST_TMP/benchmark-canary-leak" workspace_leak_output="$TEST_TMP/benchmark-canary-workspace-leak"
   local home_leak_output="$TEST_TMP/benchmark-canary-home-leak" sentinel_leak_output="$TEST_TMP/benchmark-canary-sentinel-leak"
   local forged_output="$TEST_TMP/benchmark-canary-forged" special_output="$TEST_TMP/benchmark-canary-special"
@@ -574,10 +603,13 @@ test_benchmark_contract() {
   local malformed_output="$TEST_TMP/benchmark-malformed"
   local failed_output="$TEST_TMP/benchmark-failed"
   local newline_output="$TEST_TMP/benchmark-newline-key" hijack_root="$TEST_TMP/benchmark-path-hijack"
+  local startup_env="$TEST_TMP/benchmark-bash-env" startup_marker="$TEST_TMP/benchmark-startup-key-seen"
   local quiescence_log="$TEST_TMP/benchmark-quiescence.log"
   local installed_root installed_result installed_bad status platform=linux
   local CODEX_BASELINE_TESTING=1
-  export CODEX_BASELINE_TESTING
+  local CODEX_BASELINE_EXPECTED_CODEX_SHA256
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256=$(sha256sum -- "$TEST_ROOT/tests/fixtures/codex" | awk '{print $1}')
+  export CODEX_BASELINE_TESTING CODEX_BASELINE_EXPECTED_CODEX_SHA256
   if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then platform=wsl2; fi
   "$TEST_ROOT/scripts/benchmark.sh" --static >/dev/null
   jq -e '.tasks | map(.class) | unique | sort == ["large","medium","risk-sensitive","small"]' "$TEST_ROOT/benchmarks/manifest.json" >/dev/null
@@ -626,16 +658,20 @@ test_benchmark_contract() {
     printf '#!/bin/sh\nprintf "%%s\\n" %q >>%q\nexit 97\n' "$command" "$hijack_root/invoked" >"$hijack_root/$command"
     chmod 0755 -- "$hijack_root/$command"
   done
-  CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$hijack_root:$TEST_ROOT/tests/fixtures:$PATH" \
+  printf 'if [[ -n ${CODEX_BASELINE_BENCHMARK_API_KEY-} ]]; then : >%q; fi\n' "$startup_marker" >"$startup_env"
+  BASH_ENV="$startup_env" CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$hijack_root:$TEST_ROOT/tests/fixtures:$PATH" \
     "$TEST_ROOT/scripts/benchmark.sh" --live --tasks small-js-bug --repetitions 1 --output "$output" >/dev/null
   test ! -e "$hijack_root/invoked"
+  test ! -e "$startup_marker"
   jq -e --arg platform "$platform" '
     .contract == "codex-baseline-benchmark/v1" and .platform == $platform and
     .mode == "live-paired" and .status == "completed" and
     .isolation == "os-sandboxed-local-cgroup" and .model_invoked and .verifiers_executed and
     .auth == "dedicated-api-key-stdin-pipe" and
     .resource_profile == "user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs" and
-    (.codex_binary_hash | test("^[0-9a-f]{64}$")) and (.node_binary_hash | test("^[0-9a-f]{64}$"))
+    (.codex_binary_hash | test("^[0-9a-f]{64}$")) and
+    .expected_codex_binary_hash == .codex_binary_hash and .codex_identity == "caller-pinned-sha256" and
+    (.node_binary_hash | test("^[0-9a-f]{64}$"))
   ' "$output/run.json" >/dev/null
   validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$output/run.json"
   validate_jsonl_schema "$TEST_ROOT/contracts/benchmark-result.schema.json" "$output/results.jsonl"
@@ -654,6 +690,22 @@ test_benchmark_contract() {
     .inference.confidence_interval == null
   ' "$output/summary.json" >/dev/null
   test ! -e "$output/INVALID.md"
+
+  CODEX_BASELINE_BENCHMARK_API_KEY=codex-baseline-test-git-metadata-0123456789 PATH="$TEST_ROOT/tests/fixtures:$PATH" \
+    "$TEST_ROOT/scripts/benchmark.sh" --live --tasks small-js-bug --repetitions 1 --output "$git_attack_output" >/dev/null
+  jq -s -e 'length == 2 and all(.pass) and all(.changed_paths == ["calc.js"]) and all(.unnecessary_paths == [])' \
+    "$git_attack_output/results.jsonl" >/dev/null
+  if rg -F 'git-host-executed' "$git_attack_output"; then return 1; fi
+
+  set +e
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+    CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$TEST_ROOT/tests/fixtures:$PATH" \
+    "$TEST_ROOT/scripts/benchmark.sh" --canary --output "$identity_output" >"$TEST_TMP/benchmark-identity.log" 2>&1
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  grep -q 'does not match the caller-pinned SHA-256' "$TEST_TMP/benchmark-identity.log"
+  test ! -e "$identity_output/run.json"
 
   CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$TEST_ROOT/tests/fixtures:$PATH" \
     "$TEST_ROOT/scripts/benchmark.sh" --canary --output "$canary_output" >/dev/null
@@ -824,8 +876,10 @@ test_benchmark_contract() {
   installed_root=$(new_home installed-benchmark)
   baseline "$installed_root" install >/dev/null
   HOME="$installed_root/home" CODEX_HOME="$installed_root/home/.codex" AGENTS_HOME="$installed_root/home/.agents" \
-    CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$TEST_ROOT/tests/fixtures:$PATH" \
+    BASH_ENV="$startup_env" CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$hijack_root:$TEST_ROOT/tests/fixtures:$PATH" \
     "$installed_root/home/.local/bin/codex-baseline" benchmark --canary >"$installed_root/wrapper-canary.log"
+  test ! -e "$startup_marker"
+  test ! -e "$hijack_root/invoked"
   installed_result=$(sed -n 's/^containment canary passed: //p' "$installed_root/wrapper-canary.log")
   [[ $installed_result == "$installed_root/home/.local/state/codex-baseline/behavior-results/"* ]]
   test -f "$installed_result/canary.json"
@@ -854,8 +908,11 @@ test_routing_contract() {
   local home_leak_output="$TEST_TMP/routing-home-leak" special_output="$TEST_TMP/routing-special" status
   local behavior_id behavior_verifier behavior_fixture before_hash after_hash inspector_output
   local inspector_deep="$TEST_TMP/behavior-inspector-deep" inspector_special="$TEST_TMP/behavior-inspector-special" cursor
+  local startup_env="$TEST_TMP/routing-bash-env" startup_marker="$TEST_TMP/routing-startup-key-seen"
   local CODEX_BASELINE_TESTING=1
-  export CODEX_BASELINE_TESTING
+  local CODEX_BASELINE_EXPECTED_CODEX_SHA256
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256=$(sha256sum -- "$TEST_ROOT/tests/fixtures/codex" | awk '{print $1}')
+  export CODEX_BASELINE_TESTING CODEX_BASELINE_EXPECTED_CODEX_SHA256
   while IFS= read -r behavior_id; do
     behavior_fixture="$TEST_ROOT/tests/behavior/fixtures/$behavior_id"
     test -d "$behavior_fixture"
@@ -889,8 +946,10 @@ test_routing_contract() {
   grep -q 'invalid line break' "$TEST_TMP/routing-newline.log"
   test ! -e "$newline_output"
 
-  CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$TEST_ROOT/tests/fixtures:$PATH" \
+  printf 'if [[ -n ${CODEX_BASELINE_BENCHMARK_API_KEY-} ]]; then : >%q; fi\n' "$startup_marker" >"$startup_env"
+  BASH_ENV="$startup_env" CODEX_BASELINE_BENCHMARK_API_KEY=synthetic PATH="$TEST_ROOT/tests/fixtures:$PATH" \
     "$TEST_ROOT/scripts/routing-probe.sh" --repetitions 1 --output "$output" >/dev/null
+  test ! -e "$startup_marker"
   jq -e '
     .contract == "codex-baseline-routing-run/v1" and .mode == "live-routing-and-behavior" and
     .status == "completed" and .model_invoked and .host_checks_executed and
@@ -898,7 +957,9 @@ test_routing_contract() {
     .resource_profile == "user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs" and
     .routing_cases == 6 and .behavior_cases == 4 and
     (.source_hash | test("^[0-9a-f]{64}$")) and
-    (.codex_binary_hash | test("^[0-9a-f]{64}$")) and (.node_binary_hash | test("^[0-9a-f]{64}$"))
+    (.codex_binary_hash | test("^[0-9a-f]{64}$")) and
+    .expected_codex_binary_hash == .codex_binary_hash and .codex_identity == "caller-pinned-sha256" and
+    (.node_binary_hash | test("^[0-9a-f]{64}$"))
   ' "$output/run.json" >/dev/null
   validate_schema "$TEST_ROOT/contracts/routing-run.schema.json" "$output/run.json"
   validate_schema "$TEST_ROOT/contracts/routing-summary.schema.json" "$output/summary.json"

@@ -59,6 +59,12 @@ eval_validate_key() {
   (( ${#key} <= 8192 )) || cb_die 'benchmark key exceeds the 8192-byte input limit'
 }
 
+eval_validate_expected_codex_hash() {
+  local expected=$1
+  [[ $expected =~ ^[0-9a-f]{64}$ ]] ||
+    cb_die 'live evaluation requires CODEX_BASELINE_EXPECTED_CODEX_SHA256 as 64 lowercase hexadecimal characters'
+}
+
 eval_assert_no_link_ancestors() {
   local path=$1 normalized rel segment cursor=''
   [[ $path == /* ]] || cb_die 'evaluation path must be absolute'
@@ -299,12 +305,15 @@ eval_tree_is_clean() {
   local inventory entry rel bytes entries=0 total=0 depth status
   [[ -d $root && ! -L $root ]] || cb_die 'unsafe evaluation artifact tree'
   inventory=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-eval-scan.XXXXXX")
-  set +e
-  set -o pipefail
-  $EVAL_TIMEOUT --foreground --signal=TERM --kill-after=2 30 \
-    $EVAL_FIND -P "$root" -mindepth 1 -print0 | $EVAL_HEAD -c 16777217 >"$inventory"
-  status=$?
-  set -e
+  if (
+    set -o pipefail
+    $EVAL_TIMEOUT --foreground --signal=TERM --kill-after=2 30 \
+      $EVAL_FIND -P "$root" -mindepth 1 -print0 | $EVAL_HEAD -c 16777217 >"$inventory"
+  ); then
+    status=0
+  else
+    status=$?
+  fi
   [[ $status -eq 0 ]] || { rm -f -- "$inventory"; cb_die 'evaluation artifact enumeration failed or exceeded its bound'; }
   # Removing the private inventory on a fail-closed branch is safe while its
   # already-open read descriptor is active.

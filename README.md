@@ -99,10 +99,13 @@ conflict. Rollback/uninstall never silently discard drifted managed content.
 ./tests/run-powershell.sh
 codex-baseline benchmark --static
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256='<reviewed-codex-sha256>' \
   scripts/benchmark.sh --live --repetitions 3
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256='<reviewed-codex-sha256>' \
   scripts/routing-probe.sh --repetitions 3
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  CODEX_BASELINE_EXPECTED_CODEX_SHA256='<reviewed-codex-sha256>' \
   scripts/benchmark.sh --canary
 ```
 
@@ -119,9 +122,11 @@ and byte-bounded tmpfs mounts. Results are labelled
 private holdouts or an external worker unable to mount this source/verifier.
 The canary uses only a preflighted loopback listener and fails unless tool-shell
 environment, the key-carrying process environment in `/proc`, exact content and
-path-name secret scans, and tool network all remain contained. The trusted
-runner removes the input key from its exported environment before starting
-runner helpers and transfers it through the final cgroup service's stdin pipe.
+path-name secret scans, and tool network all remain contained. The fixed-shell
+bootstrap ignores Bash startup hooks; the trusted runner then removes the input
+key from its exported environment before starting helpers and transfers it
+through the final cgroup service's stdin pipe. The caller-pinned Codex hash must
+match the frozen executable and is recorded in each live receipt.
 Release receipts use these direct checkout scripts so paired, routing, and
 Canary runs bind the same complete source hash; installed-wrapper runs bind the
 installed runtime instead.

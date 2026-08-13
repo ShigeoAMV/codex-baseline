@@ -1,4 +1,19 @@
-#!/bin/bash
+#!/bin/sh
+# shellcheck shell=bash
+
+# Use a fixed privileged-mode Bash only for startup. This prevents BASH_ENV,
+# inherited functions, and option variables from running before the dedicated
+# key is captured and removed. No OS privilege is requested or retained.
+case ${BASH_VERSION-}:$- in
+  ?*:*p*) ;;
+  *)
+    unset BASH_ENV ENV SHELLOPTS BASHOPTS CDPATH GLOBIGNORE 2>/dev/null || :
+    exec /bin/bash -p "$0" "$@"
+    exit 127
+    ;;
+esac
+unset BASH_ENV ENV CDPATH GLOBIGNORE 2>/dev/null || :
+set +p
 
 set +x
 set -Eeuo pipefail
@@ -8,7 +23,9 @@ umask 077
 
 BENCH_INPUT_KEY=${CODEX_BASELINE_BENCHMARK_API_KEY-}
 export -n BENCH_INPUT_KEY 2>/dev/null || true
-unset CODEX_BASELINE_BENCHMARK_API_KEY OPENAI_API_KEY CODEX_API_KEY
+BENCH_EXPECTED_CODEX_HASH=${CODEX_BASELINE_EXPECTED_CODEX_SHA256-}
+export -n BENCH_EXPECTED_CODEX_HASH 2>/dev/null || true
+unset CODEX_BASELINE_BENCHMARK_API_KEY CODEX_BASELINE_EXPECTED_CODEX_SHA256 OPENAI_API_KEY CODEX_API_KEY
 BENCH_INPUT_PATH=${PATH:-/usr/bin:/bin}
 PATH=/usr/bin:/bin
 export PATH
@@ -70,6 +87,8 @@ Options:
   --repetitions N    Paired repetitions per task (default: 3)
   --tasks CSV        Task IDs to run
   --model MODEL      Explicit model for both arms
+  --expected-codex-sha256 HASH
+                     Pin the reviewed Codex executable used by live modes
   --output DIR       Result directory (live/canary mode)
   --timeout-seconds N  Maximum wall time for one Codex arm (default: 600)
 Static mode validates fixtures and proves every starter fails its verifier. It
@@ -94,6 +113,9 @@ bench_parse() {
         BENCH_REPETITIONS=$2; BENCH_REPETITIONS_SET=true; shift ;;
       --tasks) [[ $# -ge 2 ]] || cb_die '--tasks requires CSV'; BENCH_TASKS=$2; BENCH_TASKS_SET=true; shift ;;
       --model) [[ $# -ge 2 ]] || cb_die '--model requires a value'; BENCH_MODEL=$2; shift ;;
+      --expected-codex-sha256)
+        [[ $# -ge 2 ]] || cb_die '--expected-codex-sha256 requires a hash'
+        BENCH_EXPECTED_CODEX_HASH=$2; shift ;;
       --output) [[ $# -ge 2 ]] || cb_die '--output requires a directory'; BENCH_OUTPUT=$2; shift ;;
       --timeout-seconds)
         [[ $# -ge 2 && $2 =~ ^[1-9][0-9]*$ && $2 -le 1800 ]] || cb_die '--timeout-seconds requires an integer from 1 through 1800'
@@ -139,8 +161,11 @@ bench_prepare_tools() {
   BENCH_NODE_PATH="$root/node"
   BENCH_NODE_HASH=$(eval_freeze_executable node "$CB_SOURCE_ROOT" "$BENCH_NODE_PATH")
   if [[ $need_codex == true ]]; then
+    eval_validate_expected_codex_hash "$BENCH_EXPECTED_CODEX_HASH"
     BENCH_CODEX_PATH="$root/codex"
     BENCH_CODEX_HASH=$(eval_freeze_executable codex "$CB_SOURCE_ROOT" "$BENCH_CODEX_PATH")
+    [[ $BENCH_CODEX_HASH == "$BENCH_EXPECTED_CODEX_HASH" ]] ||
+      cb_die 'resolved Codex executable does not match the caller-pinned SHA-256'
     eval_require_cgroup_boundary
   fi
 }
@@ -182,9 +207,41 @@ bench_layer_bytes() {
   printf '%d' "$total"
 }
 
+bench_scope_git() {
+  local workspace=$1 git_metadata=$2
+  shift 2
+  [[ -d $workspace && ! -L $workspace && -d $git_metadata && ! -L $git_metadata ]] ||
+    cb_die 'unsafe trusted Git scope boundary'
+  eval_run_scoped_command 20 \
+    "$EVAL_ENV" -i HOME=/home GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 \
+    PATH=/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    "$EVAL_TIMEOUT" --foreground --signal=TERM --kill-after=2 15 \
+    "$EVAL_PRLIMIT" --core=0 --fsize=16777216 --nofile=64 --nproc=4096 --as=536870912 --cpu=12 -- \
+    "$EVAL_BWRAP" --unshare-all --unshare-user --disable-userns --die-with-parent --new-session --clearenv --cap-drop ALL \
+    --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+    --proc /proc --dev /dev --size 67108864 --tmpfs /tmp --dir /home --dir /workspace --dir /git-metadata \
+    --ro-bind "$workspace" /workspace --ro-bind "$git_metadata" /git-metadata \
+    --setenv HOME /home --setenv GIT_CONFIG_NOSYSTEM 1 --setenv GIT_CONFIG_GLOBAL /dev/null \
+    --setenv GIT_OPTIONAL_LOCKS 0 --setenv PATH /usr/bin:/bin --setenv LANG C.UTF-8 --setenv LC_ALL C.UTF-8 \
+    /usr/bin/git --git-dir=/git-metadata --work-tree=/workspace \
+      -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+}
+
 bench_scope_metrics() {
-  local task=$1 workspace=$2 output=$3 isolated_home=$4 path
+  local task=$1 workspace=$2 output=$3 git_metadata=$4 path inventory
   local -a changed_paths=() unnecessary_paths=()
+  inventory=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-scope.XXXXXX")
+  if {
+    bench_scope_git "$workspace" "$git_metadata" diff --no-ext-diff --no-textconv --ignore-submodules=all --name-only -z HEAD --
+    # Deliberately do not honor worker-controlled ignore files: every untracked
+    # path is an actual scope change and must remain visible to the metric.
+    bench_scope_git "$workspace" "$git_metadata" ls-files --others -z
+  } >"$inventory"; then
+    LC_ALL=C sort -zu -o "$inventory" "$inventory"
+  else
+    rm -f -- "$inventory"
+    cb_die 'sandboxed Git scope inspection failed'
+  fi
   while IFS= read -r -d '' path; do
     changed_paths+=("$path")
     if ! jq -e --arg task "$task" --arg path "$path" \
@@ -192,7 +249,8 @@ bench_scope_metrics() {
       "$BENCH_EVAL_ROOT/benchmarks/manifest.json" >/dev/null; then
       unnecessary_paths+=("$path")
     fi
-  done < <({ bench_git "$workspace" "$isolated_home" diff --no-ext-diff --name-only -z HEAD --; bench_git "$workspace" "$isolated_home" ls-files --others --exclude-standard -z; } | LC_ALL=C sort -zu)
+  done <"$inventory"
+  rm -f -- "$inventory"
   jq -nc \
     --argjson changed_count "${#changed_paths[@]}" --argjson unnecessary_count "${#unnecessary_paths[@]}" \
     --arg changed_marker __CODEX_BASELINE_UNNECESSARY__ \
@@ -344,7 +402,9 @@ eval_tree_is_clean /workspace 4096 268435456
 eval_tree_is_clean /worker-home 4096 268435456
 workspace_empty=false
 [[ -z $(/usr/bin/find -P /workspace -mindepth 1 -print -quit) ]] && workspace_empty=true
-/usr/bin/tar -cf /workspace-export -C /workspace .
+# Git metadata is a trusted read-only mount supplied by the host. It is never
+# exported back across the worker boundary.
+/usr/bin/tar --exclude='./.git' -cf /workspace-export -C /workspace .
 printf '%s\t%s\n' "$codex_exit" "$workspace_empty" > /worker-status
 unset benchmark_key canary_secret EVAL_SECRET_ONE EVAL_SECRET_TWO
 EOF
@@ -360,11 +420,11 @@ bench_codex_version() {
 }
 
 bench_run_codex() {
-  local home=$1 workspace_seed=$2 workspace=$3 events=$4 stderr_log=$5 last_host=$6 prompt=$7
-  shift 7
+  local home=$1 workspace_seed=$2 workspace=$3 git_metadata=$4 events=$5 stderr_log=$6 last_host=$7 prompt=$8
+  shift 8
   local codex_path node_path timeout_path prlimit_path bwrap_path process_exit
   local run_root launcher worker_status workspace_export infrastructure_exit workspace_empty archive_entry
-  local -a canary_mount=()
+  local -a canary_mount=() git_mount=()
   codex_path=$BENCH_CODEX_PATH
   node_path=$BENCH_NODE_PATH
   timeout_path=$EVAL_TIMEOUT
@@ -374,6 +434,10 @@ bench_run_codex() {
     [[ -f $BENCH_CANARY_HELPER && ! -L $BENCH_CANARY_HELPER && -x $BENCH_CANARY_HELPER ]] ||
       cb_die 'unsafe containment canary helper'
     canary_mount=(--ro-bind "$BENCH_CANARY_HELPER" /canary-probe)
+  fi
+  if [[ -n $git_metadata ]]; then
+    [[ -d $git_metadata && ! -L $git_metadata ]] || cb_die 'unsafe trusted benchmark Git metadata'
+    git_mount=(--dir /workspace/.git --ro-bind "$git_metadata" /workspace/.git)
   fi
   run_root=${home%/home}
   [[ $run_root != "$home" && -d $run_root && ! -L $run_root ]] || cb_die 'unsafe benchmark run root'
@@ -400,7 +464,7 @@ bench_run_codex() {
     --ro-bind-try /etc/gai.conf /etc/gai.conf --ro-bind-try /etc/host.conf /etc/host.conf \
     --proc /proc --dev /dev --size 134217728 --tmpfs /tmp \
     --dir /worker-home --size 268435456 --tmpfs /worker-home \
-    --dir /workspace --size 268435456 --tmpfs /workspace --dir /opt --dir /opt/node --dir /eval-lib \
+    --dir /workspace --size 268435456 --tmpfs /workspace "${git_mount[@]}" --dir /opt --dir /opt/node --dir /eval-lib \
     --ro-bind "$home/user" /home-seed --ro-bind "$workspace_seed" /workspace-seed \
     --ro-bind "$codex_path" /opt/codex --ro-bind "$node_path" /opt/node/node \
     --ro-bind "$launcher" /codex-launch \
@@ -426,6 +490,7 @@ bench_run_codex() {
   [[ -f $workspace_export && ! -L $workspace_export && $(stat -c '%s' -- "$workspace_export") -le 268435456 ]] || cb_die 'unsafe benchmark workspace export'
   while IFS= read -r archive_entry; do
     [[ -n $archive_entry && $archive_entry != /* && $archive_entry != ../* && $archive_entry != *'/../'* ]] || cb_die 'unsafe benchmark workspace archive entry'
+    case $archive_entry in .git|.git/*|./.git|./.git/*) cb_die 'worker export contains forbidden Git metadata' ;; esac
   done < <(/usr/bin/tar -tf "$workspace_export")
   [[ -z $(find -P "$workspace" -mindepth 1 -print -quit) ]] || cb_die 'benchmark export target is not empty'
   /usr/bin/tar --no-same-owner --no-same-permissions -xf "$workspace_export" -C "$workspace"
@@ -557,8 +622,8 @@ bench_canary() {
   fi
   jq -nc --arg created "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg codex "$(bench_codex_version "$source_git_home/codex-version")" --arg model "${BENCH_MODEL:-account-default}" --arg platform "$platform" \
     --arg revision "$source_revision" --argjson dirty "$source_dirty" --arg source_hash "$BENCH_FROZEN_SOURCE_HASH" \
-    --arg codex_binary_hash "$BENCH_CODEX_HASH" --arg node_binary_hash "$BENCH_NODE_HASH" \
-    '{schema:1,contract:"codex-baseline-benchmark/v1",platform:$platform,mode:"live-containment-canary",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:false,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,node_binary_hash:$node_binary_hash,auth:"dedicated-api-key-stdin-pipe",tool_network_target:"loopback-only",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
+    --arg codex_binary_hash "$BENCH_CODEX_HASH" --arg expected_codex_binary_hash "$BENCH_EXPECTED_CODEX_HASH" --arg node_binary_hash "$BENCH_NODE_HASH" \
+    '{schema:1,contract:"codex-baseline-benchmark/v1",platform:$platform,mode:"live-containment-canary",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:false,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,expected_codex_binary_hash:$expected_codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,auth:"dedicated-api-key-stdin-pipe",tool_network_target:"loopback-only",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
     >"$BENCH_OUTPUT/run.json"
 
   run_root=$(mktemp -d "${TMPDIR:-/tmp}/codex-baseline-bench.XXXXXX")
@@ -603,7 +668,7 @@ EOF
   )
   local -a args=(exec --json --ephemeral --strict-config --ignore-rules --skip-git-repo-check)
   [[ -z $BENCH_MODEL ]] || args+=(-m "$BENCH_MODEL")
-  if bench_run_codex "$home" "$workspace_seed" "$workspace" "$events" "$stderr_log" "$last" "$prompt" "${args[@]}"; then
+  if bench_run_codex "$home" "$workspace_seed" "$workspace" '' "$events" "$stderr_log" "$last" "$prompt" "${args[@]}"; then
     process_exit=0
   else
     process_exit=$?
@@ -658,7 +723,7 @@ EOF
 bench_run_one() {
   local task=$1 repetition=$2 arm=$3 fixture verifier run_root workspace workspace_seed home events last prompt
   local start_ns end_ns elapsed process_exit verifier_exit pass turns commands changes changed_files unnecessary_files failed_commands subagents input_tokens output_tokens
-  local changed_paths unnecessary_paths private_verifier
+  local changed_paths unnecessary_paths private_verifier git_metadata git_metadata_hash
   local current_source_hash layer_hash layer_bytes fixture_hash prompt_hash verifier_hash scope_metrics task_class
   fixture="$BENCH_EVAL_ROOT/benchmarks/fixtures/$task"
   verifier="$BENCH_EVAL_ROOT/benchmarks/verifiers/$task.sh"
@@ -679,6 +744,10 @@ bench_run_one() {
   bench_git "$workspace_seed" "$run_root/git-home" init -q
   bench_git "$workspace_seed" "$run_root/git-home" add --all
   bench_git "$workspace_seed" "$run_root/git-home" -c user.name=codex-baseline -c user.email=baseline.invalid commit -qm starter
+  git_metadata="$run_root/git-metadata"
+  mv -- "$workspace_seed/.git" "$git_metadata"
+  [[ -d $git_metadata && ! -L $git_metadata && ! -e $workspace_seed/.git ]] || cb_die 'cannot isolate trusted benchmark Git metadata'
+  git_metadata_hash=$(cb_tree_hash "$git_metadata")
   bench_prepare_home "$arm" "$home"
   current_source_hash=$(bench_source_hash)
   [[ $current_source_hash == "$BENCH_FROZEN_SOURCE_HASH" ]] || cb_die 'source changed during benchmark; run invalidated before next arm'
@@ -694,7 +763,7 @@ bench_run_one() {
   local -a args=(exec --json --ephemeral --strict-config --ignore-rules --skip-git-repo-check)
   [[ -z $BENCH_MODEL ]] || args+=(-m "$BENCH_MODEL")
   start_ns=$(date +%s%N)
-  if bench_run_codex "$home" "$workspace_seed" "$workspace" "$events" "$BENCH_OUTPUT/stderr-$task-r$repetition-$arm.log" "$last" "$prompt" "${args[@]}"; then
+  if bench_run_codex "$home" "$workspace_seed" "$workspace" "$git_metadata" "$events" "$BENCH_OUTPUT/stderr-$task-r$repetition-$arm.log" "$last" "$prompt" "${args[@]}"; then
     process_exit=0
   else
     process_exit=$?
@@ -702,6 +771,7 @@ bench_run_one() {
   bench_validate_events "$events"
   [[ $(bench_source_hash) == "$BENCH_FROZEN_SOURCE_HASH" ]] || cb_die 'source changed during benchmark worker execution'
   [[ $(cb_source_tree_hash "$BENCH_EVAL_ROOT") == "$BENCH_FROZEN_SOURCE_HASH" ]] || cb_die 'private source snapshot changed during benchmark worker execution'
+  [[ $(cb_tree_hash "$git_metadata") == "$git_metadata_hash" ]] || cb_die 'trusted Git metadata changed during benchmark worker execution'
   bench_artifacts_are_clean "$events" "$last" "$BENCH_OUTPUT/stderr-$task-r$repetition-$arm.log"
   bench_tree_artifacts_are_clean "$workspace"
   bench_tree_artifacts_are_clean "$home/user"
@@ -715,12 +785,14 @@ bench_run_one() {
   [[ $(bench_source_hash) == "$BENCH_FROZEN_SOURCE_HASH" ]] || cb_die 'source changed during benchmark verifier execution'
   [[ $(cb_source_tree_hash "$BENCH_EVAL_ROOT") == "$BENCH_FROZEN_SOURCE_HASH" ]] || cb_die 'private source snapshot changed during benchmark verifier execution'
   [[ $(cb_sha256_file "$verifier") == "$verifier_hash" ]] || cb_die 'private verifier changed during execution'
+  [[ $(cb_tree_hash "$git_metadata") == "$git_metadata_hash" ]] || cb_die 'trusted Git metadata changed during benchmark verifier execution'
   bench_artifacts_are_clean "$BENCH_OUTPUT/verifier-$task-r$repetition-$arm.log"
   bench_tree_artifacts_are_clean "$workspace"
   pass=false
   [[ $process_exit -eq 0 && $verifier_exit -eq 0 ]] && pass=true
   scope_metrics="$run_root/scope.tsv"
-  bench_scope_metrics "$task" "$workspace" "$scope_metrics" "$run_root/git-home"
+  bench_scope_metrics "$task" "$workspace" "$scope_metrics" "$git_metadata"
+  [[ $(cb_tree_hash "$git_metadata") == "$git_metadata_hash" ]] || cb_die 'trusted Git metadata changed during scope inspection'
   changed_files=$(jq -er '.changed_count' "$scope_metrics")
   unnecessary_files=$(jq -er '.unnecessary_count' "$scope_metrics")
   changed_paths=$(jq -ec '.changed_paths' "$scope_metrics")
@@ -777,8 +849,8 @@ bench_live() {
   fi
   jq -nc --arg created "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg codex "$(bench_codex_version "$source_git_home/codex-version")" --arg model "${BENCH_MODEL:-account-default}" --arg platform "$platform" \
     --arg revision "$source_revision" --argjson dirty "$source_dirty" --arg manifest_hash "$(cb_sha256_file "$BENCH_EVAL_ROOT/benchmarks/manifest.json")" \
-    --arg source_hash "$BENCH_FROZEN_SOURCE_HASH" --arg codex_binary_hash "$BENCH_CODEX_HASH" --arg node_binary_hash "$BENCH_NODE_HASH" \
-    '{schema:1,contract:"codex-baseline-benchmark/v1",platform:$platform,mode:"live-paired",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,manifest_hash:$manifest_hash,codex_binary_hash:$codex_binary_hash,node_binary_hash:$node_binary_hash,auth:"dedicated-api-key-stdin-pipe",account_service_tier:"unknown",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
+    --arg source_hash "$BENCH_FROZEN_SOURCE_HASH" --arg codex_binary_hash "$BENCH_CODEX_HASH" --arg expected_codex_binary_hash "$BENCH_EXPECTED_CODEX_HASH" --arg node_binary_hash "$BENCH_NODE_HASH" \
+    '{schema:1,contract:"codex-baseline-benchmark/v1",platform:$platform,mode:"live-paired",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,manifest_hash:$manifest_hash,codex_binary_hash:$codex_binary_hash,expected_codex_binary_hash:$expected_codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,auth:"dedicated-api-key-stdin-pipe",account_service_tier:"unknown",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
     >"$BENCH_OUTPUT/run.json"
   : >"$BENCH_OUTPUT/results.jsonl"
   while IFS= read -r task; do
