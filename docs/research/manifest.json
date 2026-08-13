@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "contract": "codex-baseline-research/v1",
+  "checked": "2026-08-13",
+  "review_by": "2026-11-11",
+  "codex": {
+    "stable_version": "0.147.0",
+    "commit": "be6e8eac029b183056b7e4402879f15d2c85f61b",
+    "release_date": "2026-08-07"
+  },
+  "sources": [
+    {"id": "codex-docs", "tier": 1, "url": "https://developers.openai.com/codex/", "observed": "2026-08-13", "version": "live", "license": null},
+    {"id": "codex-release-0147", "tier": 1, "url": "https://github.com/openai/codex/releases/tag/rust-v0.147.0", "observed": "2026-08-13", "version": "0.147.0", "license": "Apache-2.0"},
+    {"id": "spec-kit", "tier": 2, "url": "https://github.com/github/spec-kit/releases/tag/v0.16.2", "observed": "2026-08-13", "version": "0.16.2", "license": "MIT"},
+    {"id": "superpowers", "tier": 2, "url": "https://github.com/obra/superpowers/releases/tag/v6.3.0", "observed": "2026-08-13", "version": "6.3.0", "license": "MIT"},
+    {"id": "omx", "tier": 2, "url": "https://github.com/Yeachan-Heo/oh-my-codex/releases/tag/v0.20.5", "observed": "2026-08-13", "version": "0.20.5", "license": "unresolved-root-license"},
+    {"id": "open-gsd", "tier": 2, "url": "https://github.com/open-gsd/gsd-core/releases/tag/v1.10.0", "observed": "2026-08-13", "version": "1.10.0", "license": "MIT"},
+    {"id": "bmad", "tier": 2, "url": "https://github.com/bmad-code-org/BMAD-METHOD/releases/tag/v6.11.0", "observed": "2026-08-13", "version": "6.11.0", "license": "MIT-plus-trademark-terms"},
+    {"id": "pilot-shell", "tier": 2, "url": "https://github.com/maxritter/pilot-shell/releases/tag/v10.2.2", "observed": "2026-08-13", "version": "10.2.2", "license": "proprietary"},
+    {"id": "hn-framework-friction", "tier": 3, "url": "https://news.ycombinator.com/item?id=45547344", "observed": "2026-08-13", "version": "discussion", "license": null},
+    {"id": "swe-skills-bench", "tier": 4, "url": "https://arxiv.org/abs/2606.20936", "observed": "2026-08-13", "version": "2026-06-24", "license": null},
+    {"id": "agents-md-impact", "tier": 4, "url": "https://arxiv.org/abs/2601.20404", "observed": "2026-08-13", "version": "2026-03-30", "license": null},
+    {"id": "e2edevbench", "tier": 4, "url": "https://arxiv.org/abs/2511.04064", "observed": "2026-08-13", "version": "2025-11-06", "license": null}
+  ]
+}

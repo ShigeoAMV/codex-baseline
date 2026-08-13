@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "contract": "codex-baseline-operations/v1",
+  "owned_text_encoding": "utf-8-no-bom",
+  "owned_line_endings": "lf",
+  "transaction_states": ["planned", "prepared", "committing", "recovering", "committed", "rolled-back"],
+  "object_states": ["planned", "prepared", "moving-old", "old-moved", "new-moved", "committed", "unchanged", "rolled-back"],
+  "operations": ["install", "update", "rollback", "uninstall"],
+  "objects": [
+    {"id": "00", "kind": "block", "root": "codex_home", "destination": "AGENTS.active.md", "source": "baseline/global/AGENTS.block.md"},
+    {"id": "10", "kind": "tree", "root": "agents_home", "destination": "skills/codex-baseline-repo-onboarding", "source": "baseline/skills/codex-baseline-repo-onboarding"},
+    {"id": "11", "kind": "tree", "root": "agents_home", "destination": "skills/codex-baseline-deep-work", "source": "baseline/skills/codex-baseline-deep-work"},
+    {"id": "12", "kind": "tree", "root": "agents_home", "destination": "skills/codex-baseline-conformance-review", "source": "baseline/skills/codex-baseline-conformance-review"},
+    {"id": "13", "kind": "tree", "root": "agents_home", "destination": "skills/codex-baseline-retrospective", "source": "baseline/skills/codex-baseline-retrospective"},
+    {"id": "20", "kind": "file", "root": "codex_home", "destination": "agents/codex-baseline-reviewer.toml", "source": "baseline/agents/codex-baseline-reviewer.toml"},
+    {"id": "30", "kind": "tree", "root": "codex_home", "destination": "codex-baseline/runtime", "source": "generated/runtime"},
+    {"id": "31", "kind": "file", "root": "home", "destination": ".local/bin/codex-baseline{platform-extension}", "source": "generated/wrapper"}
+  ],
+  "reports": {
+    "doctor": "codex-baseline-doctor/v1",
+    "onboarding": "codex-baseline-onboarding/v1",
+    "benchmark": "codex-baseline-benchmark/v1"
+  }
+}

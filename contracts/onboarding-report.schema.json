@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/onboarding-report-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "platform", "mode", "repository", "entries_visited", "files", "bytes", "links_skipped", "sensitive_skipped", "large_skipped", "root_agents", "existing_instructions", "existing_instructions_require_ack", "existing_instructions_acknowledged", "git_detected", "project_commands_executed", "commands", "manifests", "ai", "ci", "docs", "quality", "tests", "deployment", "generated", "source_roots", "sensitive_areas", "warnings"],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-onboarding/v1"},
+    "platform": {"enum": ["unix", "native-windows"]},
+    "mode": {"enum": ["dry-run", "apply"]},
+    "repository": {"type": "string"},
+    "entries_visited": {"type": "integer", "minimum": 0},
+    "files": {"type": "integer", "minimum": 0},
+    "bytes": {"type": "integer", "minimum": 0},
+    "links_skipped": {"type": "integer", "minimum": 0},
+    "sensitive_skipped": {"type": "integer", "minimum": 0},
+    "large_skipped": {"type": "integer", "minimum": 0},
+    "root_agents": {"enum": ["present", "absent"]},
+    "existing_instructions": {"type": "boolean"},
+    "existing_instructions_require_ack": {"type": "boolean"},
+    "existing_instructions_acknowledged": {"type": "boolean"},
+    "git_detected": {"type": "boolean"},
+    "project_commands_executed": {"const": false},
+    "commands": {"$ref": "#/$defs/strings"}, "manifests": {"$ref": "#/$defs/strings"}, "ai": {"$ref": "#/$defs/strings"}, "ci": {"$ref": "#/$defs/strings"}, "docs": {"$ref": "#/$defs/strings"}, "quality": {"$ref": "#/$defs/strings"}, "tests": {"$ref": "#/$defs/strings"}, "deployment": {"$ref": "#/$defs/strings"}, "generated": {"$ref": "#/$defs/strings"}, "source_roots": {"$ref": "#/$defs/strings"}, "sensitive_areas": {"$ref": "#/$defs/strings"}, "warnings": {"$ref": "#/$defs/strings"}
+  },
+  "$defs": {"strings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}}
+}

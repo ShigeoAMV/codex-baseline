@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/operations-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "owned_text_encoding", "owned_line_endings", "transaction_states", "object_states", "operations", "objects", "reports"],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-operations/v1"},
+    "owned_text_encoding": {"const": "utf-8-no-bom"},
+    "owned_line_endings": {"const": "lf"},
+    "transaction_states": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "object_states": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "operations": {"type": "array", "items": {"enum": ["install", "update", "rollback", "uninstall"]}, "uniqueItems": true},
+    "objects": {
+      "type": "array", "minItems": 8, "maxItems": 8,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "kind", "root", "destination", "source"],
+        "properties": {
+          "id": {"pattern": "^(00|10|11|12|13|20|30|31)$"},
+          "kind": {"enum": ["block", "file", "tree"]},
+          "root": {"enum": ["home", "codex_home", "agents_home"]},
+          "destination": {"type": "string"},
+          "source": {"type": "string"}
+        }
+      }
+    },
+    "reports": {
+      "type": "object", "additionalProperties": false,
+      "required": ["doctor", "onboarding", "benchmark"],
+      "properties": {
+        "doctor": {"const": "codex-baseline-doctor/v1"},
+        "onboarding": {"const": "codex-baseline-onboarding/v1"},
+        "benchmark": {"const": "codex-baseline-benchmark/v1"}
+      }
+    }
+  }
+}

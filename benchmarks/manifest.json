@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "suite": "codex-baseline-core",
+  "preregistered": "2026-08-13",
+  "default_repetitions": 3,
+  "run_order": "paired-block-alternating-by-task-and-repetition",
+  "isolation": {
+    "workspace": "fresh-copy-per-arm",
+    "codex_home": "fresh-per-arm",
+    "worker": "bubblewrap-filesystem-isolated-dedicated-api-key",
+    "tool_network": "denied-by-codex-permission-profile",
+    "verifier": "separate-networkless-bubblewrap-after-worker-exit",
+    "local_label": "os-sandboxed-local",
+    "strong_requirement": "rotated private holdouts or an external worker that cannot mount source or verifier"
+  },
+  "metrics": [
+    "task_pass",
+    "verifier_exit",
+    "process_exit",
+    "elapsed_ms",
+    "turns",
+    "commands",
+    "file_changes",
+    "changed_files",
+    "unnecessary_files",
+    "failed_command_events",
+    "subagent_events",
+    "input_tokens",
+    "output_tokens",
+    "baseline_layer_bytes",
+    "retry_count_unavailable",
+    "review_findings_unavailable"
+  ],
+  "tasks": [
+    { "id": "small-js-bug", "class": "small", "visibility": "development", "allowed_changed_paths": ["calc.js"] },
+    { "id": "small-config-timeout", "class": "small", "visibility": "development", "allowed_changed_paths": ["config/service.json"] },
+    { "id": "small-doc-port", "class": "small", "visibility": "development", "allowed_changed_paths": ["README.md"] },
+    { "id": "medium-js-feature", "class": "medium", "visibility": "development", "allowed_changed_paths": ["src/quote.js"] },
+    { "id": "medium-dedup-reproduction", "class": "medium", "visibility": "development", "allowed_changed_paths": ["src/dedup.js", "test/dedup.test.js"] },
+    { "id": "medium-id-refactor", "class": "medium", "visibility": "development", "allowed_changed_paths": ["src/ids.js", "src/user.js", "src/order.js", "test/ids.test.js"] },
+    { "id": "large-architecture", "class": "large", "visibility": "development", "allowed_changed_paths": ["ARCHITECTURE.md"] },
+    { "id": "large-feature-flags", "class": "large", "visibility": "development", "allowed_changed_paths": ["src/flags.js", "test/flags.test.js", "README.md"] },
+    { "id": "risk-migration", "class": "risk-sensitive", "visibility": "public-holdout", "allowed_changed_paths": ["migrate.sh", "USAGE.md"] },
+    { "id": "risk-safe-path", "class": "risk-sensitive", "visibility": "public-holdout", "allowed_changed_paths": ["src/safe-path.js", "test/safe-path.test.js", "SECURITY.md"] }
+  ]
+}

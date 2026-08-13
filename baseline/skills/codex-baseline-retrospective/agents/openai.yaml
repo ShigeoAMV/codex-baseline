@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Retrospective"
+  short_description: "Route recurring failures to durable fixes"
+  default_prompt: "Use $codex-baseline-retrospective to classify this recurring failure and recommend the lowest reliable prevention layer."

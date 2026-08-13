@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Conformance Review"
+  short_description: "Audit delivery against original requirements"
+  default_prompt: "Use $codex-baseline-conformance-review to independently audit this result against the original request."

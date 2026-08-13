@@ -1,0 +1,2241 @@
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Command = 'help',
+
+    [Alias('dry-run')]
+    [switch]$DryRun,
+
+    [Alias('acknowledge-unverified-source')]
+    [switch]$AcknowledgeUnverifiedSource,
+
+    [switch]$Json,
+
+    [switch]$Apply,
+
+    [Alias('acknowledge-existing-instructions')]
+    [switch]$AcknowledgeExistingInstructions,
+
+    [Alias('max-files')]
+    [ValidateRange(1, 100000)]
+    [int]$MaxFiles = 2000,
+
+    [Alias('max-visited')]
+    [ValidateRange(1, 500000)]
+    [int]$MaxVisited = 10000,
+
+    [Parameter(Position = 1)]
+    [string]$Repository = '.',
+
+    [switch]$Static,
+
+    [switch]$Live,
+
+    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,risk-migration,risk-safe-path'
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+
+$script:Schema = 1
+$script:BeginPattern = '(?m)^<!-- codex-baseline:begin version=[^>\r\n]* -->\r?$'
+$script:EndPattern = '(?m)^<!-- codex-baseline:end -->\r?$'
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
+$script:Utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+$script:SourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$script:LockHeld = $false
+$script:ActiveTransaction = $null
+$script:MutationStarted = $false
+
+function Write-CbError {
+    param([string]$Message)
+    [Console]::Error.WriteLine("codex-baseline: {0}" -f $Message)
+}
+
+function Get-CbFullPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw 'A required path is empty.'
+    }
+    return [System.IO.Path]::GetFullPath($Path)
+}
+
+function Assert-CbRawLocalRootPath {
+    param([string]$Path, [string]$Label)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Label must be set to a fully-qualified local path."
+    }
+    if ($Path.IndexOfAny([char[]](@(0..31) + @(127))) -ge 0) {
+        throw "$Label contains control characters."
+    }
+    if ($Path -match '^[\\/]{2}[?.][\\/]' -or $Path -match '^(\\\\|//)') {
+        throw "$Label cannot use a device or UNC path: $Path"
+    }
+    if ($Path -notmatch '^[A-Za-z]:[\\/]') {
+        throw "$Label must be fully-qualified before normalization: $Path"
+    }
+    if ($Path.Substring(2).Contains(':')) {
+        throw "$Label cannot contain an alternate data stream: $Path"
+    }
+}
+
+function Test-CbSamePath {
+    param([string]$Left, [string]$Right)
+    return [string]::Equals(
+        (Get-CbFullPath $Left).TrimEnd('\', '/'),
+        (Get-CbFullPath $Right).TrimEnd('\', '/'),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+}
+
+function Get-CbItem {
+    param([string]$Path)
+    try {
+        return Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        return $null
+    }
+    catch [System.IO.FileNotFoundException] {
+        return $null
+    }
+    catch [System.IO.DirectoryNotFoundException] {
+        return $null
+    }
+}
+
+function Test-CbExists {
+    param([string]$Path)
+    return $null -ne (Get-CbItem $Path)
+}
+
+function Assert-CbOrdinaryItem {
+    param(
+        [Parameter(Mandatory = $true)]$Item,
+        [string]$ExpectedKind = 'any'
+    )
+    if (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Reparse points are not allowed in managed paths: $($Item.FullName)"
+    }
+    if ($ExpectedKind -eq 'file' -and $Item.PSIsContainer) {
+        throw "Expected a regular file: $($Item.FullName)"
+    }
+    if ($ExpectedKind -eq 'tree' -and -not $Item.PSIsContainer) {
+        throw "Expected a directory: $($Item.FullName)"
+    }
+}
+
+function Assert-CbSafeRoot {
+    param([string]$Path, [string]$Label)
+    Assert-CbRawLocalRootPath $Path $Label
+    $full = Get-CbFullPath $Path
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrWhiteSpace($root) -or (Test-CbSamePath $full $root)) {
+        throw "$Label must be an absolute non-root path: $full"
+    }
+    $item = Get-CbItem $full
+    if ($null -ne $item) {
+        Assert-CbOrdinaryItem $item 'tree'
+    }
+    Assert-CbExistingAncestorsSafe $full
+    return $full
+}
+
+function Ensure-CbSafeDirectory {
+    param([string]$Path)
+    $full = Get-CbFullPath $Path
+    $item = Get-CbItem $full
+    if ($null -ne $item) {
+        Assert-CbOrdinaryItem $item 'tree'
+        return $full
+    }
+    $parent = [System.IO.Directory]::GetParent($full)
+    if ($null -eq $parent) {
+        throw "Cannot create a filesystem root: $full"
+    }
+    Ensure-CbSafeDirectory $parent.FullName | Out-Null
+    [System.IO.Directory]::CreateDirectory($full) | Out-Null
+    $created = Get-Item -LiteralPath $full -Force
+    Assert-CbOrdinaryItem $created 'tree'
+    return $full
+}
+
+function Assert-CbExistingAncestorsSafe {
+    param([string]$Path)
+    $full = Get-CbFullPath $Path
+    $cursor = $full
+    while (-not [string]::IsNullOrWhiteSpace($cursor)) {
+        $item = Get-CbItem $cursor
+        if ($null -ne $item) {
+            Assert-CbOrdinaryItem $item 'tree'
+        }
+        $parent = [System.IO.Directory]::GetParent($cursor)
+        if ($null -eq $parent -or (Test-CbSamePath $parent.FullName $cursor)) {
+            break
+        }
+        $cursor = $parent.FullName
+    }
+}
+
+function Assert-CbTreeSafe {
+    param([string]$Path)
+    $root = Get-CbItem $Path
+    if ($null -eq $root) {
+        throw "Directory is missing: $Path"
+    }
+    Assert-CbOrdinaryItem $root 'tree'
+    foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force)) {
+        Assert-CbOrdinaryItem $child 'any'
+        if ($child.PSIsContainer) {
+            Assert-CbTreeSafe $child.FullName
+        }
+    }
+}
+
+function Remove-CbSafeItem {
+    param([string]$Path)
+    $item = Get-CbItem $Path
+    if ($null -eq $item) {
+        return
+    }
+    Assert-CbOrdinaryItem $item 'any'
+    if ($item.PSIsContainer) {
+        Assert-CbTreeSafe $item.FullName
+        Remove-Item -LiteralPath $item.FullName -Recurse -Force
+    }
+    else {
+        Remove-Item -LiteralPath $item.FullName -Force
+    }
+}
+
+function Read-CbUtf8Text {
+    param([string]$Path)
+    $item = Get-CbItem $Path
+    if ($null -eq $item) {
+        throw "File is missing: $Path"
+    }
+    Assert-CbOrdinaryItem $item 'file'
+    $bytes = [System.IO.File]::ReadAllBytes($item.FullName)
+    return $script:Utf8Strict.GetString($bytes)
+}
+
+function Write-CbUtf8File {
+    param([string]$Path, [AllowEmptyString()][string]$Text)
+    $parent = [System.IO.Path]::GetDirectoryName((Get-CbFullPath $Path))
+    Ensure-CbSafeDirectory $parent | Out-Null
+    [System.IO.File]::WriteAllText($Path, $Text, $script:Utf8NoBom)
+}
+
+function Write-CbUtf8Atomic {
+    param([string]$Path, [AllowEmptyString()][string]$Text)
+    $full = Get-CbFullPath $Path
+    $parent = [System.IO.Path]::GetDirectoryName($full)
+    Ensure-CbSafeDirectory $parent | Out-Null
+    $temporary = Join-Path $parent ('.cbw-{0}.tmp' -f [guid]::NewGuid().ToString('N').Substring(0, 12))
+    $replaceBackup = Join-Path $parent ('.cbb-{0}.tmp' -f [guid]::NewGuid().ToString('N').Substring(0, 12))
+    try {
+        $bytes = $script:Utf8NoBom.GetBytes($Text)
+        $stream = New-Object System.IO.FileStream(
+            $temporary,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None
+        )
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        $existing = Get-CbItem $full
+        if ($null -ne $existing) {
+            Assert-CbOrdinaryItem $existing 'file'
+            [System.IO.File]::Replace($temporary, $full, $replaceBackup, $true)
+            Remove-CbSafeItem $replaceBackup
+        }
+        else {
+            [System.IO.File]::Move($temporary, $full)
+        }
+    }
+    finally {
+        if (Test-CbExists $temporary) {
+            Remove-CbSafeItem $temporary
+        }
+        if (Test-CbExists $replaceBackup) {
+            Remove-CbSafeItem $replaceBackup
+        }
+    }
+}
+
+function Get-CbSha256Bytes {
+    param([byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-CbStringHash {
+    param([AllowEmptyString()][string]$Text)
+    return Get-CbSha256Bytes $script:Utf8NoBom.GetBytes($Text)
+}
+
+function Get-CbFileHash {
+    param([string]$Path)
+    $item = Get-CbItem $Path
+    if ($null -eq $item) {
+        throw "File is missing: $Path"
+    }
+    Assert-CbOrdinaryItem $item 'file'
+    $stream = [System.IO.File]::Open(
+        $item.FullName,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Add-CbOrdinaryFilePaths {
+    param(
+        [string]$Root,
+        [string]$Current,
+        [string]$Prefix,
+        [System.Collections.Generic.List[string]]$Paths,
+        [string]$ExcludedPath = ''
+    )
+    $rootFull = (Get-CbFullPath $Root).TrimEnd('\', '/')
+    $currentItem = Get-CbItem $Current
+    if ($null -eq $currentItem) {
+        throw "Payload directory is missing: $Current"
+    }
+    Assert-CbOrdinaryItem $currentItem 'tree'
+    foreach ($child in @(Get-ChildItem -LiteralPath $currentItem.FullName -Force)) {
+        Assert-CbOrdinaryItem $child 'any'
+        if ($child.PSIsContainer) {
+            Add-CbOrdinaryFilePaths $rootFull $child.FullName $Prefix $Paths $ExcludedPath
+            continue
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ExcludedPath) -and
+            (Test-CbSamePath $child.FullName $ExcludedPath)) {
+            continue
+        }
+        $relative = $child.FullName.Substring($rootFull.Length).TrimStart('\', '/').Replace('\', '/')
+        $Paths.Add(("{0}/{1}" -f $Prefix, $relative)) | Out-Null
+    }
+}
+
+function Add-CbTreeHashEntries {
+    param(
+        [string]$Root,
+        [string]$Current,
+        [System.Collections.Generic.List[string]]$Entries
+    )
+    foreach ($child in @(Get-ChildItem -LiteralPath $Current -Force)) {
+        Assert-CbOrdinaryItem $child 'any'
+        $relative = $child.FullName.Substring($Root.Length).TrimStart('\', '/').Replace('\', '/')
+        if ($child.PSIsContainer) {
+            $Entries.Add("D`t$relative") | Out-Null
+            Add-CbTreeHashEntries $Root $child.FullName $Entries
+        }
+        else {
+            $Entries.Add(("F`t{0}`t{1}" -f $relative, (Get-CbFileHash $child.FullName))) | Out-Null
+        }
+    }
+}
+
+function Get-CbTreeHash {
+    param([string]$Path)
+    $full = (Get-CbFullPath $Path).TrimEnd('\', '/')
+    Assert-CbTreeSafe $full
+    $entries = New-Object 'System.Collections.Generic.List[string]'
+    Add-CbTreeHashEntries $full $full $entries
+    $array = [string[]]$entries.ToArray()
+    [System.Array]::Sort($array, [System.StringComparer]::Ordinal)
+    return Get-CbStringHash (([string]::Join("`n", $array)) + "`n")
+}
+
+function Get-CbKind {
+    param([string]$Path)
+    $item = Get-CbItem $Path
+    if ($null -eq $item) {
+        return 'absent'
+    }
+    Assert-CbOrdinaryItem $item 'any'
+    if ($item.PSIsContainer) {
+        return 'tree'
+    }
+    return 'file'
+}
+
+function Get-CbBlockInfo {
+    param([AllowEmptyString()][string]$Text)
+    $begin = [regex]::Matches($Text, $script:BeginPattern)
+    $end = [regex]::Matches($Text, $script:EndPattern)
+    if ($begin.Count -gt 1 -or $end.Count -gt 1 -or $begin.Count -ne $end.Count) {
+        throw 'Malformed or duplicate codex-baseline markers.'
+    }
+    if ($begin.Count -eq 0) {
+        return [pscustomobject]@{ Present = $false; Block = ''; Start = -1; Length = 0 }
+    }
+    if ($end[0].Index -lt $begin[0].Index) {
+        throw 'The codex-baseline marker order is invalid.'
+    }
+    $finish = $end[0].Index + $end[0].Length
+    return [pscustomobject]@{
+        Present = $true
+        Block = $Text.Substring($begin[0].Index, $finish - $begin[0].Index)
+        Start = $begin[0].Index
+        Length = $finish - $begin[0].Index
+    }
+}
+
+function Get-CbManagedBlockHash {
+    param([string]$Path)
+    $item = Get-CbItem $Path
+    if ($null -eq $item) {
+        return 'absent'
+    }
+    Assert-CbOrdinaryItem $item 'file'
+    $info = Get-CbBlockInfo (Read-CbUtf8Text $item.FullName)
+    if (-not $info.Present) {
+        return 'absent'
+    }
+    return Get-CbStringHash $info.Block
+}
+
+function Get-CbPhysicalHash {
+    param([string]$Path)
+    $kind = Get-CbKind $Path
+    switch ($kind) {
+        'absent' { return 'absent' }
+        'file' { return Get-CbFileHash $Path }
+        'tree' { return Get-CbTreeHash $Path }
+        default { throw "Unsupported filesystem object at $Path" }
+    }
+}
+
+function Get-CbLiveHash {
+    param([string]$Kind, [string]$Path)
+    if ($Kind -eq 'block') {
+        return Get-CbManagedBlockHash $Path
+    }
+    $actual = Get-CbKind $Path
+    if ($actual -eq 'absent') {
+        return 'absent'
+    }
+    if ($actual -ne $Kind) {
+        throw "Managed object kind conflict at $Path"
+    }
+    if ($Kind -eq 'file') {
+        return Get-CbFileHash $Path
+    }
+    if ($Kind -eq 'tree') {
+        return Get-CbTreeHash $Path
+    }
+    throw "Unsupported managed object kind: $Kind"
+}
+
+function New-CbRenderedBlock {
+    param([string]$SourcePath, [string]$Version)
+    $body = (Read-CbUtf8Text $SourcePath).TrimEnd([char[]]"`r`n")
+    return "<!-- codex-baseline:begin version=$Version -->`n$body`n<!-- codex-baseline:end -->"
+}
+
+function Set-CbBlockText {
+    param(
+        [AllowEmptyString()][string]$LiveText,
+        [AllowEmptyString()][string]$DesiredBlock
+    )
+    $info = Get-CbBlockInfo $LiveText
+    if ($info.Present) {
+        return $LiveText.Substring(0, $info.Start) + $DesiredBlock + $LiveText.Substring($info.Start + $info.Length)
+    }
+    if ($LiveText.Length -eq 0) {
+        return $DesiredBlock
+    }
+    $separator = "`n`n"
+    if ($LiveText.EndsWith("`n")) {
+        $separator = "`n"
+    }
+    return $LiveText + $separator + $DesiredBlock
+}
+
+function Remove-CbBlockText {
+    param([AllowEmptyString()][string]$LiveText)
+    $info = Get-CbBlockInfo $LiveText
+    if (-not $info.Present) {
+        return $LiveText
+    }
+    return $LiveText.Substring(0, $info.Start) + $LiveText.Substring($info.Start + $info.Length)
+}
+
+function Copy-CbFileSafe {
+    param([string]$Source, [string]$Destination)
+    $item = Get-CbItem $Source
+    if ($null -eq $item) {
+        throw "Source file is missing: $Source"
+    }
+    Assert-CbOrdinaryItem $item 'file'
+    $parent = [System.IO.Path]::GetDirectoryName((Get-CbFullPath $Destination))
+    Ensure-CbSafeDirectory $parent | Out-Null
+    [System.IO.File]::Copy($item.FullName, $Destination, $false)
+}
+
+function Copy-CbTreeSafe {
+    param([string]$Source, [string]$Destination)
+    $sourceItem = Get-CbItem $Source
+    if ($null -eq $sourceItem) {
+        throw "Source directory is missing: $Source"
+    }
+    Assert-CbOrdinaryItem $sourceItem 'tree'
+    if (Test-CbExists $Destination) {
+        throw "Copy destination already exists: $Destination"
+    }
+    Ensure-CbSafeDirectory $Destination | Out-Null
+    foreach ($child in @(Get-ChildItem -LiteralPath $sourceItem.FullName -Force)) {
+        Assert-CbOrdinaryItem $child 'any'
+        $target = Join-Path $Destination $child.Name
+        if ($child.PSIsContainer) {
+            Copy-CbTreeSafe $child.FullName $target
+        }
+        else {
+            Copy-CbFileSafe $child.FullName $target
+        }
+    }
+}
+
+function Initialize-CbPaths {
+    if (-not [string]::IsNullOrWhiteSpace($env:HOME)) {
+        $resolvedHome = $env:HOME
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $resolvedHome = $env:USERPROFILE
+    }
+    else {
+        throw 'HOME or USERPROFILE must be set.'
+    }
+    $script:HomePath = Assert-CbSafeRoot $resolvedHome 'HOME'
+    $codex = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $script:HomePath '.codex' } else { $env:CODEX_HOME }
+    $agents = if ([string]::IsNullOrWhiteSpace($env:AGENTS_HOME)) { Join-Path $script:HomePath '.agents' } else { $env:AGENTS_HOME }
+    $script:CodexHome = Assert-CbSafeRoot $codex 'CODEX_HOME'
+    $script:AgentsHome = Assert-CbSafeRoot $agents 'AGENTS_HOME'
+    $script:BaselineRoot = Join-Path $script:CodexHome 'codex-baseline'
+    $script:StateRoot = Join-Path $script:BaselineRoot 'state'
+    $script:RuntimePath = Join-Path $script:BaselineRoot 'runtime'
+    $script:TransactionsPath = Join-Path $script:StateRoot 'transactions'
+    $script:CurrentPath = Join-Path $script:StateRoot 'current'
+    $script:PendingPath = Join-Path $script:StateRoot 'pending'
+    $script:LockPath = Join-Path $script:StateRoot 'lock'
+}
+
+function Read-CbManifest {
+    param([string]$Root = $script:SourceRoot)
+    $manifestPath = Join-Path $Root 'baseline\manifest.json'
+    $manifestItem = Get-CbItem $manifestPath
+    if ($null -eq $manifestItem) {
+        throw "Source manifest is missing: $manifestPath"
+    }
+    Assert-CbOrdinaryItem $manifestItem 'file'
+    try {
+        $manifest = (Read-CbUtf8Text $manifestPath) | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Source manifest is invalid JSON: $($_.Exception.Message)"
+    }
+    Assert-CbExactProperties $manifest @(
+        'schema', 'version', 'minimum_codex', 'tested_codex', 'research_checked',
+        'research_review_by', 'encoding', 'line_endings', 'global_block',
+        'source_trust', 'payload_hash', 'payload'
+    ) 'Source manifest'
+    if ([int]$manifest.schema -ne $script:Schema) {
+        throw "Unsupported source manifest schema: $($manifest.schema)"
+    }
+    $versionPath = Join-Path $Root 'VERSION'
+    $version = (Read-CbUtf8Text $versionPath).Trim()
+    if ($version -notmatch '^\d+(\.\d+)+$' -or $version -ne [string]$manifest.version) {
+        throw 'VERSION and source manifest disagree.'
+    }
+    if ([string]$manifest.encoding -ne 'utf-8-no-bom') {
+        throw 'The Windows installer requires the utf-8-no-bom source contract.'
+    }
+    if ([string]$manifest.line_endings -ne 'lf' -or
+        [string]$manifest.global_block -ne 'baseline/global/AGENTS.block.md') {
+        throw 'The source line-ending or global-guidance contract is unsupported.'
+    }
+    if ([string]$manifest.source_trust -ne 'unsigned-local-source') {
+        throw 'The source trust label is missing or unsupported.'
+    }
+    $declaredPayloadHash = [string]$manifest.payload_hash
+    if ($declaredPayloadHash -notmatch '^[0-9a-f]{64}$') {
+        throw 'The aggregate source payload hash is missing or malformed.'
+    }
+
+    $actualPaths = New-Object 'System.Collections.Generic.List[string]'
+    $canonicalEntries = New-Object 'System.Collections.Generic.List[string]'
+    $seenPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($entry in @($manifest.payload)) {
+        Assert-CbExactProperties $entry @('path', 'bytes', 'sha256') 'Source payload entry'
+        $entryPath = [string]$entry.path
+        $entryHash = [string]$entry.sha256
+        if ($entryPath -notmatch '^(VERSION|baseline/[A-Za-z0-9._/-]+|scripts/[A-Za-z0-9._/-]+|benchmarks/[A-Za-z0-9._/-]+)$' -or
+            $entryPath.Contains('..')) {
+            throw "Unsafe payload entry: $entryPath"
+        }
+        if (-not $seenPaths.Add($entryPath)) {
+            throw "Duplicate payload entry: $entryPath"
+        }
+        if (($entry.bytes -isnot [int]) -and ($entry.bytes -isnot [long])) {
+            throw "Payload byte length is not an integer: $entryPath"
+        }
+        $entryBytes = [long]$entry.bytes
+        if ($entryBytes -lt 0 -or $entryHash -notmatch '^[0-9a-f]{64}$') {
+            throw "Malformed payload metadata: $entryPath"
+        }
+        $payloadPath = Join-Path $Root ($entryPath.Replace('/', '\'))
+        $payloadItem = Get-CbItem $payloadPath
+        if ($null -eq $payloadItem) {
+            throw "Payload file is missing: $entryPath"
+        }
+        Assert-CbOrdinaryItem $payloadItem 'file'
+        if ([long]$payloadItem.Length -ne $entryBytes) {
+            throw "Payload byte length mismatch: $entryPath"
+        }
+        if ((Get-CbFileHash $payloadItem.FullName) -ne $entryHash) {
+            throw "Payload hash mismatch: $entryPath"
+        }
+        $actualPaths.Add($entryPath) | Out-Null
+        $canonicalEntries.Add(("{0}`t{1}`t{2}" -f $entryPath, $entryBytes, $entryHash)) | Out-Null
+    }
+
+    $expectedPaths = New-Object 'System.Collections.Generic.List[string]'
+    $expectedPaths.Add('VERSION') | Out-Null
+    Add-CbOrdinaryFilePaths (Join-Path $Root 'baseline') (Join-Path $Root 'baseline') 'baseline' $expectedPaths $manifestPath
+    foreach ($scriptPath in @(
+        'scripts/codex-baseline.sh', 'scripts/codex-baseline.ps1',
+        'scripts/onboard.sh', 'scripts/onboard.ps1',
+        'scripts/benchmark.sh', 'scripts/benchmark.ps1', 'scripts/lib/common.sh'
+    )) {
+        $expectedPaths.Add($scriptPath) | Out-Null
+    }
+    Add-CbOrdinaryFilePaths (Join-Path $Root 'benchmarks') (Join-Path $Root 'benchmarks') 'benchmarks' $expectedPaths
+    $expectedArray = [string[]]$expectedPaths.ToArray()
+    $actualArray = [string[]]$actualPaths.ToArray()
+    [System.Array]::Sort($expectedArray, [System.StringComparer]::Ordinal)
+    [System.Array]::Sort($actualArray, [System.StringComparer]::Ordinal)
+    if (($expectedArray -join "`n") -ne ($actualArray -join "`n")) {
+        throw 'Source payload inventory differs from the manifest.'
+    }
+    $canonicalArray = [string[]]$canonicalEntries.ToArray()
+    [System.Array]::Sort($canonicalArray, [System.StringComparer]::Ordinal)
+    $actualPayloadHash = Get-CbStringHash (([string]::Join("`n", $canonicalArray)) + "`n")
+    if ($actualPayloadHash -ne $declaredPayloadHash) {
+        throw 'Aggregate source payload hash mismatch.'
+    }
+    $operationsPath = Join-Path $Root 'baseline\operations.json'
+    try { $operations = (Read-CbUtf8Text $operationsPath) | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "Operations contract is invalid JSON: $($_.Exception.Message)" }
+    Assert-CbExactProperties $operations @(
+        'schema', 'contract', 'owned_text_encoding', 'owned_line_endings',
+        'transaction_states', 'object_states', 'operations', 'objects', 'reports'
+    ) 'Operations contract'
+    if ([int]$operations.schema -ne 1 -or [string]$operations.contract -ne 'codex-baseline-operations/v1' -or
+        [string]$operations.owned_text_encoding -ne 'utf-8-no-bom' -or [string]$operations.owned_line_endings -ne 'lf') {
+        throw 'Operations contract identity or encoding is unsupported.'
+    }
+    $expectedOperations = @('install', 'update', 'rollback', 'uninstall')
+    if ((@($operations.operations) -join ',') -ne ($expectedOperations -join ',')) {
+        throw 'Operations contract command inventory is invalid.'
+    }
+    $expectedObjects = @{
+        '00' = @('block', 'codex_home', 'AGENTS.active.md', 'baseline/global/AGENTS.block.md')
+        '10' = @('tree', 'agents_home', 'skills/codex-baseline-repo-onboarding', 'baseline/skills/codex-baseline-repo-onboarding')
+        '11' = @('tree', 'agents_home', 'skills/codex-baseline-deep-work', 'baseline/skills/codex-baseline-deep-work')
+        '12' = @('tree', 'agents_home', 'skills/codex-baseline-conformance-review', 'baseline/skills/codex-baseline-conformance-review')
+        '13' = @('tree', 'agents_home', 'skills/codex-baseline-retrospective', 'baseline/skills/codex-baseline-retrospective')
+        '20' = @('file', 'codex_home', 'agents/codex-baseline-reviewer.toml', 'baseline/agents/codex-baseline-reviewer.toml')
+        '30' = @('tree', 'codex_home', 'codex-baseline/runtime', 'generated/runtime')
+        '31' = @('file', 'home', '.local/bin/codex-baseline{platform-extension}', 'generated/wrapper')
+    }
+    if (@($operations.objects).Count -ne $expectedObjects.Count) { throw 'Operations contract object count is invalid.' }
+    foreach ($object in @($operations.objects)) {
+        Assert-CbExactProperties $object @('id', 'kind', 'root', 'destination', 'source') 'Operations object'
+        $id = [string]$object.id
+        if (-not $expectedObjects.ContainsKey($id)) { throw "Operations contract object id is invalid: $id" }
+        $actual = @([string]$object.kind, [string]$object.root, [string]$object.destination, [string]$object.source)
+        if (($actual -join "`n") -ne (@($expectedObjects[$id]) -join "`n")) {
+            throw "Operations contract object differs from the native implementation: $id"
+        }
+    }
+    return $manifest
+}
+
+function Write-CbSourceProvenance {
+    param($Manifest)
+    $revision = 'unversioned'
+    $dirty = 'unknown'
+    $gitDirectory = Join-Path $script:SourceRoot '.git'
+    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
+    if ($null -ne $git -and (Test-CbExists $gitDirectory)) {
+        $environmentNames = @('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_OPTIONAL_LOCKS')
+        $savedEnvironment = @{}
+        $savedPresence = @{}
+        foreach ($name in $environmentNames) {
+            $savedPresence[$name] = Test-Path -LiteralPath ("Env:{0}" -f $name)
+            $savedEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
+        }
+        try {
+            $env:GIT_CONFIG_NOSYSTEM = '1'
+            $env:GIT_CONFIG_GLOBAL = 'NUL'
+            $env:GIT_OPTIONAL_LOCKS = '0'
+            $revisionOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $script:SourceRoot 'rev-parse' '--verify' 'HEAD' 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $revisionOutput.Count -eq 1 -and
+                [string]$revisionOutput[0] -match '^[0-9a-fA-F]{40,64}$') {
+                $revision = ([string]$revisionOutput[0]).ToLowerInvariant()
+            }
+            if ($revision -eq 'unversioned') {
+                $dirty = 'yes'
+            }
+            else {
+                $statusOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $script:SourceRoot 'status' '--porcelain=v1' '--untracked-files=no' 2>$null)
+                $statusExit = $LASTEXITCODE
+                $untrackedOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $script:SourceRoot 'ls-files' '--others' '--exclude-standard' '--directory' 2>$null)
+                if ($statusExit -eq 0 -and $LASTEXITCODE -eq 0) {
+                    $dirty = if ($statusOutput.Count -gt 0 -or $untrackedOutput.Count -gt 0) { 'yes' } else { 'no' }
+                }
+            }
+        }
+        catch {
+            $revision = 'unversioned'
+            $dirty = 'unknown'
+        }
+        finally {
+            foreach ($name in $environmentNames) {
+                if ([bool]$savedPresence[$name]) {
+                    [System.Environment]::SetEnvironmentVariable($name, [string]$savedEnvironment[$name], 'Process')
+                }
+                else {
+                    [System.Environment]::SetEnvironmentVariable($name, $null, 'Process')
+                }
+            }
+        }
+    }
+    Write-Output ("source-origin: {0}" -f $script:SourceRoot)
+    Write-Output ("source-revision: {0}" -f $revision)
+    Write-Output ("source-dirty: {0}" -f $dirty)
+    Write-Output 'source-trust: unverified-source (unsigned-local-source)'
+    Write-Output ("source-payload-sha256: {0}" -f [string]$Manifest.payload_hash)
+}
+
+function Get-CbTransactionPath {
+    param([string]$Id)
+    if ($Id -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$') {
+        throw "Invalid transaction identifier: $Id"
+    }
+    return Join-Path $script:TransactionsPath $Id
+}
+
+function Write-CbTransaction {
+    param($Transaction)
+    $path = Join-Path (Get-CbTransactionPath ([string]$Transaction.Id)) 'transaction.json'
+    $text = $Transaction | ConvertTo-Json -Depth 12
+    Write-CbUtf8Atomic $path ($text + "`n")
+}
+
+function Read-CbTransaction {
+    param([string]$Id)
+    $path = Join-Path (Get-CbTransactionPath $Id) 'transaction.json'
+    if (-not (Test-CbExists $path)) {
+        throw "Transaction journal is missing: $Id"
+    }
+    try {
+        $transaction = (Read-CbUtf8Text $path) | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Transaction journal is invalid: $Id"
+    }
+    if ([int]$transaction.Schema -ne $script:Schema -or [string]$transaction.Id -ne $Id) {
+        throw "Transaction journal identity mismatch: $Id"
+    }
+    return $transaction
+}
+
+function Read-CbPointer {
+    param([string]$Path)
+    if (-not (Test-CbExists $Path)) {
+        return $null
+    }
+    $value = (Read-CbUtf8Text $Path).Trim()
+    if ($value -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$') {
+        throw "Invalid state pointer in $Path"
+    }
+    return $value
+}
+
+function Write-CbPointer {
+    param([string]$Path, [string]$Id)
+    Write-CbUtf8Atomic $Path ($Id + "`n")
+}
+
+function Get-CbCurrentTransaction {
+    $id = Read-CbPointer $script:CurrentPath
+    if ($null -eq $id) {
+        return $null
+    }
+    $transaction = Read-CbTransaction $id
+    Assert-CbTransactionShape $transaction $true
+    if ([string]$transaction.State -ne 'committed') {
+        throw "The current transaction is not committed: $id"
+    }
+    return $transaction
+}
+
+function Assert-CbExactProperties {
+    param($Value, [string[]]$Expected, [string]$Label)
+    if ($null -eq $Value -or $null -eq $Value.PSObject) {
+        throw "$Label is not an object."
+    }
+    $actual = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
+    foreach ($name in $Expected) {
+        if ($name -notin $actual) { throw "$Label is missing property $name."
+        }
+    }
+    foreach ($name in $actual) {
+        if ($name -notin $Expected) { throw "$Label contains unexpected property $name."
+        }
+    }
+}
+
+function Assert-CbBooleanProperty {
+    param($Object, [string]$Name, [string]$Label)
+    if (-not ($Object.$Name -is [bool])) { throw "$Label property $Name must be a JSON boolean." }
+}
+
+function Assert-CbHashValue {
+    param([AllowNull()]$Value, [string]$Label, [bool]$AllowNull)
+    if ($null -eq $Value) {
+        if ($AllowNull) { return }
+        throw "$Label cannot be null."
+    }
+    if (-not ($Value -is [string]) -or ($Value -ne 'absent' -and $Value -notmatch '^[0-9a-f]{64}$')) {
+        throw "$Label is not a valid SHA-256 or absent marker."
+    }
+}
+
+function Assert-CbTransactionShape {
+    param($Transaction, [bool]$RequireComplete)
+    Assert-CbExactProperties $Transaction @(
+        'Schema', 'Id', 'Operation', 'Version', 'CreatedUtc', 'ParentTransaction',
+        'ResultCurrent', 'State', 'Objects'
+    ) 'Transaction'
+    if (-not ($Transaction.Schema -is [int]) -or [int]$Transaction.Schema -ne $script:Schema) {
+        throw 'Transaction schema must be the supported JSON integer.'
+    }
+    if (-not ($Transaction.Id -is [string]) -or [string]$Transaction.Id -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$') {
+        throw 'Transaction id is invalid.'
+    }
+    if (-not ($Transaction.Operation -is [string]) -or [string]$Transaction.Operation -notin @('install', 'update', 'rollback', 'uninstall')) {
+        throw 'Transaction operation is invalid.'
+    }
+    if (-not ($Transaction.Version -is [string]) -or [string]$Transaction.Version -notmatch '^\d+(\.\d+)+$') {
+        throw 'Transaction version is invalid.'
+    }
+    if (-not ($Transaction.CreatedUtc -is [string])) { throw 'Transaction CreatedUtc must be a string.' }
+    $created = [DateTime]::MinValue
+    if (-not [DateTime]::TryParse([string]$Transaction.CreatedUtc, [ref]$created)) { throw 'Transaction CreatedUtc is invalid.' }
+    foreach ($pointerName in @('ParentTransaction', 'ResultCurrent')) {
+        $pointer = $Transaction.$pointerName
+        if ($null -ne $pointer -and (-not ($pointer -is [string]) -or $pointer -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$' -and $pointer -ne '__SELF__')) {
+            throw "Transaction $pointerName is invalid."
+        }
+    }
+    if (-not ($Transaction.State -is [string]) -or [string]$Transaction.State -notin @('planned', 'prepared', 'committing', 'committed', 'recovering', 'rolled-back')) {
+        throw 'Transaction state is invalid.'
+    }
+    $agentsTarget = Get-CbAgentsFile
+    $expected = @{
+        '00' = @('block', $agentsTarget)
+        '10' = @('tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-repo-onboarding'))
+        '11' = @('tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-deep-work'))
+        '12' = @('tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-conformance-review'))
+        '13' = @('tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-retrospective'))
+        '20' = @('file', (Join-Path $script:CodexHome 'agents\codex-baseline-reviewer.toml'))
+        '30' = @('tree', $script:RuntimePath)
+        '31' = @('file', (Join-Path $script:HomePath '.local\bin\codex-baseline.ps1'))
+    }
+    $objects = @($Transaction.Objects)
+    if ($RequireComplete -and $objects.Count -ne $expected.Count) {
+        throw "The current transaction has an invalid object count: $($objects.Count)"
+    }
+    $seen = @{}
+    foreach ($object in $objects) {
+        Assert-CbExactProperties $object @(
+            'Id', 'Kind', 'Target', 'Source', 'SourcePath', 'DesiredHash',
+            'DesiredPhysicalHash', 'DesiredPresent', 'PreviousHash',
+            'PreviousPhysicalHash', 'PreviousKind', 'PreviousExisted',
+            'PreviousManagedExisted', 'Change', 'Status', 'Stage', 'Old',
+            'Backup', 'BackupHash', 'PhysicalBackup', 'PhysicalBackupHash',
+            'BlockWholeFileSource', 'InstalledHash', 'InstalledPhysicalHash'
+        ) 'Transaction object'
+        $id = [string]$object.Id
+        if (-not $expected.ContainsKey($id) -or $seen.ContainsKey($id)) {
+            throw "Transaction contains an unknown or duplicate object id: $id"
+        }
+        $seen[$id] = $true
+        if ([string]$object.Kind -ne [string]$expected[$id][0] -or
+            -not (Test-CbSamePath ([string]$object.Target) ([string]$expected[$id][1]))) {
+            throw "Transaction object ownership is invalid: $id"
+        }
+        if (-not ($object.Id -is [string]) -or -not ($object.Kind -is [string]) -or
+            -not ($object.Target -is [string]) -or -not ($object.Source -is [string]) -or
+            $object.Source.Length -gt 256) {
+            throw "Transaction object has invalid string fields: $id"
+        }
+        if ($null -ne $object.SourcePath -and -not ($object.SourcePath -is [string])) {
+            throw "Transaction object SourcePath must be a string or null: $id"
+        }
+        foreach ($booleanName in @('DesiredPresent', 'PreviousExisted', 'PreviousManagedExisted', 'Change', 'BlockWholeFileSource')) {
+            Assert-CbBooleanProperty $object $booleanName "Transaction object $id"
+        }
+        if (-not ($object.Status -is [string]) -or [string]$object.Status -notin @('planned', 'prepared', 'moving-old', 'old-moved', 'new-moved', 'committed', 'unchanged', 'rolled-back')) {
+            throw "Transaction object has invalid status: $id"
+        }
+        if (-not ($object.PreviousKind -is [string]) -or [string]$object.PreviousKind -notin @('absent', 'file', 'tree', 'block')) {
+            throw "Transaction object has invalid PreviousKind: $id"
+        }
+        if ($object.Kind -eq 'block' -and $object.PreviousKind -ne 'block') {
+            throw "Block object has an invalid PreviousKind: $id"
+        }
+        foreach ($hashName in @('DesiredHash', 'PreviousHash', 'PreviousPhysicalHash')) {
+            Assert-CbHashValue $object.$hashName "Transaction object $id $hashName" $false
+        }
+        foreach ($hashName in @('DesiredPhysicalHash', 'BackupHash', 'PhysicalBackupHash', 'InstalledHash', 'InstalledPhysicalHash')) {
+            Assert-CbHashValue $object.$hashName "Transaction object $id $hashName" $true
+        }
+        $objectDirectory = Join-Path (Join-Path (Get-CbTransactionPath ([string]$Transaction.Id)) 'objects') $id
+        Assert-CbExistingAncestorsSafe $objectDirectory
+        $expectedStage = Join-Path ([System.IO.Path]::GetDirectoryName([string]$object.Target)) ('.codex-baseline-stage-{0}-{1}' -f $Transaction.Id, $id)
+        $expectedOld = Join-Path ([System.IO.Path]::GetDirectoryName([string]$object.Target)) ('.codex-baseline-old-{0}-{1}' -f $Transaction.Id, $id)
+        foreach ($pathName in @('Stage', 'Old')) {
+            $pathValue = $object.$pathName
+            if ($null -ne $pathValue -and -not ($pathValue -is [string])) {
+                throw "Transaction object $pathName must be a string or null: $id"
+            }
+        }
+        if ($null -ne $object.Stage -and -not (Test-CbSamePath ([string]$object.Stage) $expectedStage)) {
+            throw "Transaction stage path is not exactly derived: $id"
+        }
+        if ($null -ne $object.Old -and -not (Test-CbSamePath ([string]$object.Old) $expectedOld)) {
+            throw "Transaction old path is not exactly derived: $id"
+        }
+        if ($object.Status -in @('prepared', 'moving-old', 'old-moved', 'new-moved', 'committed', 'rolled-back') -and
+            ($null -eq $object.Stage -or $null -eq $object.Old)) {
+            throw "Transaction stage/old paths are missing for status $($object.Status): $id"
+        }
+        foreach ($pathName in @('Backup', 'PhysicalBackup')) {
+            $pathValue = $object.$pathName
+            if ($null -ne $pathValue -and -not ($pathValue -is [string])) {
+                throw "Transaction object $pathName must be a string or null: $id"
+            }
+        }
+        if ($null -ne $object.Backup -and -not (Test-CbSamePath ([string]$object.Backup) (Join-Path $objectDirectory 'backup'))) {
+            throw "Transaction backup path escaped its journal: $id"
+        }
+        if ($null -ne $object.PhysicalBackup -and -not (Test-CbSamePath ([string]$object.PhysicalBackup) (Join-Path $objectDirectory 'backup-full'))) {
+            throw "Transaction physical backup path escaped its journal: $id"
+        }
+        foreach ($managedPath in @($object.Target, $object.Stage, $object.Old, $object.Backup, $object.PhysicalBackup)) {
+            if ($null -eq $managedPath) { continue }
+            Assert-CbExistingAncestorsSafe ([System.IO.Path]::GetDirectoryName([string]$managedPath))
+            $managedItem = Get-CbItem ([string]$managedPath)
+            if ($null -ne $managedItem) { Assert-CbOrdinaryItem $managedItem 'any' }
+        }
+        if ($RequireComplete -and $object.Status -notin @('committed', 'unchanged')) {
+            throw "Current transaction object is not complete: $id"
+        }
+        if ($RequireComplete) {
+            if ([bool]$object.Change -and [string]$object.Status -ne 'committed') {
+                throw "Current transaction change/status mismatch: $id"
+            }
+            if (-not [bool]$object.Change -and [string]$object.Status -ne 'unchanged') {
+                throw "Current transaction change/status mismatch: $id"
+            }
+        }
+    }
+}
+
+function Assert-CbExactObjectIds {
+    param($Transaction, [string[]]$ExpectedIds, [string]$Label)
+    $actualIds = @($Transaction.Objects | ForEach-Object { [string]$_.Id } | Sort-Object)
+    $expected = @($ExpectedIds | Sort-Object)
+    if ($actualIds.Count -ne $expected.Count -or
+        ($actualIds -join ',') -ne ($expected -join ',')) {
+        throw "$Label has an incomplete object inventory."
+    }
+}
+
+function Find-CbObjectByTarget {
+    param($Transaction, [string]$Target)
+    if ($null -eq $Transaction) {
+        return $null
+    }
+    foreach ($object in @($Transaction.Objects)) {
+        if (Test-CbSamePath ([string]$object.Target) $Target) {
+            return $object
+        }
+    }
+    return $null
+}
+
+function New-CbId {
+    return ('{0}-{1}' -f [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ'), [guid]::NewGuid().ToString('N'))
+}
+
+function New-CbTransaction {
+    param([string]$Operation, [string]$Version, [AllowNull()][string]$ParentTransaction)
+    $id = New-CbId
+    $directory = Get-CbTransactionPath $id
+    Ensure-CbSafeDirectory (Join-Path $directory 'objects') | Out-Null
+    $transaction = [pscustomobject]@{
+        Schema = $script:Schema
+        Id = $id
+        Operation = $Operation
+        Version = $Version
+        CreatedUtc = [DateTime]::UtcNow.ToString('o')
+        ParentTransaction = $(if ([string]::IsNullOrWhiteSpace($ParentTransaction)) { $null } else { $ParentTransaction })
+        ResultCurrent = $id
+        State = 'planned'
+        Objects = @()
+    }
+    Write-CbTransaction $transaction
+    Write-CbPointer $script:PendingPath $id
+    $script:ActiveTransaction = $id
+    return $transaction
+}
+
+function New-CbObject {
+    param(
+        [string]$Id,
+        [string]$Kind,
+        [string]$Target,
+        [string]$DesiredHash,
+        [bool]$DesiredPresent,
+        [AllowNull()][string]$SourcePath,
+        [string]$SourceLabel,
+        $CurrentTransaction
+    )
+    $targetFull = Get-CbFullPath $Target
+    Assert-CbExistingAncestorsSafe ([System.IO.Path]::GetDirectoryName($targetFull))
+    $live = Get-CbLiveHash $Kind $targetFull
+    $physical = Get-CbPhysicalHash $targetFull
+    $actualKind = Get-CbKind $targetFull
+    $owner = Find-CbObjectByTarget $CurrentTransaction $targetFull
+    if ($null -ne $owner) {
+        if ($live -ne [string]$owner.InstalledHash) {
+            throw "Managed content drifted; refusing to overwrite: $targetFull"
+        }
+    }
+    elseif ($Kind -eq 'block') {
+        if ($live -ne 'absent') {
+            throw "An unowned codex-baseline marker exists: $targetFull"
+        }
+    }
+    elseif ($live -ne 'absent') {
+        throw "An unowned target exists: $targetFull"
+    }
+    return [pscustomobject]@{
+        Id = $Id
+        Kind = $Kind
+        Target = $targetFull
+        Source = $SourceLabel
+        SourcePath = $SourcePath
+        DesiredHash = $DesiredHash
+        DesiredPhysicalHash = $null
+        DesiredPresent = $DesiredPresent
+        PreviousHash = $live
+        PreviousPhysicalHash = $physical
+        PreviousKind = $(if ($Kind -eq 'block') { 'block' } else { $actualKind })
+        PreviousExisted = ($actualKind -ne 'absent')
+        PreviousManagedExisted = ($Kind -eq 'block' -and $live -ne 'absent')
+        Change = ($live -ne $DesiredHash -or (($actualKind -ne 'absent') -ne $DesiredPresent))
+        Status = 'planned'
+        Stage = $null
+        Old = $null
+        Backup = $null
+        BackupHash = $null
+        PhysicalBackup = $null
+        PhysicalBackupHash = $null
+        BlockWholeFileSource = $false
+        InstalledHash = $null
+        InstalledPhysicalHash = $null
+    }
+}
+
+function Get-CbAgentsFile {
+    $override = Join-Path $script:CodexHome 'AGENTS.override.md'
+    $normal = Join-Path $script:CodexHome 'AGENTS.md'
+    $overrideItem = Get-CbItem $override
+    $normalItem = Get-CbItem $normal
+    if ($null -ne $overrideItem) { Assert-CbOrdinaryItem $overrideItem 'file' }
+    if ($null -ne $normalItem) { Assert-CbOrdinaryItem $normalItem 'file' }
+    $overrideNonEmpty = $null -ne $overrideItem -and $overrideItem.Length -gt 0
+    $normalNonEmpty = $null -ne $normalItem -and $normalItem.Length -gt 0
+    if ($overrideNonEmpty -and $normalNonEmpty) {
+        throw 'Both global AGENTS.override.md and AGENTS.md are non-empty; select the intended active file first.'
+    }
+    if ($overrideNonEmpty) {
+        return $override
+    }
+    return $normal
+}
+
+function New-CbTemporaryDirectory {
+    $path = Join-Path ([System.IO.Path]::GetTempPath()) ('codex-baseline-{0}' -f [guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($path) | Out-Null
+    return $path
+}
+
+function New-CbVerifiedSourceSnapshot {
+    param($OriginalManifest)
+    $sourceManifestPath = Join-Path $script:SourceRoot 'baseline\manifest.json'
+    $expectedManifestHash = Get-CbFileHash $sourceManifestPath
+    $expectedPayloadHash = [string]$OriginalManifest.payload_hash
+    $expectedVersion = [string]$OriginalManifest.version
+    $snapshot = New-CbTemporaryDirectory
+    try {
+        if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+            $env:CODEX_BASELINE_TEST_MUTATE_SOURCE_AFTER_VERIFY -eq '1') {
+            [System.IO.File]::AppendAllText(
+                (Join-Path $script:SourceRoot 'baseline\global\AGENTS.block.md'),
+                "`nsource-race-test`n",
+                $script:Utf8NoBom
+            )
+        }
+
+        Ensure-CbSafeDirectory (Join-Path $snapshot 'scripts\lib') | Out-Null
+        Copy-CbFileSafe (Join-Path $script:SourceRoot 'VERSION') (Join-Path $snapshot 'VERSION')
+        Copy-CbTreeSafe (Join-Path $script:SourceRoot 'baseline') (Join-Path $snapshot 'baseline')
+        foreach ($scriptName in @('codex-baseline.sh', 'codex-baseline.ps1', 'onboard.sh', 'onboard.ps1', 'benchmark.sh', 'benchmark.ps1')) {
+            Copy-CbFileSafe (Join-Path $script:SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $snapshot ("scripts\{0}" -f $scriptName))
+        }
+        Copy-CbFileSafe (Join-Path $script:SourceRoot 'scripts\lib\common.sh') (Join-Path $snapshot 'scripts\lib\common.sh')
+        Copy-CbTreeSafe (Join-Path $script:SourceRoot 'benchmarks') (Join-Path $snapshot 'benchmarks')
+
+        $snapshotManifest = Read-CbManifest $snapshot
+        if ((Get-CbFileHash (Join-Path $snapshot 'baseline\manifest.json')) -ne $expectedManifestHash) {
+            throw 'Source manifest changed while creating the verified snapshot.'
+        }
+        if ([string]$snapshotManifest.payload_hash -ne $expectedPayloadHash) {
+            throw 'Source payload changed while creating the verified snapshot.'
+        }
+        if ([string]$snapshotManifest.version -ne $expectedVersion) {
+            throw 'Source version changed while creating the verified snapshot.'
+        }
+        return [pscustomobject]@{
+            Root = $snapshot
+            Manifest = $snapshotManifest
+        }
+    }
+    catch {
+        if (Test-CbExists $snapshot) { Remove-CbSafeItem $snapshot }
+        throw
+    }
+}
+
+function New-CbRuntimeCandidate {
+    param([string]$Destination, [string]$SourceRoot)
+    Ensure-CbSafeDirectory $Destination | Out-Null
+    Ensure-CbSafeDirectory (Join-Path $Destination 'scripts') | Out-Null
+    Ensure-CbSafeDirectory (Join-Path $Destination 'scripts\lib') | Out-Null
+    Copy-CbFileSafe (Join-Path $SourceRoot 'VERSION') (Join-Path $Destination 'VERSION')
+    Copy-CbTreeSafe (Join-Path $SourceRoot 'baseline') (Join-Path $Destination 'baseline')
+    foreach ($scriptName in @('codex-baseline.sh', 'codex-baseline.ps1', 'onboard.sh', 'onboard.ps1', 'benchmark.sh', 'benchmark.ps1')) {
+        Copy-CbFileSafe (Join-Path $SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $Destination ("scripts\{0}" -f $scriptName))
+    }
+    Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\common.sh') (Join-Path $Destination 'scripts\lib\common.sh')
+    $benchmarks = Join-Path $SourceRoot 'benchmarks'
+    if (Test-CbExists $benchmarks) {
+        Copy-CbTreeSafe $benchmarks (Join-Path $Destination 'benchmarks')
+    }
+}
+
+function New-CbWrapperText {
+    return @'
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Command = 'help',
+    [Alias('dry-run')]
+    [switch]$DryRun,
+    [switch]$Json,
+    [switch]$Apply,
+    [Alias('acknowledge-existing-instructions')]
+    [switch]$AcknowledgeExistingInstructions,
+    [Alias('max-files')]
+    [int]$MaxFiles = 2000,
+    [Alias('max-visited')]
+    [int]$MaxVisited = 10000,
+    [Parameter(Position = 1)]
+    [string]$Repository = '.',
+    [switch]$Static,
+    [switch]$Live,
+    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,risk-migration,risk-safe-path'
+)
+$ErrorActionPreference = 'Stop'
+$homePath = if ([string]::IsNullOrWhiteSpace($env:HOME)) { $env:USERPROFILE } else { $env:HOME }
+$codexHome = if ([string]::IsNullOrWhiteSpace($env:CODEX_HOME)) { Join-Path $homePath '.codex' } else { $env:CODEX_HOME }
+$entryPoint = Join-Path $codexHome 'codex-baseline\runtime\scripts\codex-baseline.ps1'
+$parameters = @{
+    Command = $Command
+    DryRun = [bool]$DryRun
+    Json = [bool]$Json
+    Apply = [bool]$Apply
+    AcknowledgeExistingInstructions = [bool]$AcknowledgeExistingInstructions
+    MaxFiles = $MaxFiles
+    MaxVisited = $MaxVisited
+    Repository = $Repository
+    Static = [bool]$Static
+    Live = [bool]$Live
+    Tasks = $Tasks
+}
+& $entryPoint @parameters
+exit $LASTEXITCODE
+'@
+}
+
+function Get-CbInstallObjects {
+    param($Manifest, [string]$SourceRoot, [string]$TemporaryRoot, $CurrentTransaction)
+    $blockPath = Join-Path $TemporaryRoot 'AGENTS.block.md'
+    $block = New-CbRenderedBlock (Join-Path $SourceRoot 'baseline\global\AGENTS.block.md') ([string]$Manifest.version)
+    Write-CbUtf8File $blockPath $block
+    $runtime = Join-Path $TemporaryRoot 'runtime'
+    New-CbRuntimeCandidate $runtime $SourceRoot
+    $wrapperPath = Join-Path $TemporaryRoot 'codex-baseline.ps1'
+    Write-CbUtf8File $wrapperPath (New-CbWrapperText)
+    $definitions = @(
+        @('00', 'block', (Get-CbAgentsFile), (Get-CbStringHash $block), $blockPath, 'baseline/global/AGENTS.block.md'),
+        @('10', 'tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-repo-onboarding'), (Get-CbTreeHash (Join-Path $SourceRoot 'baseline\skills\codex-baseline-repo-onboarding')), (Join-Path $SourceRoot 'baseline\skills\codex-baseline-repo-onboarding'), 'baseline/skills/codex-baseline-repo-onboarding'),
+        @('11', 'tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-deep-work'), (Get-CbTreeHash (Join-Path $SourceRoot 'baseline\skills\codex-baseline-deep-work')), (Join-Path $SourceRoot 'baseline\skills\codex-baseline-deep-work'), 'baseline/skills/codex-baseline-deep-work'),
+        @('12', 'tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-conformance-review'), (Get-CbTreeHash (Join-Path $SourceRoot 'baseline\skills\codex-baseline-conformance-review')), (Join-Path $SourceRoot 'baseline\skills\codex-baseline-conformance-review'), 'baseline/skills/codex-baseline-conformance-review'),
+        @('13', 'tree', (Join-Path $script:AgentsHome 'skills\codex-baseline-retrospective'), (Get-CbTreeHash (Join-Path $SourceRoot 'baseline\skills\codex-baseline-retrospective')), (Join-Path $SourceRoot 'baseline\skills\codex-baseline-retrospective'), 'baseline/skills/codex-baseline-retrospective'),
+        @('20', 'file', (Join-Path $script:CodexHome 'agents\codex-baseline-reviewer.toml'), (Get-CbFileHash (Join-Path $SourceRoot 'baseline\agents\codex-baseline-reviewer.toml')), (Join-Path $SourceRoot 'baseline\agents\codex-baseline-reviewer.toml'), 'baseline/agents/codex-baseline-reviewer.toml'),
+        @('30', 'tree', $script:RuntimePath, (Get-CbTreeHash $runtime), $runtime, 'runtime'),
+        @('31', 'file', (Join-Path $script:HomePath '.local\bin\codex-baseline.ps1'), (Get-CbFileHash $wrapperPath), $wrapperPath, 'generated-wrapper')
+    )
+    $objects = @()
+    foreach ($definition in $definitions) {
+        $objects += New-CbObject $definition[0] $definition[1] $definition[2] $definition[3] $true $definition[4] $definition[5] $CurrentTransaction
+    }
+    return $objects
+}
+
+function Save-CbBackup {
+    param($Transaction, $Object)
+    $objectDirectory = Join-Path (Join-Path (Get-CbTransactionPath $Transaction.Id) 'objects') $Object.Id
+    Ensure-CbSafeDirectory $objectDirectory | Out-Null
+    if (-not $Object.PreviousExisted) {
+        return
+    }
+    $backup = Join-Path $objectDirectory 'backup'
+    if ($Object.Kind -eq 'block') {
+        $physicalBackup = Join-Path $objectDirectory 'backup-full'
+        Copy-CbFileSafe $Object.Target $physicalBackup
+        $Object.PhysicalBackup = $physicalBackup
+        $Object.PhysicalBackupHash = Get-CbFileHash $physicalBackup
+        if (-not $Object.PreviousManagedExisted) {
+            $Object.BackupHash = 'absent'
+            return
+        }
+        $text = Read-CbUtf8Text $Object.Target
+        $info = Get-CbBlockInfo $text
+        Write-CbUtf8File $backup $info.Block
+        $Object.Backup = $backup
+        $Object.BackupHash = Get-CbStringHash $info.Block
+    }
+    elseif ($Object.Kind -eq 'file') {
+        Copy-CbFileSafe $Object.Target $backup
+        $Object.Backup = $backup
+        $Object.BackupHash = Get-CbFileHash $backup
+    }
+    elseif ($Object.Kind -eq 'tree') {
+        Copy-CbTreeSafe $Object.Target $backup
+        $Object.Backup = $backup
+        $Object.BackupHash = Get-CbTreeHash $backup
+    }
+}
+
+function Prepare-CbObject {
+    param($Transaction, $Object)
+    $targetParent = [System.IO.Path]::GetDirectoryName($Object.Target)
+    Ensure-CbSafeDirectory $targetParent | Out-Null
+    $stage = Join-Path $targetParent ('.codex-baseline-stage-{0}-{1}' -f $Transaction.Id, $Object.Id)
+    $old = Join-Path $targetParent ('.codex-baseline-old-{0}-{1}' -f $Transaction.Id, $Object.Id)
+    if (Test-CbExists $stage) { throw "Staging collision: $stage" }
+    if (Test-CbExists $old) { throw "Staging collision: $old" }
+    $Object.Stage = $stage
+    $Object.Old = $old
+    Write-CbTransaction $Transaction
+    Save-CbBackup $Transaction $Object
+    if ($Object.DesiredPresent) {
+        if ($Object.Kind -eq 'block') {
+            if ($Object.BlockWholeFileSource) {
+                Copy-CbFileSafe $Object.SourcePath $stage
+            }
+            else {
+                $liveText = if (Test-CbExists $Object.Target) { Read-CbUtf8Text $Object.Target } else { '' }
+                if ($Object.DesiredHash -eq 'absent') {
+                    $desiredText = Remove-CbBlockText $liveText
+                }
+                else {
+                    $desiredBlock = Read-CbUtf8Text $Object.SourcePath
+                    $desiredText = Set-CbBlockText $liveText $desiredBlock
+                }
+                Write-CbUtf8File $stage $desiredText
+            }
+        }
+        elseif ($Object.Kind -eq 'file') {
+            Copy-CbFileSafe $Object.SourcePath $stage
+        }
+        elseif ($Object.Kind -eq 'tree') {
+            Copy-CbTreeSafe $Object.SourcePath $stage
+        }
+    }
+    if ($Object.DesiredPresent) {
+        $stagedHash = Get-CbLiveHash $Object.Kind $stage
+        if ($stagedHash -ne $Object.DesiredHash) {
+            throw "Staged hash mismatch for $($Object.Target)"
+        }
+        $Object.DesiredPhysicalHash = Get-CbPhysicalHash $stage
+    }
+    elseif (Test-CbExists $stage) {
+        throw "An absent desired object unexpectedly has staging content: $($Object.Target)"
+    }
+    else {
+        $Object.DesiredPhysicalHash = 'absent'
+    }
+    $Object.Status = 'prepared'
+    Write-CbTransaction $Transaction
+}
+
+function Commit-CbObject {
+    param($Transaction, $Object)
+    $live = Get-CbLiveHash $Object.Kind $Object.Target
+    $physical = Get-CbPhysicalHash $Object.Target
+    if ($live -ne $Object.PreviousHash -or $physical -ne $Object.PreviousPhysicalHash) {
+        throw "Target changed during transaction: $($Object.Target)"
+    }
+    $Object.Status = 'moving-old'
+    Write-CbTransaction $Transaction
+    if ($Object.PreviousExisted) {
+        Move-CbPath $Object.Target $Object.Old
+        Assert-CbPhysicalHashAt ([string]$Object.Old) ([string]$Object.PreviousPhysicalHash) 'Moved commit preimage'
+    }
+    $Object.Status = 'old-moved'
+    Write-CbTransaction $Transaction
+    if ($Object.DesiredPresent) {
+        if ((Get-CbPhysicalHash $Object.Stage) -ne [string]$Object.DesiredPhysicalHash) {
+            throw "Staged physical content changed before commit: $($Object.Target)"
+        }
+        if ($Object.Kind -eq 'tree') {
+            [System.IO.Directory]::Move($Object.Stage, $Object.Target)
+        }
+        else {
+            [System.IO.File]::Move($Object.Stage, $Object.Target)
+        }
+    }
+    $Object.Status = 'new-moved'
+    Write-CbTransaction $Transaction
+    $installed = Get-CbLiveHash $Object.Kind $Object.Target
+    if ($installed -ne $Object.DesiredHash) {
+        throw "Committed hash mismatch for $($Object.Target)"
+    }
+    if ((Test-CbExists $Object.Target) -ne [bool]$Object.DesiredPresent) {
+        throw "Committed presence mismatch for $($Object.Target)"
+    }
+    if ((Get-CbPhysicalHash $Object.Target) -ne [string]$Object.DesiredPhysicalHash) {
+        throw "Committed physical hash mismatch for $($Object.Target)"
+    }
+    $Object.InstalledHash = $Object.DesiredHash
+    $Object.InstalledPhysicalHash = Get-CbPhysicalHash $Object.Target
+    $Object.Status = 'committed'
+    Write-CbTransaction $Transaction
+}
+
+function Move-CbPath {
+    param([string]$Source, [string]$Destination)
+    $item = Get-CbItem $Source
+    if ($null -eq $item) {
+        throw "Move source is missing: $Source"
+    }
+    Assert-CbOrdinaryItem $item 'any'
+    if ($item.PSIsContainer) {
+        [System.IO.Directory]::Move($item.FullName, $Destination)
+    }
+    else {
+        [System.IO.File]::Move($item.FullName, $Destination)
+    }
+}
+
+function Complete-CbTransaction {
+    param($Transaction, [AllowNull()][string]$ResultCurrent)
+    if ([string]::IsNullOrWhiteSpace($ResultCurrent)) { $ResultCurrent = $null }
+    foreach ($object in @($Transaction.Objects)) {
+        if ($object.Change -and $object.PreviousExisted) {
+            if ($null -eq $object.Old -or -not (Test-CbExists ([string]$object.Old))) {
+                throw "Commit preimage is missing before completion: $($object.Target)"
+            }
+            Assert-CbPhysicalHashAt ([string]$object.Old) ([string]$object.PreviousPhysicalHash) 'Commit preimage before completion'
+        }
+    }
+    $Transaction.ResultCurrent = $ResultCurrent
+    if ($null -eq $ResultCurrent) {
+        if (Test-CbExists $script:CurrentPath) {
+            Remove-CbSafeItem $script:CurrentPath
+        }
+    }
+    else {
+        Write-CbPointer $script:CurrentPath $ResultCurrent
+    }
+    $Transaction.State = 'committed'
+    Write-CbTransaction $Transaction
+    Remove-CbSafeItem $script:PendingPath
+    foreach ($object in @($Transaction.Objects)) {
+        if ($object.Change -and $null -ne $object.Old -and (Test-CbExists $object.Old)) {
+            Assert-CbPhysicalHashAt ([string]$object.Old) ([string]$object.PreviousPhysicalHash) 'Commit preimage before cleanup'
+            Remove-CbSafeItem $object.Old
+        }
+    }
+    $script:ActiveTransaction = $null
+}
+
+function Assert-CbPhysicalHashAt {
+    param([string]$Path, [string]$Expected, [string]$Label)
+    $actual = Get-CbPhysicalHash $Path
+    if ($actual -ne $Expected) { throw "$Label physical hash mismatch: $Path" }
+}
+
+function Assert-CbRecoveryPreimage {
+    param($Transaction, $Object)
+    if (-not $Object.Change) { return }
+    $status = [string]$Object.Status
+    $targetExists = Test-CbExists ([string]$Object.Target)
+    $stageExists = $null -ne $Object.Stage -and (Test-CbExists ([string]$Object.Stage))
+    $oldExists = $null -ne $Object.Old -and (Test-CbExists ([string]$Object.Old))
+
+    if ($stageExists) {
+        if ($null -eq $Object.DesiredPhysicalHash) {
+            throw "Recovery cannot verify a partially staged object: $($Object.Target)"
+        }
+        Assert-CbPhysicalHashAt ([string]$Object.Stage) ([string]$Object.DesiredPhysicalHash) 'Staged recovery object'
+    }
+    if ($null -ne $Object.Backup) {
+        if (-not (Test-CbExists ([string]$Object.Backup))) { throw "Recovery backup is missing: $($Object.Target)" }
+        $backupHash = if ($Object.Kind -eq 'block') {
+            Get-CbStringHash (Read-CbUtf8Text ([string]$Object.Backup))
+        }
+        else { Get-CbLiveHash ([string]$Object.Kind) ([string]$Object.Backup) }
+        if ($backupHash -ne [string]$Object.BackupHash) { throw "Recovery backup is corrupt: $($Object.Target)" }
+    }
+    if ($null -ne $Object.PhysicalBackup) {
+        if (-not (Test-CbExists ([string]$Object.PhysicalBackup))) { throw "Recovery physical backup is missing: $($Object.Target)" }
+        if ((Get-CbFileHash ([string]$Object.PhysicalBackup)) -ne [string]$Object.PhysicalBackupHash) {
+            throw "Recovery physical backup is corrupt: $($Object.Target)"
+        }
+    }
+
+    switch ($status) {
+        'planned' {
+            Assert-CbPhysicalHashAt ([string]$Object.Target) ([string]$Object.PreviousPhysicalHash) 'Planned recovery target'
+            if ($oldExists) { throw "Planned recovery unexpectedly has an old object: $($Object.Target)" }
+        }
+        'prepared' {
+            Assert-CbPhysicalHashAt ([string]$Object.Target) ([string]$Object.PreviousPhysicalHash) 'Prepared recovery target'
+            if ($oldExists) { throw "Prepared recovery unexpectedly has an old object: $($Object.Target)" }
+            if ($Object.DesiredPresent -and -not $stageExists) { throw "Prepared recovery stage is missing: $($Object.Target)" }
+        }
+        'moving-old' {
+            if ($Object.PreviousExisted) {
+                if ($targetExists -eq $oldExists) { throw "Ambiguous moving-old recovery state: $($Object.Target)" }
+                if ($targetExists) { Assert-CbPhysicalHashAt ([string]$Object.Target) ([string]$Object.PreviousPhysicalHash) 'Moving-old target' }
+                else { Assert-CbPhysicalHashAt ([string]$Object.Old) ([string]$Object.PreviousPhysicalHash) 'Moving-old preimage' }
+            }
+            elseif ($targetExists -or $oldExists) { throw "Moving-old recovery has unexpected content: $($Object.Target)" }
+        }
+        'old-moved' {
+            if ($targetExists) { throw "Old-moved recovery target unexpectedly exists: $($Object.Target)" }
+            if ($Object.PreviousExisted) {
+                if (-not $oldExists) { throw "Old-moved recovery preimage is missing: $($Object.Target)" }
+                Assert-CbPhysicalHashAt ([string]$Object.Old) ([string]$Object.PreviousPhysicalHash) 'Old-moved preimage'
+            }
+            elseif ($oldExists) { throw "Old-moved recovery has an unexpected preimage: $($Object.Target)" }
+            if ($Object.DesiredPresent -and -not $stageExists) { throw "Old-moved recovery stage is missing: $($Object.Target)" }
+        }
+        { $_ -eq 'new-moved' -or $_ -eq 'committed' } {
+            Assert-CbPhysicalHashAt ([string]$Object.Target) ([string]$Object.DesiredPhysicalHash) 'Committed recovery target'
+            if ($Object.PreviousExisted) {
+                if (-not $oldExists) { throw "Committed recovery preimage is missing: $($Object.Target)" }
+                Assert-CbPhysicalHashAt ([string]$Object.Old) ([string]$Object.PreviousPhysicalHash) 'Committed recovery preimage'
+            }
+            elseif ($oldExists) { throw "Committed recovery has an unexpected preimage: $($Object.Target)" }
+        }
+        'rolled-back' {
+            Assert-CbPhysicalHashAt ([string]$Object.Target) ([string]$Object.PreviousPhysicalHash) 'Rolled-back recovery target'
+            if ($stageExists -or $oldExists) { throw "Rolled-back recovery still has staging content: $($Object.Target)" }
+        }
+        'unchanged' {
+            Assert-CbPhysicalHashAt ([string]$Object.Target) ([string]$Object.DesiredPhysicalHash) 'Unchanged recovery target'
+            if ($stageExists -or $oldExists) { throw "Unchanged recovery has staging content: $($Object.Target)" }
+        }
+        default { throw "Unknown object journal state: $status" }
+    }
+}
+
+function Restore-CbPendingObject {
+    param($Transaction, $Object)
+    if (-not $Object.Change) {
+        return
+    }
+    $targetExists = Test-CbExists $Object.Target
+    $oldExists = $null -ne $Object.Old -and (Test-CbExists $Object.Old)
+    switch ([string]$Object.Status) {
+        'planned' { }
+        'prepared' { }
+        'moving-old' {
+            if ($oldExists -and $targetExists) {
+                throw "Ambiguous interrupted move at $($Object.Target)"
+            }
+            if ($oldExists -and -not $targetExists) {
+                Assert-CbPhysicalHashAt ([string]$Object.Old) ([string]$Object.PreviousPhysicalHash) 'Moving-old restore source'
+                Move-CbPath $Object.Old $Object.Target
+            }
+        }
+        { $_ -eq 'old-moved' -or $_ -eq 'new-moved' -or $_ -eq 'committed' } {
+            if ($targetExists) {
+                $live = Get-CbLiveHash $Object.Kind $Object.Target
+                $physical = Get-CbPhysicalHash $Object.Target
+                if ($live -ne $Object.DesiredHash -or $physical -ne $Object.DesiredPhysicalHash) {
+                    throw "Interrupted target drifted; manual recovery required: $($Object.Target)"
+                }
+            }
+            if ($Object.PreviousExisted) {
+                if (-not $oldExists) {
+                    throw "Interrupted transaction lost its preimage: $($Object.Target)"
+                }
+                Assert-CbPhysicalHashAt ([string]$Object.Old) ([string]$Object.PreviousPhysicalHash) 'Recovery restore source'
+            }
+            if ($targetExists) {
+                Remove-CbSafeItem $Object.Target
+            }
+            if ($Object.PreviousExisted) {
+                Move-CbPath $Object.Old $Object.Target
+            }
+        }
+        'rolled-back' { return }
+        default { throw "Unknown object journal state: $($Object.Status)" }
+    }
+    if ($null -ne $Object.Stage -and (Test-CbExists $Object.Stage)) {
+        Remove-CbSafeItem $Object.Stage
+    }
+    if ($null -ne $Object.Old -and (Test-CbExists $Object.Old)) {
+        Remove-CbSafeItem $Object.Old
+    }
+    $Object.Status = 'rolled-back'
+    Write-CbTransaction $Transaction
+}
+
+function Recover-CbPending {
+    $pending = Read-CbPointer $script:PendingPath
+    if ($null -eq $pending) {
+        return
+    }
+    Write-CbError "recovering incomplete transaction $pending"
+    $transaction = Read-CbTransaction $pending
+    Assert-CbTransactionShape $transaction $false
+    $parent = $null
+    if ($null -ne $transaction.ParentTransaction) {
+        $parent = Read-CbTransaction ([string]$transaction.ParentTransaction)
+        Assert-CbTransactionShape $parent $true
+        if ([string]$parent.State -ne 'committed') { throw 'Pending transaction parent is not committed.' }
+    }
+    $allObjectIds = @('00', '10', '11', '12', '13', '20', '30', '31')
+    switch ([string]$transaction.Operation) {
+        { $_ -eq 'install' -or $_ -eq 'update' } {
+            Assert-CbExactObjectIds $transaction $allObjectIds 'Pending install/update transaction'
+        }
+        'uninstall' {
+            if ($null -eq $parent) { throw 'Pending uninstall transaction has no validated parent.' }
+            Assert-CbExactObjectIds $transaction $allObjectIds 'Pending uninstall transaction'
+        }
+        'rollback' {
+            if ($null -eq $parent) { throw 'Pending rollback transaction has no validated parent.' }
+            $expectedRollbackIds = @($parent.Objects | Where-Object { [string]$_.Status -eq 'committed' } | ForEach-Object { [string]$_.Id })
+            if ($expectedRollbackIds.Count -eq 0) { throw 'Pending rollback transaction has no derived object inventory.' }
+            Assert-CbExactObjectIds $transaction $expectedRollbackIds 'Pending rollback transaction'
+        }
+    }
+    foreach ($object in @($transaction.Objects)) {
+        Assert-CbRecoveryPreimage $transaction $object
+    }
+    $transaction.State = 'recovering'
+    Write-CbTransaction $transaction
+    $objects = @($transaction.Objects)
+    [array]::Reverse($objects)
+    foreach ($object in $objects) {
+        Restore-CbPendingObject $transaction $object
+    }
+    if ($null -eq $transaction.ParentTransaction) {
+        if (Test-CbExists $script:CurrentPath) { Remove-CbSafeItem $script:CurrentPath }
+    }
+    else {
+        Write-CbPointer $script:CurrentPath ([string]$transaction.ParentTransaction)
+    }
+    $transaction.State = 'rolled-back'
+    Write-CbTransaction $transaction
+    Remove-CbSafeItem $script:PendingPath
+    $script:ActiveTransaction = $null
+}
+
+function Acquire-CbLock {
+    Ensure-CbSafeDirectory $script:StateRoot | Out-Null
+    $candidate = Join-Path $script:StateRoot ('.lock-{0}' -f [guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($candidate) | Out-Null
+    $ownerRecord = [pscustomobject]@{
+        Pid = $PID
+        StartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+    }
+    Write-CbUtf8File (Join-Path $candidate 'owner.json') (($ownerRecord | ConvertTo-Json) + "`n")
+    try {
+        [System.IO.Directory]::Move($candidate, $script:LockPath)
+        $script:LockHeld = $true
+        return
+    }
+    catch [System.IO.IOException] {
+        if (Test-CbExists $candidate) { Remove-CbSafeItem $candidate }
+    }
+    $lock = Get-CbItem $script:LockPath
+    if ($null -eq $lock) {
+        throw 'The operation lock disappeared during acquisition; retry the command.'
+    }
+    Assert-CbOrdinaryItem $lock 'tree'
+    $ownerPath = Join-Path $script:LockPath 'owner.json'
+    $active = $false
+    if (Test-CbExists $ownerPath) {
+        try {
+            $owner = (Read-CbUtf8Text $ownerPath) | ConvertFrom-Json
+            $process = Get-Process -Id ([int]$owner.Pid) -ErrorAction SilentlyContinue
+            if ($null -ne $process) {
+                $recorded = [DateTime]::Parse([string]$owner.StartUtc).ToUniversalTime()
+                $active = [Math]::Abs(($process.StartTime.ToUniversalTime() - $recorded).TotalSeconds) -lt 1
+            }
+        }
+        catch {
+            $active = $false
+        }
+    }
+    if ($active) {
+        throw "Another baseline operation holds the lock: $script:LockPath"
+    }
+    Remove-CbSafeItem $script:LockPath
+    $candidate = Join-Path $script:StateRoot ('.lock-{0}' -f [guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($candidate) | Out-Null
+    Write-CbUtf8File (Join-Path $candidate 'owner.json') (($ownerRecord | ConvertTo-Json) + "`n")
+    try {
+        [System.IO.Directory]::Move($candidate, $script:LockPath)
+        $script:LockHeld = $true
+    }
+    catch {
+        if (Test-CbExists $candidate) { Remove-CbSafeItem $candidate }
+        throw 'Could not acquire the recovered operation lock; another process may have won the race.'
+    }
+}
+
+function Release-CbLock {
+    if ($script:LockHeld -and (Test-CbExists $script:LockPath)) {
+        Remove-CbSafeItem $script:LockPath
+    }
+    $script:LockHeld = $false
+}
+
+function Invoke-CbTransaction {
+    param(
+        [string]$Operation,
+        [string]$Version,
+        [AllowNull()][string]$ParentTransaction,
+        [object[]]$Objects,
+        [AllowNull()][string]$ResultCurrent
+    )
+    $transaction = New-CbTransaction $Operation $Version $ParentTransaction
+    $transaction.ResultCurrent = $(if ([string]::IsNullOrWhiteSpace($ResultCurrent)) { $null } else { $ResultCurrent })
+    $transaction.Objects = @($Objects)
+    Write-CbTransaction $transaction
+    foreach ($object in @($transaction.Objects)) {
+        if (-not $object.Change) {
+            $object.Status = 'unchanged'
+            $object.InstalledHash = $object.DesiredHash
+            $object.DesiredPhysicalHash = Get-CbPhysicalHash $object.Target
+            $object.InstalledPhysicalHash = $object.DesiredPhysicalHash
+            Write-CbTransaction $transaction
+            continue
+        }
+        Prepare-CbObject $transaction $object
+    }
+    $transaction.State = 'prepared'
+    Write-CbTransaction $transaction
+    $transaction.State = 'committing'
+    Write-CbTransaction $transaction
+    $committedCount = 0
+    foreach ($object in @($transaction.Objects)) {
+        if (-not $object.Change) { continue }
+        Commit-CbObject $transaction $object
+        $committedCount++
+        if ($committedCount -eq 1 -and -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_APPEND_AGENTS_AFTER_OBJECT)) {
+            [System.IO.File]::AppendAllText([string]$object.Target, $env:CODEX_BASELINE_TEST_APPEND_AGENTS_AFTER_OBJECT, $script:Utf8NoBom)
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_FAULT_AFTER_OBJECT)) {
+            $faultAfter = 0
+            if ([int]::TryParse($env:CODEX_BASELINE_TEST_FAULT_AFTER_OBJECT, [ref]$faultAfter) -and $faultAfter -eq $committedCount) {
+                throw "Injected test fault after object $committedCount"
+            }
+        }
+    }
+    $effectiveResult = if ($ResultCurrent -eq '__SELF__') { [string]$transaction.Id } else { $ResultCurrent }
+    Complete-CbTransaction $transaction $effectiveResult
+    return $transaction
+}
+
+function Invoke-CbInstallLike {
+    param([string]$Operation)
+    $manifest = Read-CbManifest
+    Write-CbSourceProvenance $manifest
+    if (-not $DryRun -and -not $AcknowledgeUnverifiedSource) {
+        throw 'Unsigned local source requires -AcknowledgeUnverifiedSource before mutation.'
+    }
+    $sourceSnapshot = New-CbVerifiedSourceSnapshot $manifest
+    $temporaryRoot = $null
+    try {
+        $manifest = $sourceSnapshot.Manifest
+        Initialize-CbPaths
+        if ($DryRun) {
+            if (Test-CbExists $script:PendingPath) {
+                throw 'An incomplete transaction requires recovery; dry-run made no changes.'
+            }
+        }
+        else {
+            Ensure-CbSafeDirectory $script:CodexHome | Out-Null
+            Ensure-CbSafeDirectory $script:AgentsHome | Out-Null
+            Acquire-CbLock
+            $script:MutationStarted = $true
+            Recover-CbPending
+        }
+        $temporaryRoot = New-CbTemporaryDirectory
+        $current = Get-CbCurrentTransaction
+        $objects = @(Get-CbInstallObjects $manifest $sourceSnapshot.Root $temporaryRoot $current)
+        $changed = @($objects | Where-Object { $_.Change })
+        foreach ($object in $changed) {
+            Write-Output ("{0}: {1}" -f $Operation, $object.Target)
+        }
+        if ($changed.Count -eq 0) {
+            Write-Output ("codex-baseline {0} is already installed; no changes" -f $manifest.version)
+            return
+        }
+        if ($DryRun) {
+            Write-Output 'dry-run: no files changed'
+            return
+        }
+        $parentId = if ($null -eq $current) { $null } else { [string]$current.Id }
+        $transaction = Invoke-CbTransaction $Operation ([string]$manifest.version) $parentId $objects '__SELF__'
+        Write-Output ("installed codex-baseline {0} (transaction {1})" -f $manifest.version, $transaction.Id)
+    }
+    finally {
+        if ($null -ne $temporaryRoot -and (Test-CbExists $temporaryRoot)) {
+            Remove-CbSafeItem $temporaryRoot
+        }
+        if ($null -ne $sourceSnapshot -and (Test-CbExists ([string]$sourceSnapshot.Root))) {
+            Remove-CbSafeItem ([string]$sourceSnapshot.Root)
+        }
+    }
+}
+
+function Assert-CbCurrentClean {
+    param($Current)
+    foreach ($object in @($Current.Objects)) {
+        $live = Get-CbLiveHash ([string]$object.Kind) ([string]$object.Target)
+        if ($live -ne [string]$object.InstalledHash) {
+            throw "Managed content drifted: $($object.Target)"
+        }
+    }
+}
+
+function New-CbReverseObject {
+    param($SourceObject, $CurrentTransaction, [string]$TemporaryRoot)
+    $id = [string]$SourceObject.Id
+    $kind = [string]$SourceObject.Kind
+    $target = [string]$SourceObject.Target
+    $desiredHash = [string]$SourceObject.PreviousHash
+    $sourcePath = $null
+    $desiredPresent = [bool]$SourceObject.PreviousExisted
+    if ($kind -eq 'block') {
+        $liveText = if (Test-CbExists $target) { Read-CbUtf8Text $target } else { '' }
+        $physicalUnchanged = -not [string]::IsNullOrWhiteSpace([string]$SourceObject.InstalledPhysicalHash) -and
+            (Get-CbPhysicalHash $target) -eq [string]$SourceObject.InstalledPhysicalHash
+        if ($physicalUnchanged -and [bool]$SourceObject.PreviousExisted) {
+            if ($null -eq $SourceObject.PhysicalBackup -or -not (Test-CbExists ([string]$SourceObject.PhysicalBackup))) {
+                throw "Rollback physical block preimage is missing: $target"
+            }
+            if ((Get-CbFileHash ([string]$SourceObject.PhysicalBackup)) -ne [string]$SourceObject.PhysicalBackupHash) {
+                throw "Rollback physical block preimage is corrupt: $target"
+            }
+            $sourcePath = [string]$SourceObject.PhysicalBackup
+            $desiredPresent = $true
+        }
+        elseif ($physicalUnchanged -and -not [bool]$SourceObject.PreviousExisted) {
+            $desiredPresent = $false
+            $sourcePath = $null
+        }
+        elseif ($desiredHash -eq 'absent') {
+            $candidate = Remove-CbBlockText $liveText
+            $desiredPresent = [bool]$SourceObject.PreviousExisted -or $candidate.Length -gt 0
+        }
+        else {
+            if ($null -eq $SourceObject.Backup -or -not (Test-CbExists ([string]$SourceObject.Backup))) {
+                throw "Rollback block backup is missing: $target"
+            }
+            $sourcePath = [string]$SourceObject.Backup
+            if ((Get-CbStringHash (Read-CbUtf8Text $sourcePath)) -ne [string]$SourceObject.BackupHash) {
+                throw "Rollback block preimage is corrupt: $target"
+            }
+            $candidate = Set-CbBlockText $liveText (Read-CbUtf8Text $sourcePath)
+            $desiredPresent = $true
+        }
+        $candidatePath = Join-Path $TemporaryRoot ("reverse-{0}.txt" -f $id)
+        if (-not $physicalUnchanged) {
+            Write-CbUtf8File $candidatePath $candidate
+            $sourcePath = if ($desiredHash -eq 'absent') { $null } else { $sourcePath }
+        }
+    }
+    elseif ($desiredPresent) {
+        if ($null -eq $SourceObject.Backup -or -not (Test-CbExists ([string]$SourceObject.Backup))) {
+            throw "Rollback backup is missing: $target"
+        }
+        $sourcePath = [string]$SourceObject.Backup
+        $backupHash = Get-CbLiveHash $kind $sourcePath
+        if ($backupHash -ne [string]$SourceObject.BackupHash -or $backupHash -ne $desiredHash) {
+            throw "Rollback preimage is corrupt: $target"
+        }
+    }
+    $object = New-CbObject $id $kind $target $desiredHash $desiredPresent $sourcePath 'rollback-preimage' $CurrentTransaction
+    if ($kind -eq 'block' -and $physicalUnchanged -and $desiredPresent) {
+        $object.BlockWholeFileSource = $true
+    }
+    return $object
+}
+
+function Invoke-CbRollback {
+    Initialize-CbPaths
+    if (Test-CbExists $script:PendingPath) {
+        if ($DryRun) { throw 'An incomplete transaction requires recovery; dry-run made no changes.' }
+    }
+    $current = Get-CbCurrentTransaction
+    if ($null -eq $current) {
+        Write-Output 'codex-baseline is not installed; nothing to roll back'
+        return
+    }
+    Assert-CbCurrentClean $current
+    $temporaryRoot = New-CbTemporaryDirectory
+    try {
+        $objects = @()
+        foreach ($sourceObject in @($current.Objects)) {
+            if ($sourceObject.Change) {
+                $objects += New-CbReverseObject $sourceObject $current $temporaryRoot
+            }
+        }
+        foreach ($object in @($objects | Where-Object { $_.Change })) {
+            Write-Output ("rollback: {0}" -f $object.Target)
+        }
+        if ($DryRun) {
+            Write-Output 'dry-run: no files changed'
+            return
+        }
+        Acquire-CbLock
+        $script:MutationStarted = $true
+        Recover-CbPending
+        $current = Get-CbCurrentTransaction
+        Assert-CbCurrentClean $current
+        $objects = @()
+        foreach ($sourceObject in @($current.Objects)) {
+            if ($sourceObject.Change) {
+                $objects += New-CbReverseObject $sourceObject $current $temporaryRoot
+            }
+        }
+        $resultCurrent = if ($null -eq $current.ParentTransaction) { $null } else { [string]$current.ParentTransaction }
+        $transaction = Invoke-CbTransaction 'rollback' ([string]$current.Version) ([string]$current.Id) $objects $resultCurrent
+        Write-Output ("rolled back transaction {0} (journal {1})" -f $current.Id, $transaction.Id)
+    }
+    finally {
+        if (Test-CbExists $temporaryRoot) { Remove-CbSafeItem $temporaryRoot }
+    }
+}
+
+function New-CbUninstallObjects {
+    param($Current, [string]$TemporaryRoot)
+    $objects = @()
+    foreach ($sourceObject in @($Current.Objects)) {
+        $kind = [string]$sourceObject.Kind
+        $target = [string]$sourceObject.Target
+        if ($kind -eq 'block') {
+            $liveText = if (Test-CbExists $target) { Read-CbUtf8Text $target } else { '' }
+            $candidate = Remove-CbBlockText $liveText
+            $candidatePath = Join-Path $TemporaryRoot 'uninstall-agents.txt'
+            Write-CbUtf8File $candidatePath $candidate
+            $desiredPresent = $candidate.Length -gt 0
+            $objects += New-CbObject ([string]$sourceObject.Id) 'block' $target 'absent' $desiredPresent $null 'uninstall-managed-block' $Current
+        }
+        else {
+            $objects += New-CbObject ([string]$sourceObject.Id) $kind $target 'absent' $false $null 'uninstall-managed-object' $Current
+        }
+    }
+    return $objects
+}
+
+function Invoke-CbUninstall {
+    Initialize-CbPaths
+    if (Test-CbExists $script:PendingPath) {
+        if ($DryRun) { throw 'An incomplete transaction requires recovery; dry-run made no changes.' }
+    }
+    $current = Get-CbCurrentTransaction
+    if ($null -eq $current -or [string]$current.Operation -eq 'uninstall') {
+        Write-Output 'codex-baseline is already uninstalled; no changes'
+        return
+    }
+    Assert-CbCurrentClean $current
+    $temporaryRoot = New-CbTemporaryDirectory
+    try {
+        $objects = @(New-CbUninstallObjects $current $temporaryRoot)
+        foreach ($object in @($objects | Where-Object { $_.Change })) {
+            Write-Output ("uninstall: {0}" -f $object.Target)
+        }
+        if ($DryRun) {
+            Write-Output 'dry-run: no files changed'
+            return
+        }
+        Acquire-CbLock
+        $script:MutationStarted = $true
+        Recover-CbPending
+        $current = Get-CbCurrentTransaction
+        Assert-CbCurrentClean $current
+        $objects = @(New-CbUninstallObjects $current $temporaryRoot)
+        $transaction = Invoke-CbTransaction 'uninstall' ([string]$current.Version) ([string]$current.Id) $objects '__SELF__'
+        Write-Output ("uninstalled codex-baseline (transaction {0})" -f $transaction.Id)
+    }
+    finally {
+        if (Test-CbExists $temporaryRoot) { Remove-CbSafeItem $temporaryRoot }
+    }
+}
+
+function Invoke-CbDoctor {
+    Initialize-CbPaths
+    $warnings = New-Object 'System.Collections.Generic.List[string]'
+    $failures = New-Object 'System.Collections.Generic.List[string]'
+    $codexVersion = 'not-found'
+    $codexVerification = 'unverified-native-codex-not-installed'
+    $nativeCapabilities = 'unverified-native-codex-not-installed'
+    $configState = 'unverified-native-codex-not-installed'
+    $deprecatedState = 'unverified-native-codex-not-installed'
+    $requiredDependencies = @('Windows PowerShell 5.1+')
+    $missingDependencies = @()
+    $managedOk = 0
+    $managedTotal = 0
+    $baselineVersion = $null
+    $researchChecked = $null
+    $researchReviewBy = $null
+    $researchState = 'invalid'
+    $sourceManifest = $null
+    $minimumCodex = $null
+    $sourceProvenance = [pscustomobject]@{
+        scope = 'unavailable'
+        version = $null
+        trust = $null
+        payload_sha256 = $null
+    }
+    try {
+        $sourceManifest = Read-CbManifest
+        $sourceProvenance = [pscustomobject]@{
+            scope = $(if (Test-CbSamePath $script:SourceRoot $script:RuntimePath) { 'installed-runtime' } else { 'local-source' })
+            version = [string]$sourceManifest.version
+            trust = [string]$sourceManifest.source_trust
+            payload_sha256 = [string]$sourceManifest.payload_hash
+        }
+        $minimumText = [string]$sourceManifest.minimum_codex
+        if ($minimumText -notmatch '^\d+\.\d+\.\d+$') {
+            throw 'Source manifest minimum_codex is malformed.'
+        }
+        $minimumCodex = [version]$minimumText
+        $researchChecked = [string]$sourceManifest.research_checked
+        $researchReviewBy = [string]$sourceManifest.research_review_by
+    }
+    catch {
+        $failures.Add("Source/research manifest check failed: $($_.Exception.Message)") | Out-Null
+    }
+    $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
+    if ($null -ne $codexCommand) {
+        try {
+            $codexVersion = (& codex --version 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0) {
+                $codexVerification = 'executed-native-windows'
+                $versionMatch = [regex]::Match($codexVersion, '(?<!\d)(\d+\.\d+\.\d+)(?!\d)')
+                if (-not $versionMatch.Success) {
+                    $failures.Add('Native Codex version output does not contain a semantic version.') | Out-Null
+                }
+                elseif ($null -ne $minimumCodex -and ([version]$versionMatch.Groups[1].Value) -lt $minimumCodex) {
+                    $failures.Add("Native Codex is older than the supported minimum version $minimumCodex.") | Out-Null
+                }
+                & codex --strict-config --version *> $null
+                if ($LASTEXITCODE -eq 0) {
+                    $configState = 'accepted-by-strict-config'
+                    $deprecatedState = 'none-reported-by-strict-config'
+                }
+                else {
+                    $configState = 'rejected-by-strict-config'
+                    $deprecatedState = 'unverified-config-rejected'
+                    $failures.Add('Native Codex strict-config version probe failed.') | Out-Null
+                }
+                $featuresOutput = (& codex features list 2>&1 | Out-String)
+                $featuresExit = $LASTEXITCODE
+                $stableFeatures = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+                foreach ($featureMatch in [regex]::Matches($featuresOutput, '(?m)^\s*(goals|multi_agent|skill_search)\s+stable\s+true(?:\s|$)')) {
+                    $stableFeatures.Add($featureMatch.Groups[1].Value) | Out-Null
+                }
+                if ($featuresExit -eq 0 -and $stableFeatures.Count -eq 3) {
+                    $nativeCapabilities = 'verified'
+                }
+                else {
+                    $nativeCapabilities = 'degraded'
+                    $warnings.Add('Native Codex capability probe is degraded.') | Out-Null
+                }
+            }
+            else {
+                $failures.Add('Native Codex version probe failed.') | Out-Null
+            }
+        }
+        catch {
+            $failures.Add("Native Codex probe failed: $($_.Exception.Message)") | Out-Null
+        }
+    }
+    else {
+        $warnings.Add('Native Windows Codex is not installed; Codex behavior is unverified on this host.') | Out-Null
+    }
+    $state = 'not-installed'
+    $currentId = $null
+    try {
+        if (Test-CbExists $script:PendingPath) {
+            $failures.Add('An incomplete transaction is pending recovery.') | Out-Null
+        }
+        if (Test-CbExists $script:LockPath) {
+            $warnings.Add('An operation lock exists.') | Out-Null
+        }
+        $current = Get-CbCurrentTransaction
+        if ($null -ne $current) {
+            $currentId = [string]$current.Id
+            $baselineVersion = [string]$current.Version
+            $state = if ([string]$current.Operation -eq 'uninstall') { 'uninstalled' } else { [string]$current.State }
+            foreach ($object in @($current.Objects)) {
+                $managedTotal++
+                try {
+                    $live = Get-CbLiveHash ([string]$object.Kind) ([string]$object.Target)
+                    if ($live -ne [string]$object.InstalledHash) {
+                        $failures.Add("Managed content drifted: $($object.Target)") | Out-Null
+                    }
+                    else { $managedOk++ }
+                }
+                catch {
+                    $failures.Add($_.Exception.Message) | Out-Null
+                }
+            }
+        }
+    }
+    catch {
+        $failures.Add($_.Exception.Message) | Out-Null
+    }
+    $agentsFile = Join-Path $script:CodexHome 'AGENTS.md'
+    if (Test-CbExists (Join-Path $script:CodexHome 'AGENTS.override.md')) {
+        $agentsFile = Join-Path $script:CodexHome 'AGENTS.override.md'
+    }
+    $markerBegin = 0
+    $markerEnd = 0
+    try {
+        if (Test-CbExists $agentsFile) {
+            $text = Read-CbUtf8Text $agentsFile
+            $markerBegin = [regex]::Matches($text, $script:BeginPattern).Count
+            $markerEnd = [regex]::Matches($text, $script:EndPattern).Count
+            Get-CbBlockInfo $text | Out-Null
+        }
+    }
+    catch {
+        $failures.Add($_.Exception.Message) | Out-Null
+    }
+    $skillCount = 0
+    foreach ($skillName in @(
+        'codex-baseline-repo-onboarding', 'codex-baseline-deep-work',
+        'codex-baseline-conformance-review', 'codex-baseline-retrospective'
+    )) {
+        $skillPath = Join-Path $script:AgentsHome ("skills\{0}\SKILL.md" -f $skillName)
+        if (Test-CbExists $skillPath) { $skillCount++ }
+    }
+    if ($state -ne 'not-installed' -and $skillCount -ne 4) {
+        $failures.Add('One or more baseline skills are missing.') | Out-Null
+    }
+    if ($null -ne $sourceManifest) {
+        $reviewDate = [DateTime]::MinValue
+        if ([DateTime]::TryParseExact($researchReviewBy, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$reviewDate)) {
+            if ([DateTime]::UtcNow.Date -le $reviewDate.Date) { $researchState = 'current' }
+            else {
+                $researchState = 'stale'
+                $warnings.Add('Research evidence is past its review-by date.') | Out-Null
+            }
+        }
+        else { $warnings.Add('Research freshness metadata is invalid.') | Out-Null }
+    }
+    $report = [pscustomobject]@{
+        schema = 1
+        contract = 'codex-baseline-doctor/v1'
+        platform = 'native-windows'
+        powershell = $PSVersionTable.PSVersion.ToString()
+        codex = $codexVersion
+        codex_verification = $codexVerification
+        state = $state
+        transaction = $currentId
+        baseline_version = $baselineVersion
+        source_provenance = $sourceProvenance
+        global_guidance = $agentsFile
+        marker_counts = [pscustomobject]@{ begin = $markerBegin; end = $markerEnd }
+        managed_objects = [pscustomobject]@{ ok = $managedOk; total = $managedTotal }
+        skills = [pscustomobject]@{ ok = $skillCount; total = 4 }
+        native_capabilities = $nativeCapabilities
+        runtime_dependencies = [pscustomobject]@{ status = 'verified'; required = $requiredDependencies; missing = $missingDependencies }
+        active_config = [pscustomobject]@{ status = $configState; verification = 'codex --strict-config --version' }
+        hook_state = [pscustomobject]@{ baseline_owned = 0; user_owned = 'preserved-not-enumerated' }
+        deprecated_settings = [pscustomobject]@{ status = $deprecatedState }
+        paths = [pscustomobject]@{ home = $script:HomePath; codex_home = $script:CodexHome; agents_home = $script:AgentsHome; state_root = $script:StateRoot }
+        owned_config_keys = 0
+        owned_hooks = 0
+        research = [pscustomobject]@{ checked = $researchChecked; review_by = $researchReviewBy; state = $researchState }
+        warnings = @($warnings)
+        failures = @($failures)
+        warning_count = $warnings.Count
+        failure_count = $failures.Count
+    }
+    if ($Json) {
+        [Console]::Out.WriteLine(($report | ConvertTo-Json -Depth 5 -Compress))
+    }
+    else {
+        [Console]::Out.WriteLine(("Platform: native-windows (PowerShell {0})" -f $report.powershell))
+        [Console]::Out.WriteLine(("Codex: {0} ({1})" -f $codexVersion, $codexVerification))
+        [Console]::Out.WriteLine(("Installation: {0}" -f $state))
+        [Console]::Out.WriteLine(("Transaction: {0}" -f $(if ($null -eq $currentId) { 'none' } else { $currentId })))
+        [Console]::Out.WriteLine(("Baseline version: {0}" -f $(if ($null -eq $baselineVersion) { 'none' } else { $baselineVersion })))
+        [Console]::Out.WriteLine(("Source provenance: {0} version={1} trust={2} payload={3}" -f $sourceProvenance.scope, $sourceProvenance.version, $sourceProvenance.trust, $sourceProvenance.payload_sha256))
+        [Console]::Out.WriteLine(("Global guidance: {0} (markers {1} {2})" -f $agentsFile, $markerBegin, $markerEnd))
+        [Console]::Out.WriteLine(("Runtime dependencies: verified ({0} required, {1} missing)" -f $requiredDependencies.Count, $missingDependencies.Count))
+        [Console]::Out.WriteLine(("Active config: {0}; deprecated settings: {1}" -f $configState, $deprecatedState))
+        [Console]::Out.WriteLine(("Paths: HOME={0} CODEX_HOME={1} AGENTS_HOME={2} state={3}" -f $script:HomePath, $script:CodexHome, $script:AgentsHome, $script:StateRoot))
+        foreach ($warning in $warnings) { [Console]::Out.WriteLine(("WARNING: {0}" -f $warning)) }
+        foreach ($failure in $failures) { [Console]::Out.WriteLine(("FAIL: {0}" -f $failure)) }
+    }
+    if ($failures.Count -gt 0) {
+        return 1
+    }
+    return 0
+}
+
+function Show-CbUsage {
+    Write-Output @'
+Usage: powershell -File codex-baseline.ps1 <command> [-DryRun] [-Json]
+       install/update [-AcknowledgeUnverifiedSource]
+       onboard [-Apply] [-AcknowledgeExistingInstructions] [repository]
+
+Commands:
+  install     Install from this reviewed local source tree
+  update      Apply the current local source as an update
+  doctor      Inspect native-Windows paths, state, drift, and Codex availability
+  rollback    Restore the state before the current transaction
+  uninstall   Remove only baseline-owned content; rollback can restore it
+  onboard     Run bounded native static discovery; add -Apply to write its block
+  benchmark   Validate native static fixtures/contracts; live is unsupported
+  help        Show this help
+
+Mutation commands perform no network access and never inspect authentication or
+session files. Dry-run writes no target or state files. Existing unowned targets,
+managed drift, malformed markers, symlinks, junctions, and other reparse points
+fail closed. This unsigned local source requires explicit acknowledgement before
+install or update mutation.
+'@
+}
+
+$exitCode = 0
+try {
+    switch ($Command.ToLowerInvariant()) {
+        'install' { Invoke-CbInstallLike 'install' }
+        'update' { Invoke-CbInstallLike 'update' }
+        'doctor' { $exitCode = Invoke-CbDoctor }
+        'rollback' { Invoke-CbRollback }
+        'uninstall' { Invoke-CbUninstall }
+        'onboard' {
+            $onboardParameters = @{
+                Repository = $Repository
+                Apply = [bool]$Apply
+                AcknowledgeExistingInstructions = [bool]$AcknowledgeExistingInstructions
+                DryRun = [bool]$DryRun
+                Json = [bool]$Json
+                MaxFiles = $MaxFiles
+                MaxVisited = $MaxVisited
+            }
+            & (Join-Path $PSScriptRoot 'onboard.ps1') @onboardParameters
+            $exitCode = $LASTEXITCODE
+        }
+        'benchmark' {
+            $benchmarkParameters = @{
+                Static = [bool]$Static
+                Live = [bool]$Live
+                Json = [bool]$Json
+                Tasks = $Tasks
+            }
+            & (Join-Path $PSScriptRoot 'benchmark.ps1') @benchmarkParameters
+            $exitCode = $LASTEXITCODE
+        }
+        'help' { Show-CbUsage }
+        '-h' { Show-CbUsage }
+        '--help' { Show-CbUsage }
+        default {
+            Show-CbUsage
+            throw "Unknown command: $Command"
+        }
+    }
+}
+catch {
+    Write-CbError $_.Exception.Message
+    $exitCode = 1
+    if ($script:MutationStarted -and $null -ne $script:ActiveTransaction) {
+        try {
+            Recover-CbPending
+        }
+        catch {
+            Write-CbError ("automatic recovery failed: {0}" -f $_.Exception.Message)
+        }
+    }
+}
+finally {
+    try { Release-CbLock } catch { Write-CbError $_.Exception.Message; $exitCode = 1 }
+}
+
+exit $exitCode

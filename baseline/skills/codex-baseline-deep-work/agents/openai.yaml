@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Deep Work"
+  short_description: "Run evidence-driven complex engineering"
+  default_prompt: "Use $codex-baseline-deep-work to turn this complex request into a bounded, verifiable implementation."

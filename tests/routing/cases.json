@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "lean-typo",
+      "task": "Correct one known misspelled word in README.md. The location is known, behavior is unaffected, and the edit is reversible.",
+      "workflow": "LEAN",
+      "high_risk": false,
+      "skill": null
+    },
+    {
+      "id": "strict-feature",
+      "task": "Implement a clearly specified API endpoint across handler, service, and tests in four files. It changes external behavior but involves no security, data migration, or irreversible action.",
+      "workflow": "STRICT",
+      "high_risk": false,
+      "skill": null
+    },
+    {
+      "id": "deep-auth-migration",
+      "task": "Design and implement a multi-hour migration of production authentication-token storage. Requirements are materially ambiguous and a wrong rollout could invalidate sessions or lose data.",
+      "workflow": "DEEP",
+      "high_risk": true,
+      "skill": "codex-baseline-deep-work"
+    },
+    {
+      "id": "onboarding",
+      "task": "Prepare a large unfamiliar existing repository for Codex use, discover its build and test conventions, and propose repository guidance without overwriting its existing AI instructions.",
+      "workflow": "DEEP",
+      "high_risk": false,
+      "skill": "codex-baseline-repo-onboarding"
+    },
+    {
+      "id": "conformance",
+      "task": "Independently audit a completed substantial release against the original master request, frozen criteria, actual diff, and verification receipt before it is declared complete.",
+      "workflow": "STRICT",
+      "high_risk": false,
+      "skill": "codex-baseline-conformance-review"
+    },
+    {
+      "id": "retrospective",
+      "task": "The same scope-creep failure occurred in three separate releases. Analyze the incidents and propose the lowest reliable prevention layer rather than adding generic prose.",
+      "workflow": "STRICT",
+      "high_risk": false,
+      "skill": "codex-baseline-retrospective"
+    }
+  ]
+}

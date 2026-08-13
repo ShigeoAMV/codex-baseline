@@ -1,0 +1,4 @@
+interface:
+  display_name: "Baseline Repo Onboarding"
+  short_description: "Safely discover and onboard repositories"
+  default_prompt: "Use $codex-baseline-repo-onboarding to inspect and prepare this repository without overwriting existing guidance."

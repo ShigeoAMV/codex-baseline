@@ -1,0 +1,9 @@
+{
+  "service": "billing",
+  "requestTimeoutMs": 0,
+  "retry": {
+    "attempts": 2,
+    "backoffMs": 250
+  },
+  "telemetry": true
+}

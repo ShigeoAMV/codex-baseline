@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+if [[ ${1:-} == --version ]]; then
+  printf '%s\n' 'codex-baseline deterministic test double 1.0'
+  exit 0
+fi
+
+[[ ${1:-} == exec ]] || { printf '%s\n' 'unsupported test-double command' >&2; exit 2; }
+shift
+workspace=''
+last=''
+output_schema=''
+prompt=''
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -C|--cd) workspace=${2:?missing workspace}; shift ;;
+    -o|--output-last-message) last=${2:?missing output}; shift ;;
+    --output-schema) output_schema=${2:?missing output schema}; shift ;;
+    -c|--config|-m|--model|--sandbox|-s) shift ;;
+    -*) ;;
+    *) prompt=$1 ;;
+  esac
+  shift
+done
+
+[[ -n $workspace && -n $last ]] || {
+  printf '%s\n' 'test double requires workspace and last-message path' >&2
+  exit 2
+}
+
+if [[ -n $output_schema ]]; then
+  case $prompt in
+    *misspelled*) workflow=LEAN; risk=false; skills='[]' ;;
+    *API\ endpoint*) workflow=STRICT; risk=false; skills='[]' ;;
+    *authentication-token\ storage*) workflow=DEEP; risk=true; skills='["codex-baseline-deep-work"]' ;;
+    *unfamiliar\ existing\ repository*) workflow=DEEP; risk=false; skills='["codex-baseline-repo-onboarding"]' ;;
+    *original\ master\ request*) workflow=STRICT; risk=false; skills='["codex-baseline-conformance-review"]' ;;
+    *scope-creep\ failure*) workflow=STRICT; risk=false; skills='["codex-baseline-retrospective"]' ;;
+    *) printf '%s\n' 'unknown routing fixture' >&2; exit 2 ;;
+  esac
+  printf '{"workflow":"%s","high_risk":%s,"selected_skills":%s,"reason":"deterministic routing runner test"}\n' \
+    "$workflow" "$risk" "$skills" >"$last"
+  printf '%s\n' '{"type":"turn.started"}' '{"type":"turn.completed","usage":{"input_tokens":50,"output_tokens":8}}'
+  exit 0
+fi
+
+[[ -f $workspace/calc.js ]] || {
+  printf '%s\n' 'test double supports only the small benchmark fixture' >&2
+  exit 2
+}
+
+stage="$workspace/.codex-baseline-test-double.$$"
+sed 's/return left - right;/return left + right;/' "$workspace/calc.js" >"$stage"
+mv -- "$stage" "$workspace/calc.js"
+printf '%s\n' 'Synthetic benchmark completion.' >"$last"
+printf '%s\n' \
+  '{"type":"turn.started"}' \
+  '{"type":"item.completed","item":{"type":"file_change"}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}'
