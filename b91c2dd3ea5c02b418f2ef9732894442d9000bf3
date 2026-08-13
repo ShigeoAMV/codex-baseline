@@ -1,0 +1,20 @@
+Codex Baseline local execution attestation
+Date: 2026-08-13 Europe/Zurich
+Commit: b91c2dd3ea5c02b418f2ef9732894442d9000bf3
+Tree: b098c5e98909b4a34f12c4b50aefa8004bc95e66
+Installable payload SHA-256: 40b78042d4fcfce753b9f0a32e801dbbe09ccdbf8e1afc7c374c16bb6c63e78f
+Worktree: clean before parallel start and clean after completion
+
+./tests/run.sh
+Exit: 0
+Result: 12/12 groups passed
+Host: Linux 6.18.33.2-microsoft-standard-WSL2 x86_64 GNU/Linux
+Codex: codex-cli 0.147.0
+
+./tests/run-powershell.sh
+Exit: 0
+Native Windows PowerShell: 5.1.26100.8875
+Lifecycle: 93 assertions passed
+Onboarding/benchmark: 69 assertions passed
+
+Limits: native Windows Codex was not installed; Windows live model behavior was not executed. Real paired/routing evaluation and credential/network canary were not run because no dedicated short-lived benchmark key was available. This is a local unsigned execution note, not publisher authentication.
