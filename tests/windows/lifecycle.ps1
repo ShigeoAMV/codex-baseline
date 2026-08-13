@@ -8,7 +8,7 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
 $script:RepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $script:BaselineScript = Join-Path $script:RepositoryRoot 'scripts\codex-baseline.ps1'
 $script:PowerShell = Join-Path $PSHOME 'powershell.exe'
-$script:PrivateTestBase = Join-Path $env:LOCALAPPDATA 'codex-baseline-tests'
+$script:PrivateTestBase = Join-Path $env:LOCALAPPDATA 'cbt'
 $script:TestRoot = Join-Path $script:PrivateTestBase ('cbw-{0}' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 $script:Assertions = 0
 
