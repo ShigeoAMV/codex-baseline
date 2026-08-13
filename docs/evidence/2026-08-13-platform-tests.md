@@ -10,7 +10,7 @@ git notes --ref=release-attestations show HEAD
 ```
 
 The note must name exact commit, payload hash, commands, exits, platform
-versions, 12/12 Unix groups, 93 native lifecycle assertions, and 69 native
+versions, 12/12 Unix groups, 95 native lifecycle assertions, and 69 native
 onboarding/benchmark assertions. Absence or mismatch means there is no exact
 final-revision attestation.
 

@@ -1290,7 +1290,9 @@ function Assert-CbPrivateTemporaryRoot {
     $cursor = Get-CbFullPath $Path
     while ($true) {
         Assert-CbPrivatePathComponent $cursor $trustedOwnerSids $trustedAccessSids (
-            [System.Security.AccessControl.FileSystemRights]::Delete -bor $escalationRights
+            [System.Security.AccessControl.FileSystemRights]::Delete -bor
+                [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+                $escalationRights
         )
         $parent = [System.IO.Directory]::GetParent($cursor)
         if ($null -eq $parent -or (Test-CbSamePath $parent.FullName $cursor)) { break }

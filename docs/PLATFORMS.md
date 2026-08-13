@@ -7,7 +7,7 @@ Status vocabulary is fixed: `tested`, `partially tested`, `statically validated`
 | --- | --- | --- |
 | WSL2 Ubuntu 26.04 lifecycle | tested | 12/12 Unix end-to-end groups, including real SIGKILL recovery, provenance, symlink/race boundaries, onboarding, benchmark/routing mechanics, worktree isolation, and discovery |
 | Linux CLI implementation | partially tested | Executed under WSL2 Linux kernel/filesystem; shell/static behavior covered, separate bare-metal distro run absent |
-| Native Windows PowerShell 5.1 lifecycle | tested | PowerShell 5.1.26100.8875 through WSL interop: 93 lifecycle assertions, including current/old/future-version probes, exact operations IDs, protected snapshot/ancestor DACL and post-verify tampering, Junction, path/journal tampering, recovery, provenance, rollback/uninstall |
+| Native Windows PowerShell 5.1 lifecycle | tested | PowerShell 5.1.26100.8875 through WSL interop: 95 lifecycle assertions, including current/old/future-version probes, exact operations IDs, protected snapshot/ancestor DACL including direct HOME `DeleteChild` rejection, post-verify tampering, Junction, path/journal tampering, recovery, provenance, rollback/uninstall |
 | Native Windows onboarding/benchmark contract | tested | 69 native assertions; lazy bounded discovery, owner and broad-group Delete/WRITE_DAC/WRITE_OWNER rejection, apply/conflict acknowledgement and static benchmark contracts execute; Bash verifier/live arms are explicitly not executed |
 | Native Windows Codex CLI | not verified | Native Codex binary is not installed in this environment |
 | Codex CLI 0.147 prompt discovery | tested | `codex debug prompt-input` proved global, root, nested guidance and skill metadata |

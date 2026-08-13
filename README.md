@@ -129,7 +129,7 @@ private holdouts or an external worker unable to mount this source/verifier.
 ## Support truth
 
 The release candidate is executed on WSL2/Linux (12 end-to-end test groups) and
-in native Windows PowerShell 5.1 through WSL interoperability (93 lifecycle and
+in native Windows PowerShell 5.1 through WSL interoperability (95 lifecycle and
 69 onboarding/benchmark assertions). A native-Codex test double proves Windows
 Doctor version/capability logic; the real native Windows Codex binary is not
 installed and remains `not verified`. Codex App behavior is

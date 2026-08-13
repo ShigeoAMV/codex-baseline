@@ -46,7 +46,7 @@ independent audits.
 - Environment: Ubuntu 26.04 under WSL2, Linux kernel 6.18.33.2.
 - Codex CLI: 0.147.0, reported current by `codex doctor` on 2026-08-13.
 - Codex health: 17 checks OK, one idle app server, zero warnings/failures.
-- Native Windows PowerShell 5.1 is reachable from WSL; 93 lifecycle and 69
+- Native Windows PowerShell 5.1 is reachable from WSL; 95 lifecycle and 69
   onboarding/benchmark assertions pass. Native Windows Codex is not installed.
 - Node.js 24.18.0 is available in WSL. It is not yet accepted as a universal
   runtime dependency.
