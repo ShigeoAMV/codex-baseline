@@ -35,7 +35,7 @@ independent audits.
 | 1. Evidence and challenged architecture | Complete | Five research records, 19 decisions, two independent critiques and disposition |
 | 2. Portable install and rollback core | Complete | Unix lifecycle suite and native PowerShell 5.1 lifecycle suite |
 | 3. Repository onboarding | Complete | Static untrusted-repo fixture; dry-run/apply/idempotence/link/secret/no-exec checks |
-| 4. Adaptive workflows and reusable skills | In progress | Four validated skills and real prompt discovery; live probabilistic routing probes pending |
+| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, six classifications and four host-verified behavior cases; repeated real-model probes pending |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
 | 7. Dogfood and completion audit | In progress | Platform/security hardening and initial reviews reconciled; immutable revision, fresh final reviews, and traceability audit pending |
@@ -73,8 +73,13 @@ independent audits.
 
 ## Next action
 
-Commit the reconciled security/contract/evidence candidate, obtain fresh
-read-only delta reviews, record their dispositions, and run both complete
-platform suites on exactly the final clean revision. Then run live evaluation
-when its dedicated credential is available and close traceability only against
-the resulting real-model receipts.
+Commit the reconciled candidate whose worktree suites passed 12/12 Unix/WSL,
+95 native Windows lifecycle, and 69 native Windows onboarding/benchmark
+assertions. Rerun both complete platform suites from that clean immutable
+revision and obtain fresh read-only security, architecture/maintainability, and
+original-mission conformance reviews. Reconcile any justified finding before
+live evaluation. When the dedicated credential is available, run preliminary
+evaluation, finalize and commit tracked reports, then rerun all three live
+checkout commands on that unchanged commit. Bind their safe receipt hashes
+through a detached attestation and close traceability only against the
+real-model evidence.

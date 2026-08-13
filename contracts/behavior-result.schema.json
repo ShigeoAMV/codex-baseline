@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/behavior-result-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "id", "repetition", "pass", "process_exit", "verifier_exit", "elapsed_ms", "turns", "commands", "file_changes", "input_tokens", "output_tokens", "source_hash", "prompt_hash", "actual"],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-behavior-result/v1"},
+    "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "repetition": {"type": "integer", "minimum": 1},
+    "pass": {"type": "boolean"},
+    "process_exit": {"type": "integer", "minimum": 0},
+    "verifier_exit": {"type": "integer", "minimum": 0},
+    "elapsed_ms": {"type": "integer", "minimum": 0},
+    "turns": {"type": "integer", "minimum": 0},
+    "commands": {"type": "integer", "minimum": 0},
+    "file_changes": {"type": "integer", "minimum": 0},
+    "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+    "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "prompt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "actual": {"type": ["object", "null"]}
+  }
+}

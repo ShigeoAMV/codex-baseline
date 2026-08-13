@@ -1,0 +1,13 @@
+{
+  "case_id": "starter",
+  "workflow": "LEAN",
+  "high_risk": false,
+  "selected_skills": [],
+  "evidence_files": [],
+  "material_question": null,
+  "plan": null,
+  "risk_controls": null,
+  "onboarding": null,
+  "conformance": null,
+  "reason": "Unchanged starter must fail every behavior verifier."
+}

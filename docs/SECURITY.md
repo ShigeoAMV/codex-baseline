@@ -40,9 +40,28 @@ live files changed after planning, and network content are untrusted.
   ancestors grant mutation-capable rights to broad groups must be moved to a
   private location or have its ACL narrowed before apply; preview still works.
 - Benchmark workspaces/homes are per-arm. Real Codex auth/session files are
-  never read or mounted. A dedicated key reaches only the Codex parent; tool
-  shells exclude key variables and deny `/proc`/network. Workers and verifiers
-  run in separate Bubblewrap namespaces, with verifier network/resource limits.
+  never read or mounted. After the fixed root-owned `/bin/bash` bootstrap, the
+  trusted runner captures the dedicated input into a non-exported variable
+  before runner path discovery, unsets credential variables, and transfers two
+  bounded lines through the final systemd service stdin pipe. There is no
+  background credential writer. Key-touching scanners and system-boundary tools
+  use fixed root-owned paths; mutable user Codex/Node executables are copied
+  without reflinks, hashed before/after, and only the private frozen copies run.
+  Tool shells exclude key variables and deny `/proc`/network. Workers and
+  verifiers run in separate Bubblewrap namespaces under aggregate user-cgroup
+  memory/swap/process/CPU/runtime limits; byte-bounded tmpfs mounts constrain
+  mutable HOME/workspace storage. After Codex exits, the launcher stops and
+  kills every other process in its private PID namespace before scanning or
+  exporting mutable content. Bounded scans reject secret-bearing relative
+  names, links, special/unreadable entries, excessive count/depth/bytes, and
+  credential-shaped contents before host verification.
+- The complete evaluated source is copied from a type-aware allowlist into a
+  private snapshot, including empty directories and directory modes. Live and
+  snapshot hashes are rechecked around every worker/verifier and before receipt
+  completion; private verifier and frozen executable hashes are also rechecked.
+  The live containment canary scans all numeric `/proc/*/environ` for a readable
+  key carrier and uses only a preflighted loopback listener with host postflight
+  and exact hit count; no external canary request is made.
 
 ## Explicit limitations
 
@@ -52,9 +71,11 @@ administrator boundary. Administrators and SYSTEM are explicit Windows trust
 principals. ACL, owner, ADS, xattrs, and every Windows attribute are outside
 portable exact-restore scope. The source manifest proves layout/version consistency but
 not publisher authenticity; public releases need signed immutable artifacts and
-a documented trust root. The API key necessarily exists in the Codex parent
-process environment during a live benchmark, and a hostile host/admin remains
-outside the local sandbox boundary. Public fixtures are learnable, so release
+a documented trust root. The API key necessarily exists in trusted runner
+memory, crosses a trusted service stdin pipe, and exists in the Codex parent
+process environment during a live benchmark. Key-bearing processes disable core
+dumps. A hostile same-user process, host, or admin
+remains outside the local sandbox boundary. Public fixtures are learnable, so release
 claims need rotated private holdouts or an external worker. The reviewer role is
 not an authority boundary, hooks are absent because their coverage/failure
 semantics are insufficient, and no prompt can replace OS sandboxing or user
@@ -69,6 +90,10 @@ filenames, bounded traversal, onboarding apply races, dry-run null mutation,
 managed drift, hard interruption/recovery, exact AGENTS restoration, path spaces
 in risk fixtures, source-payload tampering, post-verify snapshot DACL/content
 mutation, broad-group onboarding Delete rights, credential-boundary behavior,
-and static shell analysis. Before a release, independently review both installers
+and static shell analysis. Evaluation negatives additionally cover PATH
+hijacking, key line breaks, last-arm source drift, executable/source snapshots,
+malformed mode tuples/JSONL, readable key-carrier `/proc`, dead listeners,
+forged commands, content/path-name leaks, and managed-runtime output rejection.
+Before a release, independently review both installers
 for injection, path handling, deletion scope, credentials, update provenance,
 transaction ambiguity, and benchmark isolation.

@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test",
+    "lint": "eslint src",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "format": "prettier --check ."
+  }
+}

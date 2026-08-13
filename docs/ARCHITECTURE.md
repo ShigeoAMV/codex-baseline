@@ -13,7 +13,10 @@ reviewed source checkout
 |-- Bash + PowerShell lifecycle           -> deploy/doctor/recover
 |-- hashed payload + operations contract  -> provenance/platform parity
 |-- static onboarding collector           -> repo-specific facts
-`-- codex exec JSONL benchmark            -> paired evaluation
+`-- source-bound evaluation boundary      -> paired/routing/Canary receipts
+    |-- private source + executable copies
+    |-- cgroup + Bubblewrap + bounded tmpfs
+    `-- networkless host verifier
 
 Codex native: config precedence, permissions/sandbox, Plan, Goal, Review,
               Subagents, skill discovery, project guidance, app worktrees
@@ -22,9 +25,12 @@ Codex native: config precedence, permissions/sandbox, Plan, Goal, Review,
 No framework, plugin, MCP server, hook, network fetch, daemon, database, Node,
 Python, Docker, or administrator privilege is an installation dependency. Bash
 is the Linux/WSL runtime; Windows PowerShell 5.1 is the native Windows runtime.
-`jq`, Node, Git, Bubblewrap, `timeout`, and `prlimit` are Linux/WSL benchmark-only
-dependencies; the PowerShell benchmark command performs native static contract
-validation without pretending to execute Bash verifiers or live model arms.
+`jq`, Node, Git, Bubblewrap, `timeout`, `prlimit`, and an operational systemd
+user manager/cgroup are Linux/WSL evaluation-only dependencies; the
+PowerShell benchmark command performs native static contract validation without
+pretending to execute Bash verifiers or live model arms. Python plus
+`jsonschema` is a repository-test dependency, not an installed runtime
+dependency.
 
 The source manifest is not a loose file list: both installers require the exact
 path inventory, byte lengths, file hashes, aggregate canonical payload digest,
@@ -103,12 +109,21 @@ receipt mapping each criterion to evidence. The retrospective changes the lowest
 reliable layer: product/test/static rule before repo guidance, focused skill,
 and only then a bounded hook. No model verdict edits global policy automatically.
 
-Paired live evaluation places each model arm in a fresh Bubblewrap filesystem
-without source/verifier access; the Codex permission profile denies tool network
-and credential inheritance while the parent transport reaches the API. A
-separate networkless, resource-bounded Bubblewrap process runs the verifier after
-worker exit. This is `os-sandboxed-local`, not a hostile-host or private-holdout
-claim.
+Paired and routing evaluation bind the complete source (files, empty
+directories, modes, and excluded-path policy) to a private snapshot and freeze
+the selected Codex/Node bytes. Each model invocation receives a fresh
+Bubblewrap filesystem without live-source/verifier access, a new worker HOME,
+and bounded tmpfs workspace. The Codex permission profile denies tool network
+and credential inheritance while the parent transport reaches the API. The
+whole process tree is aggregate-bounded by a user cgroup. A separate
+networkless, cgroup- and Bubblewrap-bounded process runs a private verifier copy;
+residual worker processes are quiesced inside the private PID namespace before
+artifact scan/export, and hashes are checked again before a receipt can complete. Routing behavior gets
+repository evidence only from one host-owned read-only inspector invocation.
+Canary independently checks environment, every readable key-carrier `/proc`
+entry, artifact contents/names, and a liveness-verified loopback listener. Live
+results default outside the managed runtime tree. This is
+`os-sandboxed-local-cgroup`, not a hostile-host or private-holdout claim.
 
 The architecture decisions, rejected mechanisms, and evidence are normative in
 [`docs/research/DECISIONS.md`](research/DECISIONS.md). Volatile product facts

@@ -79,7 +79,7 @@ cb_freeze_verified_source() {
     "$source/scripts/onboard.sh" "$source/scripts/onboard.ps1" \
     "$source/scripts/benchmark.sh" "$source/scripts/benchmark.ps1" \
     "$snapshot/scripts/"
-  cp -p -- "$source/scripts/lib/common.sh" "$snapshot/scripts/lib/common.sh"
+  cp -p -- "$source/scripts/lib/common.sh" "$source/scripts/lib/evaluation.sh" "$snapshot/scripts/lib/"
   cp -a -- "$source/benchmarks" "$snapshot/benchmarks"
 
   version=$(cb_verify_source_manifest "$snapshot")
@@ -546,7 +546,7 @@ cb_build_runtime() {
     "$source_root/scripts/onboard.sh" "$source_root/scripts/onboard.ps1" \
     "$source_root/scripts/benchmark.sh" "$source_root/scripts/benchmark.ps1" \
     "$output/scripts/"
-  cp -p -- "$source_root/scripts/lib/common.sh" "$output/scripts/lib/common.sh"
+  cp -p -- "$source_root/scripts/lib/common.sh" "$source_root/scripts/lib/evaluation.sh" "$output/scripts/lib/"
   if [[ -d $source_root/benchmarks ]]; then
     cp -a -- "$source_root/benchmarks" "$output/benchmarks"
   fi
@@ -906,7 +906,7 @@ cb_commit_object() {
   fi
   cb_write_field "$obj/status" new-moved
   [[ $(cb_live_hash "$kind" "$target") == "$desired" ]] || cb_die "committed hash mismatch: $target"
-  if [[ $kind == block ]]; then
+  if [[ $kind == block && $desired_present == 1 ]]; then
     desired_file=$(cb_read_field "$obj/desired_file_hash")
     [[ $(cb_sha256_file "$target") == "$desired_file" ]] || cb_die "committed guidance file hash mismatch: $target"
   fi

@@ -7,10 +7,10 @@
   "isolation": {
     "workspace": "fresh-copy-per-arm",
     "codex_home": "fresh-per-arm",
-    "worker": "bubblewrap-filesystem-isolated-dedicated-api-key",
+    "worker": "private-source-tool-copies-user-cgroup-bubblewrap-bounded-tmpfs-dedicated-api-key",
     "tool_network": "denied-by-codex-permission-profile",
-    "verifier": "separate-networkless-bubblewrap-after-worker-exit",
-    "local_label": "os-sandboxed-local",
+    "verifier": "private-copy-separate-networkless-cgroup-bubblewrap-after-worker-exit",
+    "local_label": "os-sandboxed-local-cgroup",
     "strong_requirement": "rotated private holdouts or an external worker that cannot mount source or verifier"
   },
   "metrics": [
@@ -23,6 +23,8 @@
     "file_changes",
     "changed_files",
     "unnecessary_files",
+    "changed_paths",
+    "unnecessary_paths",
     "failed_command_events",
     "subagent_events",
     "input_tokens",

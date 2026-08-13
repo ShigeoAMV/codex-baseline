@@ -16,21 +16,42 @@ each fixture is well-formed and the starter fails its verifier:
 codex-baseline benchmark --static
 ```
 
-Live mode consumes quota:
+Live release evaluation consumes quota. Run the three commands directly from
+the reviewed checkout so every receipt covers the same full source scope:
 
 ```bash
-export CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>'
-codex-baseline benchmark --live --repetitions 3
-unset CODEX_BASELINE_BENCHMARK_API_KEY
+CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  scripts/benchmark.sh --live --repetitions 3
+CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  scripts/routing-probe.sh --repetitions 3
+CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  scripts/benchmark.sh --canary
 ```
+
+All three live commands are Linux/WSL-only in v0.1.0. `--tasks` and
+`--repetitions` apply to paired mode, not Canary mode; mode flags are mutually
+exclusive. Per-invocation timeout is bounded to 1-1,800 seconds; its transient
+service gets a slightly longer hard runtime and whole-control-group kill.
 
 Shared ChatGPT/Codex authentication is deliberately unsupported. Create a
 dedicated, short-lived API key with the narrowest practical budget/permissions;
-do not reuse the normal Codex session. The key is supplied only to the Codex
-parent process, is excluded from tool-shell inheritance, and normal auth/session
-files are never read, linked, copied, or mounted. `/proc` is denied by the Codex
-permission profile. Raw JSONL/stderr still requires human secret review before
-publication; the built-in pattern scan is only a fail-closed heuristic.
+do not reuse the normal Codex session. After the fixed trusted `/bin/bash`
+interpreter starts, the runner immediately copies the input value to a
+non-exported variable and unsets all credential variables before runner path
+discovery or a runner-invoked helper. The final cgroup service receives two
+bounded lines on stdin; its launcher exports the key only for the Codex parent.
+No background FIFO writer retains the key after a caller crash. The key is
+excluded from tool-shell inheritance, and normal
+auth/session files are never read, linked, copied, or mounted. `/proc` is denied
+by the Codex permission profile. Every expected output and the complete mutable
+workspace and worker-HOME trees are scanned for the exact active key, the Canary
+sentinel, and credential-shaped patterns in both file contents and relative
+path names; missing/unreadable files, links, special entries, excessive depth,
+entry count, or total bytes fail closed before verification or receipt
+completion. Raw
+JSONL/stderr still requires human secret review before publication; automated
+scans remain a fail-closed heuristic rather than proof that arbitrary secrets
+are absent.
 
 The runner captures process/verifier success, elapsed time, turns, commands,
 file-change events, actual changed/unnecessary paths, failed command events,
@@ -45,23 +66,35 @@ plus `INVALID.md`. `summary.json` retains every paired per-task delta, aggregate
 pass outcomes, per-arm medians/totals, and an explicit null confidence interval.
 The default three pairs per task are too small for a defensible interval or a
 superiority claim; inspect raw pairs, failures, and dispersion.
+The runner writes a completed receipt but exits nonzero when any arm fails; a
+zero exit therefore means every requested arm and verifier passed, not that the
+baseline is statistically superior to vanilla.
 
 Unix live `run.json` and native Windows static JSON share the
 `codex-baseline-benchmark/v1` envelope (`platform`, `mode`, `status`, isolation,
-model/verifier execution truth). Platform-specific result details remain
+model/verifier execution truth). Published conditional JSON Schemas reject
+cross-mode truth tuples such as a no-model paired receipt. Platform-specific result details remain
 explicit rather than being flattened into a false parity claim.
 
 Linux/WSL live workers run under Bubblewrap with a fresh filesystem namespace,
-no source/verifier mount, a synthetic HOME/CODEX_HOME, the task workspace, and
-only required read-only executables/system files. The Codex API transport shares
+no live source/verifier mount, a synthetic HOME/CODEX_HOME, a byte-bounded tmpfs
+task workspace, and only required read-only executables/system files. The
+complete evaluated source is copied to a private snapshot whose hash must equal
+the frozen live-source hash; source, snapshot, private verifier, and frozen
+Codex/Node executable hashes are checked before and after use. The Codex API transport shares
 network because the model call requires it, while the Codex permission profile
 denies tool network. After worker exit, generated code is executed by the
 verifier in a second Bubblewrap namespace with no network, cleared environment,
-resource limits, a 60-second timeout, read-only verifier, and only the workspace
-writable. The model worker also runs under `prlimit` bounds for CPU time, address
-space, file size, descriptors, processes, and core dumps. Git uses an isolated
+resource limits, a 60-second timeout, a private read-only verifier copy, and only
+a bounded temporary overlay writable. A systemd user cgroup bounds aggregate
+memory/swap, processes, CPU share, and runtime for the whole process tree;
+Bubblewrap tmpfs mounts bound mutable bytes, while `prlimit` adds per-process
+file-size, descriptor, address-space, CPU and core-dump limits. Git uses an isolated
 HOME, disabled hooks, empty templates, and no
-system/global config. The result label is `os-sandboxed-local`.
+system/global config. The result label is `os-sandboxed-local-cgroup`.
+Before a worker scan or export, the launcher stops and kills every residual
+process except itself and Bubblewrap's private PID-1 reaper; a non-zombie
+survivor invalidates the run.
 
 This blocks the evaluated agent from reading the source/verifier through its
 workspace. It is not a hostile-host boundary: an administrator or unrelated
@@ -74,12 +107,42 @@ evaluation is Linux/WSL-only in v0.1.0.
 
 Behavior probes use `codex debug prompt-input` for deterministic proof that the
 global block, skill metadata, root project guidance, and nested refinement are
-model-visible. Repeated live task prompts then measure probabilistic workflow
-and skill selection with `scripts/routing-probe.sh`; they require the same
-dedicated key and OS isolation. Their variance must be reported rather than
-called deterministic.
+model-visible. `scripts/routing-probe.sh` then runs six repeated classification
+boundaries plus four read-only behavior cases: DEEP/high-risk planning,
+research-first material ambiguity, semantic onboarding, and independent
+original-request conformance. The generic response schema is model-visible,
+while case expectations and executable host verifiers are not mounted. The
+model must invoke the host-owned, bounded, read-only `/behavior-inspect` helper
+exactly once; the helper emits its completion marker only after complete
+enumeration. A pass also requires zero file-change events, frozen source and
+tool hashes, a fresh worker HOME, clean mutable HOME/output trees, a sandboxed
+host verifier, and a completed `run.json`. Its
+`results.jsonl`, `behavior-results.jsonl`, and summary are covered by the
+`routing-*` and `behavior-result` contracts. These runs require the same
+dedicated key and OS isolation; their variance and self-reported skill field
+must be reported as probabilistic evidence, not deterministic activation proof.
 
-The deterministic test double proves paired-run mechanics and credential-free
-fixture execution, not real API credential containment. The final real-model
-canary (a synthetic key marker that must not appear in tool output/artifacts and
-a denied tool-network attempt) remains a required live release receipt.
+The deterministic test double proves paired-run, routing/behavior receipt, and
+Canary parsing/fail-closed mechanics, not real-model behavior or API credential
+containment. `benchmark --canary` injects a
+fresh sentinel only into the Codex parent, requires the tool shell environment
+to omit all key variables, scans every numeric `/proc/*/environ` and fails if a
+readable key carrier is found, scans artifact contents and path names for the
+exact sentinel and API key, and attempts tool network only against a preflighted
+loopback TCP listener. A pass requires no worker connection plus a successful
+host postflight and exact listener hit count. The resulting `run.json` and `canary.json` remain
+a required real-model release receipt; their envelopes are defined by
+`contracts/benchmark-report.schema.json` and
+`contracts/benchmark-canary.schema.json`.
+
+By default live outputs go under
+`${XDG_STATE_HOME:-$HOME/.local/state}/codex-baseline/`, outside the managed
+runtime. An installed wrapper may be used for an operational check, but its
+receipt intentionally hashes the installed runtime scope, not this complete
+checkout. Output inside an installed managed runtime is rejected.
+
+Final evidence avoids a self-referential source hash: first run preliminary
+evaluation, update and commit the tracked report/ledger, then rerun all three
+commands on that unchanged clean commit. Store receipt hashes and final review
+attestations outside the tracked source (for example, a detached attestations
+ref); do not edit tracked files afterward.

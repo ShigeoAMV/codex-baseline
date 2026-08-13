@@ -193,7 +193,7 @@ try {
     $sharedStagingAcl.AddAccessRule($sharedStagingRule) | Out-Null
     $sharedStagingDirectory.SetAccessControl($sharedStagingAcl)
     $sharedStagingOutput = Invoke-Baseline @('install') 1
-    Assert-True ($sharedStagingOutput -match 'mutation rights to an untrusted SID') ("installer must reject an ACL-escalatable private staging parent before snapshot creation; output: {0}" -f $sharedStagingOutput)
+    Assert-True ($sharedStagingOutput -match 'mutation rights\s+to an untrusted SID') ("installer must reject an ACL-escalatable private staging parent before snapshot creation; output: {0}" -f $sharedStagingOutput)
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'shared staging-parent rejection must precede managed-home mutation'
 
     $deleteChildStagingHome = Set-TestEnvironment (Join-Path $script:TestRoot 'delete-child-staging-root')
@@ -209,7 +209,7 @@ try {
     $deleteChildStagingAcl.AddAccessRule($deleteChildStagingRule) | Out-Null
     $deleteChildStagingDirectory.SetAccessControl($deleteChildStagingAcl)
     $deleteChildStagingOutput = Invoke-Baseline @('install') 1
-    Assert-True ($deleteChildStagingOutput -match 'mutation rights to an untrusted SID') ("installer must reject untrusted DeleteChild rights directly on the private staging root; output: {0}" -f $deleteChildStagingOutput)
+    Assert-True ($deleteChildStagingOutput -match 'mutation rights\s+to an untrusted SID') ("installer must reject untrusted DeleteChild rights directly on the private staging root; output: {0}" -f $deleteChildStagingOutput)
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'staging-root DeleteChild rejection must precede managed-home mutation'
 
     $duplicateOperationsSource = Join-Path $script:TestRoot 'duplicate-operation-source'

@@ -333,8 +333,10 @@ and minimal read-only system files are visible. The Codex parent necessarily
 uses API network, while its permission profile denies tool network, excludes key
 variables from shell inheritance, and denies `/proc`. After worker exit, the
 host runs the verifier in a separate networkless Bubblewrap namespace with a
-cleared environment, resource limits, and timeout. This is labelled
-`os-sandboxed-local`, not a hostile-host boundary. Strong release evidence uses
+cleared environment, resource limits, and timeout. Aggregate resource control,
+byte-bounded mutable storage, private source/verifier/tool snapshots, and final
+hash rechecks strengthen the explicit receipt label to
+`os-sandboxed-local-cgroup`; it is still not a hostile-host boundary. Strong release evidence uses
 rotated private holdouts or an external worker unable to mount source/verifier.
 Vanilla and baseline use separate temporary homes, identical key/model/config
 except for the baseline layer, and identical fixture bytes.

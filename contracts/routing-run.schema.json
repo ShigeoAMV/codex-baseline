@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/routing-run-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "platform", "mode", "status", "isolation", "model_invoked", "host_checks_executed", "created", "codex", "model", "source_revision", "source_dirty", "source_hash", "codex_binary_hash", "node_binary_hash", "repetitions", "routing_cases", "behavior_cases", "auth", "resource_profile"],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-routing-run/v1"},
+    "platform": {"enum": ["linux", "wsl2"]},
+    "mode": {"const": "live-routing-and-behavior"},
+    "status": {"enum": ["running", "completed"]},
+    "isolation": {"const": "os-sandboxed-local-cgroup"},
+    "model_invoked": {"const": true},
+    "host_checks_executed": {"const": true},
+    "created": {"type": "string", "format": "date-time"},
+    "codex": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "source_revision": {"type": "string", "minLength": 1},
+    "source_dirty": {"type": ["boolean", "null"]},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "codex_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "node_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "repetitions": {"type": "integer", "minimum": 1},
+    "routing_cases": {"type": "integer", "minimum": 1},
+    "behavior_cases": {"type": "integer", "minimum": 1},
+    "auth": {"const": "dedicated-api-key-stdin-pipe"},
+    "resource_profile": {"const": "user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}
+  }
+}

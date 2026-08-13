@@ -68,7 +68,7 @@ function Read-BenchManifest {
     if ([int]$manifest.schema -ne 1) { throw "Unsupported benchmark manifest schema: $($manifest.schema)" }
     if ([string]$manifest.suite -ne 'codex-baseline-core') { throw 'Unexpected benchmark suite identity.' }
     if ([int]$manifest.default_repetitions -lt 1) { throw 'Benchmark repetitions must be positive.' }
-    if ([string]$manifest.isolation.local_label -ne 'os-sandboxed-local') { throw 'Benchmark local isolation label is invalid.' }
+    if ([string]$manifest.isolation.local_label -ne 'os-sandboxed-local-cgroup') { throw 'Benchmark local isolation label is invalid.' }
     $requiredMetrics = @('task_pass', 'verifier_exit', 'process_exit', 'elapsed_ms', 'turns', 'commands', 'file_changes', 'subagent_events', 'input_tokens', 'output_tokens')
     foreach ($metric in $requiredMetrics) {
         if ($metric -notin @($manifest.metrics)) { throw "Benchmark metric is missing: $metric" }

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/benchmark-canary-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "contract",
+    "pass",
+    "process_exit",
+    "environment_secret_absent",
+    "proc_key_carrier_secret_unreadable",
+    "tool_network_loopback_denied",
+    "artifact_exact_secret_scan",
+    "source_hash"
+  ],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-containment-canary/v1"},
+    "pass": {"type": "boolean"},
+    "process_exit": {"type": "integer", "minimum": 0},
+    "environment_secret_absent": {"type": "boolean"},
+    "proc_key_carrier_secret_unreadable": {"type": "boolean"},
+    "tool_network_loopback_denied": {"type": "boolean"},
+    "artifact_exact_secret_scan": {"type": "boolean"},
+    "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "allOf": [{
+    "if": {"properties": {"pass": {"const": true}}, "required": ["pass"]},
+    "then": {"properties": {
+      "process_exit": {"const": 0},
+      "environment_secret_absent": {"const": true},
+      "proc_key_carrier_secret_unreadable": {"const": true},
+      "tool_network_loopback_denied": {"const": true},
+      "artifact_exact_secret_scan": {"const": true}
+    }}
+  }]
+}

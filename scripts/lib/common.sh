@@ -41,6 +41,140 @@ cb_sha256_text() {
   fi
 }
 
+# Hash the complete release-candidate source while excluding only generated
+# results and repository metadata. The inventory is type-aware and rejects
+# links, special files, and ambiguous control characters rather than silently
+# omitting them from a live-evaluation receipt.
+cb_source_tree_hash() {
+  local root=$1 inventory manifest entry rel mode digest error='' excluded
+  local entries=0 total_bytes=0 bytes
+  [[ $root == /* && -d $root && ! -L $root ]] || cb_die "unsafe source tree: $root"
+  for excluded in "$root/.git" "$root/benchmark-results" "$root/behavior-results" "$root/.codebase-memory"; do
+    [[ ! -L $excluded ]] || cb_die "linked excluded source path is forbidden: $excluded"
+    if [[ -e $excluded && $excluded != "$root/.git" && ! -d $excluded ]]; then
+      cb_die "excluded result path is not a directory: $excluded"
+    fi
+    if [[ -e $excluded && $excluded == "$root/.git" && ! -d $excluded && ! -f $excluded ]]; then
+      cb_die "unsupported Git metadata path: $excluded"
+    fi
+  done
+  inventory=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-source-inventory.XXXXXX")
+  manifest=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-source-manifest.XXXXXX")
+  if ! mode=$(stat -c '%a' -- "$root"); then
+    rm -f -- "$inventory" "$manifest"
+    cb_die "cannot stat source root: $root"
+  fi
+  printf 'd\t%s\t.\n' "$mode" >"$manifest"
+  if ! find -P "$root" -mindepth 1 \
+    \( -path "$root/.git" -o -path "$root/benchmark-results" -o -path "$root/behavior-results" -o -path "$root/.codebase-memory" \) -prune -o \
+    -print0 >"$inventory"; then
+    rm -f -- "$inventory" "$manifest"
+    cb_die "cannot inventory source tree: $root"
+  fi
+  LC_ALL=C sort -z -o "$inventory" "$inventory"
+  while IFS= read -r -d '' entry; do
+    rel=${entry#"$root"/}
+    entries=$((entries + 1))
+    if (( entries > 20000 )); then
+      error='source tree exceeds the 20000-entry evaluation limit'
+      break
+    fi
+    if [[ $rel == *$'\n'* || $rel == *$'\t'* ]]; then
+      error="source path contains unsupported control characters: $rel"
+      break
+    fi
+    if [[ -d $entry && ! -L $entry ]]; then
+      if ! mode=$(stat -c '%a' -- "$entry"); then
+        error="cannot stat source directory: $rel"
+        break
+      fi
+      printf 'd\t%s\t%s\n' "$mode" "$rel" >>"$manifest"
+      continue
+    fi
+    if [[ ! -f $entry || -L $entry || ! -r $entry ]]; then
+      error="linked, special, or unreadable source entry is forbidden: $rel"
+      break
+    fi
+    if ! mode=$(stat -c '%a' -- "$entry"); then
+      error="cannot stat source entry: $rel"
+      break
+    fi
+    if ! bytes=$(stat -c '%s' -- "$entry"); then
+      error="cannot size source entry: $rel"
+      break
+    fi
+    total_bytes=$((total_bytes + bytes))
+    if (( total_bytes > 1073741824 )); then
+      error='source tree exceeds the 1 GiB evaluation limit'
+      break
+    fi
+    digest=$(cb_sha256_file "$entry")
+    printf 'f\t%s\t%s\t%s\n' "$mode" "$digest" "$rel" >>"$manifest"
+  done <"$inventory"
+  if [[ -n $error ]]; then
+    rm -f -- "$inventory" "$manifest"
+    cb_die "$error"
+  fi
+  digest=$(cb_sha256_file "$manifest")
+  rm -f -- "$inventory" "$manifest"
+  printf '%s' "$digest"
+}
+
+# Copy exactly the tree covered by cb_source_tree_hash into a new private
+# snapshot. Excluded metadata/results never enter the snapshot. The caller must
+# compare both source and snapshot hashes with its frozen value after this
+# function returns; that comparison is the race detector for the path-based
+# copy itself.
+cb_copy_source_tree() {
+  local source=$1 target=$2 inventory entry rel mode error='' excluded
+  [[ $source == /* && -d $source && ! -L $source ]] || cb_die "unsafe source tree: $source"
+  [[ $target == /* && -d $target && ! -L $target ]] || cb_die "unsafe source snapshot target: $target"
+  [[ -z $(find -P "$target" -mindepth 1 -print -quit) ]] || cb_die "source snapshot target is not empty: $target"
+  for excluded in "$source/.git" "$source/benchmark-results" "$source/behavior-results" "$source/.codebase-memory"; do
+    [[ ! -L $excluded ]] || cb_die "linked excluded source path is forbidden: $excluded"
+  done
+  inventory=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-source-copy.XXXXXX")
+  if ! find -P "$source" -mindepth 1 \
+    \( -path "$source/.git" -o -path "$source/benchmark-results" -o -path "$source/behavior-results" -o -path "$source/.codebase-memory" \) -prune -o \
+    -print0 >"$inventory"; then
+    rm -f -- "$inventory"
+    cb_die "cannot inventory source tree for snapshot: $source"
+  fi
+  LC_ALL=C sort -z -o "$inventory" "$inventory"
+  while IFS= read -r -d '' entry; do
+    rel=${entry#"$source"/}
+    if [[ $rel == *$'\n'* || $rel == *$'\t'* ]]; then
+      error='source snapshot path contains unsupported control characters'
+      break
+    fi
+    if [[ -d $entry && ! -L $entry ]]; then
+      mkdir -p -- "$target/$rel" || { error="cannot create source snapshot directory: $rel"; break; }
+    elif [[ -f $entry && ! -L $entry && -r $entry ]]; then
+      mkdir -p -- "$(dirname -- "$target/$rel")" || { error="cannot create source snapshot parent: $rel"; break; }
+      cp --reflink=never -- "$entry" "$target/$rel" || { error="cannot copy source snapshot entry: $rel"; break; }
+      mode=$(stat -c '%a' -- "$entry") || { error="cannot stat source snapshot entry: $rel"; break; }
+      chmod "$mode" -- "$target/$rel" || { error="cannot set source snapshot mode: $rel"; break; }
+    else
+      error="linked, special, or unreadable source entry is forbidden: $rel"
+      break
+    fi
+  done <"$inventory"
+  if [[ -z $error ]]; then
+    while IFS= read -r -d '' entry; do
+      rel=${entry#"$source"/}
+      [[ -d $entry && ! -L $entry ]] || continue
+      mode=$(stat -c '%a' -- "$entry") || { error="cannot stat source snapshot directory: $rel"; break; }
+      chmod "$mode" -- "$target/$rel" || { error="cannot set source snapshot directory mode: $rel"; break; }
+    done <"$inventory"
+  fi
+  if [[ -z $error ]]; then
+    mode=$(stat -c '%a' -- "$source") || error='cannot stat source root for snapshot'
+    [[ -n $error ]] || chmod "$mode" -- "$target" || error='cannot set source snapshot root mode'
+  fi
+  rm -f -- "$inventory"
+  [[ -z $error ]] || cb_die "$error"
+}
+
 cb_write_field() {
   local path=$1 value=$2 tmp
   tmp="${path}.tmp.$$"
@@ -337,7 +471,7 @@ cb_verify_source_manifest() {
   {
     printf '%s\n' VERSION
     find -P "$root/baseline" -type f ! -path "$manifest" -printf '%P\n' | sed 's#^#baseline/#'
-    printf '%s\n' scripts/codex-baseline.sh scripts/codex-baseline.ps1 scripts/onboard.sh scripts/onboard.ps1 scripts/benchmark.sh scripts/benchmark.ps1 scripts/lib/common.sh
+    printf '%s\n' scripts/codex-baseline.sh scripts/codex-baseline.ps1 scripts/onboard.sh scripts/onboard.ps1 scripts/benchmark.sh scripts/benchmark.ps1 scripts/lib/common.sh scripts/lib/evaluation.sh
     find -P "$root/benchmarks" -type f -printf '%P\n' | sed 's#^#benchmarks/#'
   } >"$expected_paths"
   LC_ALL=C sort -u -o "$expected_paths" "$expected_paths"

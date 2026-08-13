@@ -50,6 +50,15 @@ boundary. Confirm the dedicated key is active, budgeted, and accepted by the API
 never point the runner at normal auth/session files. Do not publish JSONL,
 stderr, or last-message artifacts without a separate secret review.
 
+## Live evaluation says the cgroup boundary is unavailable
+
+Paired, routing, and Canary modes require a working systemd user manager plus
+`systemd-run --user`, `systemctl`, Bubblewrap, `prlimit`, `timeout`, Git, `jq`,
+Node, and Codex. This is an aggregate resource/safety boundary, not an optional
+performance feature. Enable the user manager for the current Linux/WSL session
+and rerun the deterministic suite; do not bypass the preflight or downgrade the
+receipt label. Static benchmark validation remains available without a model.
+
 ## Source manifest mismatch
 
 Install/update verifies the complete installable payload before creating state

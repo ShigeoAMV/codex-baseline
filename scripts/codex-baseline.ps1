@@ -626,7 +626,7 @@ function Read-CbManifest {
     foreach ($scriptPath in @(
         'scripts/codex-baseline.sh', 'scripts/codex-baseline.ps1',
         'scripts/onboard.sh', 'scripts/onboard.ps1',
-        'scripts/benchmark.sh', 'scripts/benchmark.ps1', 'scripts/lib/common.sh'
+        'scripts/benchmark.sh', 'scripts/benchmark.ps1', 'scripts/lib/common.sh', 'scripts/lib/evaluation.sh'
     )) {
         $expectedPaths.Add($scriptPath) | Out-Null
     }
@@ -1341,6 +1341,7 @@ function New-CbVerifiedSourceSnapshot {
             Copy-CbFileSafe (Join-Path $script:SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $snapshot ("scripts\{0}" -f $scriptName))
         }
         Copy-CbFileSafe (Join-Path $script:SourceRoot 'scripts\lib\common.sh') (Join-Path $snapshot 'scripts\lib\common.sh')
+        Copy-CbFileSafe (Join-Path $script:SourceRoot 'scripts\lib\evaluation.sh') (Join-Path $snapshot 'scripts\lib\evaluation.sh')
         Copy-CbTreeSafe (Join-Path $script:SourceRoot 'benchmarks') (Join-Path $snapshot 'benchmarks')
 
         $snapshotManifest = Read-CbManifest $snapshot
@@ -1417,6 +1418,7 @@ function New-CbRuntimeCandidate {
         Copy-CbFileSafe (Join-Path $SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $Destination ("scripts\{0}" -f $scriptName))
     }
     Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\common.sh') (Join-Path $Destination 'scripts\lib\common.sh')
+    Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\evaluation.sh') (Join-Path $Destination 'scripts\lib\evaluation.sh')
     $benchmarks = Join-Path $SourceRoot 'benchmarks'
     if (Test-CbExists $benchmarks) {
         Copy-CbTreeSafe $benchmarks (Join-Path $Destination 'benchmarks')

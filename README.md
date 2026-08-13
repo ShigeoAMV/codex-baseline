@@ -99,16 +99,32 @@ conflict. Rollback/uninstall never silently discard drifted managed content.
 ./tests/run-powershell.sh
 codex-baseline benchmark --static
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
-  codex-baseline benchmark --live --repetitions 3
+  scripts/benchmark.sh --live --repetitions 3
+CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  scripts/routing-probe.sh --repetitions 3
+CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
+  scripts/benchmark.sh --canary
 ```
 
-Live evaluation consumes account quota and never mounts or copies normal Codex
-auth/session files. Each Codex arm runs in a fresh Bubblewrap filesystem with
+These live commands are Linux/WSL-only in v0.1.0, consume account quota, and
+never mount or copy normal Codex auth/session files. The routing command also
+runs read-only, host-verified DEEP/high-risk planning, ambiguity, onboarding,
+and conformance cases. Each Codex arm runs in a fresh Bubblewrap filesystem with
 only its synthetic home/workspace and required executables; Codex tool network
 is denied, while the parent Codex transport necessarily reaches the API. The
-verifier runs afterward in a separate networkless sandbox. Results are labelled
-`os-sandboxed-local`; high-confidence release comparisons still need rotated
+verifier runs afterward in a separate networkless sandbox. Aggregate memory,
+process, CPU, runtime and mutable-storage bounds are enforced by a user cgroup
+and byte-bounded tmpfs mounts. Results are labelled
+`os-sandboxed-local-cgroup`; high-confidence release comparisons still need rotated
 private holdouts or an external worker unable to mount this source/verifier.
+The canary uses only a preflighted loopback listener and fails unless tool-shell
+environment, the key-carrying process environment in `/proc`, exact content and
+path-name secret scans, and tool network all remain contained. The trusted
+runner removes the input key from its exported environment before starting
+runner helpers and transfers it through the final cgroup service's stdin pipe.
+Release receipts use these direct checkout scripts so paired, routing, and
+Canary runs bind the same complete source hash; installed-wrapper runs bind the
+installed runtime instead.
 
 ## Documentation
 

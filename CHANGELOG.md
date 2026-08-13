@@ -21,3 +21,10 @@ manifest version, payload checks, platform evidence, and this log together.
   symlink/reparse/path handling, onboarding traversal/apply races, and backups.
 - Remove shared-auth evaluation; isolate live workers and post-run verifiers in
   separate Bubblewrap environments with a dedicated short-lived API key.
+- Bind live evidence to complete private source snapshots, frozen executable
+  hashes, strict JSON/JSONL contracts, external result roots, and final source
+  rechecks; include directory modes and empty directories in source receipts.
+- Add aggregate user-cgroup CPU/memory/process/runtime limits, bounded tmpfs
+  storage, residual-process quiescence before artifact export, exact artifact
+  path-name scans, listener postflight, and a Canary
+  check covering every readable `/proc/*/environ` key carrier.

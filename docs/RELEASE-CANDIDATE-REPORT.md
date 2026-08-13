@@ -65,7 +65,8 @@ separated in the five dated research records and 12-source manifest.
 - WSL2/Linux: `./tests/run.sh`, 12/12 groups, including syntax/ShellCheck,
   payload/contract checks, clean install/idempotence/exact rollback, hard-crash
   recovery, journal/path/link/concurrency attacks, bounded onboarding, ten
-  verifier fixtures, deterministic paired/routing mechanics, documentation, and
+  verifier fixtures, deterministic paired/routing/behavior/Canary mechanics,
+  documentation, and
   real Codex 0.147 `debug prompt-input` discovery, and conflicting-write
   worktree isolation.
 - Native Windows PowerShell 5.1: lifecycle and onboarding/benchmark suites cover
@@ -86,10 +87,11 @@ untested commit.
 
 | Surface | Status | Boundary |
 | --- | --- | --- |
-| WSL2 Ubuntu/Linux implementation | tested | Executed on the WSL2 Linux kernel/filesystem; no separate bare-metal distro matrix |
+| WSL2 Ubuntu implementation | tested | Executed on the WSL2 Linux kernel/filesystem |
+| Bare-metal Linux implementation | partially tested | Same Bash/Linux path plus static and isolated mechanics execute under WSL2; no separate distro/kernel matrix |
 | Native Windows PowerShell 5.1 | tested | Real Windows filesystem/PowerShell; real native Windows Codex is absent |
 | Codex CLI 0.147 prompt discovery | tested | Global/root/nested guidance and all skill metadata rendered |
-| Real-model Linux/WSL routing and paired benchmark | not verified | Dedicated evaluation key absent |
+| Real-model Linux/WSL paired, routing/behavior, and Canary runs | not verified | Dedicated evaluation key absent |
 | Codex App/IDE | partially tested | Official contracts plus CLI discovery; no complete local cross-client run |
 
 ## Benchmark
@@ -97,9 +99,11 @@ untested commit.
 Ten maintained tasks cover three small, three medium, two large, and two
 risk-sensitive cases. Every unchanged starter fails its host-side verifier; a
 deterministic credential-free test double proves paired isolation, changed-path
-accounting, schema, and aggregation. Six routing boundary cases prove runner
-mechanics. These are not real-model performance results. No baseline-vs.-vanilla
-advantage, routing rate, token saving, or elapsed-time improvement is claimed.
+accounting, schema, and aggregation. Six routing boundary cases plus four
+host-verified read-only behavior cases prove runner mechanics for classification,
+DEEP/high-risk planning, ambiguity, onboarding, and conformance. These are not
+real-model performance results. No baseline-vs.-vanilla advantage,
+routing/behavior rate, token saving, or elapsed-time improvement is claimed.
 
 ## Minimal usage
 
@@ -118,10 +122,11 @@ existing instructions only after reconciling the reported paths.
 ## Remaining uncertainty and completion gate
 
 The dedicated-key live run must execute all ten paired tasks for three
-repetitions plus the routing/ambiguity probes and negative credential/network
-canary, then preserve only safe receipts and report inconclusive results
-honestly. Native Windows Codex, separate bare-metal Linux distributions, and a
-full App/IDE matrix remain explicitly unverified/partial. Public redistribution
+repetitions, `scripts/routing-probe.sh --repetitions 3`, and
+`scripts/benchmark.sh --canary`, then preserve only safe receipts and report
+inconclusive results honestly. Native Windows Codex, separate bare-metal Linux
+distributions, and a full App/IDE matrix remain explicitly unverified/partial.
+Public redistribution
 additionally needs an owner-selected license and independently distributed
 publisher signing root; that public-release decision is separate from the
 original mission's mandatory live benchmark.
