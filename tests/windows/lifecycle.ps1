@@ -8,7 +8,8 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
 $script:RepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $script:BaselineScript = Join-Path $script:RepositoryRoot 'scripts\codex-baseline.ps1'
 $script:PowerShell = Join-Path $PSHOME 'powershell.exe'
-$script:TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cbw-{0}' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
+$script:PrivateTestBase = Join-Path $env:LOCALAPPDATA 'codex-baseline-tests'
+$script:TestRoot = Join-Path $script:PrivateTestBase ('cbw-{0}' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 $script:Assertions = 0
 
 function Assert-True {
@@ -51,6 +52,31 @@ function Test-NoBom {
     return $bytes.Length -lt 3 -or -not ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
 }
 
+function Get-TestSha256 {
+    param([byte[]]$Bytes)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Update-TestSourceManifest {
+    param([string]$Root)
+    $manifestPath = Join-Path $Root 'baseline\manifest.json'
+    $manifest = [System.IO.File]::ReadAllText($manifestPath, $script:Utf8NoBom) | ConvertFrom-Json
+    foreach ($entry in @($manifest.payload)) {
+        $path = Join-Path $Root (([string]$entry.path).Replace('/', '\'))
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        $entry.bytes = [long]$bytes.Length
+        $entry.sha256 = Get-TestSha256 $bytes
+    }
+    [string[]]$canonical = @($manifest.payload | ForEach-Object {
+        "{0}`t{1}`t{2}" -f [string]$_.path, [long]$_.bytes, [string]$_.sha256
+    })
+    [System.Array]::Sort($canonical, [System.StringComparer]::Ordinal)
+    $manifest.payload_hash = Get-TestSha256 ($script:Utf8NoBom.GetBytes(([string]::Join("`n", $canonical)) + "`n"))
+    [System.IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 10) + "`n"), $script:Utf8NoBom)
+}
+
 function Set-TestEnvironment {
     param([string]$Root)
     $testHome = Join-Path $Root 'home'
@@ -64,8 +90,8 @@ function Set-TestEnvironment {
 function Remove-TestRoot {
     param([string]$Path)
     $full = [System.IO.Path]::GetFullPath($Path)
-    $temp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-    if (-not $full.StartsWith($temp, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $base = [System.IO.Path]::GetFullPath($script:PrivateTestBase).TrimEnd('\') + '\'
+    if (-not $full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase) -or
         -not ([System.IO.Path]::GetFileName($full)).StartsWith('cbw-', [System.StringComparison]::Ordinal)) {
         throw "Refusing unsafe test cleanup: $full"
     }
@@ -152,6 +178,42 @@ try {
     Remove-Item Env:\CODEX_BASELINE_TESTING
     Assert-True ($snapshotContentOutput -match 'Payload byte length mismatch|Payload hash mismatch') 'verified source snapshot must be rehashed immediately before use'
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'snapshot content rejection must occur before managed-home mutation'
+
+    $sharedStagingHome = Set-TestEnvironment (Join-Path $script:TestRoot 'shared-staging-root')
+    $sharedStagingDirectory = New-Object System.IO.DirectoryInfo($sharedStagingHome)
+    $sharedStagingAcl = $sharedStagingDirectory.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+    $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+    $sharedStagingRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $usersSid,
+        [System.Security.AccessControl.FileSystemRights]::ChangePermissions,
+        [System.Security.AccessControl.InheritanceFlags]::None,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $sharedStagingAcl.AddAccessRule($sharedStagingRule) | Out-Null
+    $sharedStagingDirectory.SetAccessControl($sharedStagingAcl)
+    $sharedStagingOutput = Invoke-Baseline @('install') 1
+    Assert-True ($sharedStagingOutput -match 'mutation rights to an untrusted SID') 'installer must reject an ACL-escalatable private staging parent before snapshot creation'
+    Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'shared staging-parent rejection must precede managed-home mutation'
+
+    $duplicateOperationsSource = Join-Path $script:TestRoot 'duplicate-operation-source'
+    [System.IO.Directory]::CreateDirectory($duplicateOperationsSource) | Out-Null
+    foreach ($sourceName in @('VERSION', 'baseline', 'benchmarks', 'scripts')) {
+        Copy-Item -LiteralPath (Join-Path $script:RepositoryRoot $sourceName) -Destination $duplicateOperationsSource -Recurse
+    }
+    $duplicateOperationsPath = Join-Path $duplicateOperationsSource 'baseline\operations.json'
+    $duplicateOperations = [System.IO.File]::ReadAllText($duplicateOperationsPath, $script:Utf8NoBom) | ConvertFrom-Json
+    $duplicateOperations.objects[1] = $duplicateOperations.objects[0]
+    [System.IO.File]::WriteAllText($duplicateOperationsPath, (($duplicateOperations | ConvertTo-Json -Depth 10) + "`n"), $script:Utf8NoBom)
+    Update-TestSourceManifest $duplicateOperationsSource
+    Set-TestEnvironment (Join-Path $script:TestRoot 'duplicate-operation-home') | Out-Null
+    $originalBaselineScript = $script:BaselineScript
+    try {
+        $script:BaselineScript = Join-Path $duplicateOperationsSource 'scripts\codex-baseline.ps1'
+        $duplicateOperationsOutput = Invoke-Baseline @('install', '-DryRun') 1
+    }
+    finally { $script:BaselineScript = $originalBaselineScript }
+    Assert-True ($duplicateOperationsOutput -match 'object id is duplicated') ("PowerShell source validation must reject duplicate operations object IDs; output: {0}" -f $duplicateOperationsOutput)
     $testHome = Set-TestEnvironment (Join-Path $script:TestRoot 'main')
 
     $codexStubDirectory = Join-Path $script:TestRoot 'codex-stub'

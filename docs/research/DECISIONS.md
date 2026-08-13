@@ -102,9 +102,10 @@ planned -> prepared -> committing -> committed
   `desired`. Automatic replacement/removal occurs only when live state equals
   the recorded installed state. Drift is a conflict. There is deliberately no
   force override; preserve and reconcile the changed object before retrying.
-- Fault injection after every I/O boundary, concurrent invocation, user edits,
-  absent/present files, directories, links, and partial prior transactions are
-  mandatory tests.
+- Fault injection at representative prepared/commit/recovery boundaries,
+  concurrent invocation, user edits, absent/present files, directories, links,
+  and partial prior transactions are mandatory release tests. The suite does
+  not claim exhaustive injection after every operating-system I/O instruction.
 
 "Exact restore" means exact file bytes, existence/kind, and the explicitly
 recorded portable metadata. ACLs, owner, ADS, and platform-specific attributes
@@ -424,10 +425,13 @@ platform tests rather than claimed to be generated from JSON. PowerShell 5.1 use
 `Set-StrictMode`, terminating errors, `-LiteralPath`, and explicit .NET byte/file
 APIs rather than encoding-sensitive cmdlets.
 
-Native-Windows CI/tests cover CRLF/BOM/Unicode, case-folding, spaces, long and
-reserved paths, file locks, execution policy, junctions/reparse points, UNC/ADS
-rejection, process interruption, and concurrent transactions. WSL interop can
-execute PowerShell contract tests but does not prove native Codex behavior.
+Native-Windows tests cover CRLF/BOM byte preservation, spaces, execution policy,
+junctions/reparse points, UNC/ADS rejection, protected temp/repository ACLs,
+process interruption, and concurrent writes. Unicode, case-fold aliases,
+long/reserved paths, and file-lock behavior remain part of the documented
+platform risk inventory but are not claimed as explicit v0.1.0 test cases. WSL
+interop executes PowerShell contract tests but does not prove native Codex
+behavior or an automated hosted-Windows CI matrix.
 
 ## D018 - Release provenance and update stages
 

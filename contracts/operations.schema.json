@@ -35,11 +35,22 @@
     },
     "objects": {
       "type": "array", "minItems": 8, "maxItems": 8,
+      "uniqueItems": true,
+      "allOf": [
+        {"contains": {"const": {"id":"00","kind":"block","root":"codex_home","destination":"AGENTS.active.md","source":"baseline/global/AGENTS.block.md"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"10","kind":"tree","root":"agents_home","destination":"skills/codex-baseline-repo-onboarding","source":"baseline/skills/codex-baseline-repo-onboarding"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"11","kind":"tree","root":"agents_home","destination":"skills/codex-baseline-deep-work","source":"baseline/skills/codex-baseline-deep-work"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"12","kind":"tree","root":"agents_home","destination":"skills/codex-baseline-conformance-review","source":"baseline/skills/codex-baseline-conformance-review"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"13","kind":"tree","root":"agents_home","destination":"skills/codex-baseline-retrospective","source":"baseline/skills/codex-baseline-retrospective"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"20","kind":"file","root":"codex_home","destination":"agents/codex-baseline-reviewer.toml","source":"baseline/agents/codex-baseline-reviewer.toml"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"30","kind":"tree","root":"codex_home","destination":"codex-baseline/runtime","source":"generated/runtime"}}, "minContains": 1, "maxContains": 1},
+        {"contains": {"const": {"id":"31","kind":"file","root":"home","destination":".local/bin/codex-baseline{platform-extension}","source":"generated/wrapper"}}, "minContains": 1, "maxContains": 1}
+      ],
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "kind", "root", "destination", "source"],
         "properties": {
-          "id": {"pattern": "^(00|10|11|12|13|20|30|31)$"},
+          "id": {"type": "string", "pattern": "^(00|10|11|12|13|20|30|31)$"},
           "kind": {"enum": ["block", "file", "tree"]},
           "root": {"enum": ["home", "codex_home", "agents_home"]},
           "destination": {"type": "string"},

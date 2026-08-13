@@ -1274,7 +1274,7 @@ cb_doctor() {
       failures=$((failures + 1))
       failure_messages+=('Codex strict-config version probe failed.')
     fi
-    if codex features list 2>/dev/null | awk '$1 == "goals" || $1 == "multi_agent" || $1 == "skill_search" { if ($2 == "stable" && $3 == "true") ok++ } END { exit ok == 3 ? 0 : 1 }'; then
+    if codex features list 2>/dev/null | awk '$1 == "goals" || $1 == "multi_agent" || $1 == "skill_search" { if ($2 == "stable" && $3 == "true") seen[$1] = 1 } END { exit seen["goals"] && seen["multi_agent"] && seen["skill_search"] ? 0 : 1 }'; then
       capabilities=verified
     else
       warnings=$((warnings + 1))

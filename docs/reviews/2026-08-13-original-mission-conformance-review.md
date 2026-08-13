@@ -27,3 +27,21 @@ Reject `mission-complete`; permit only the explicitly unsigned local release
 candidate once its code/security delta and exact-revision tests pass. The live
 evaluation gate cannot be replaced with fake-model mechanics, policy prose, or
 reviewer judgement.
+
+## Third-round delta and disposition
+
+A further read-only conformance audit of clean commit `0b3cf89` confirmed that
+the consolidated RC report contains every required final-report section and
+separates public signing from the mandatory live evaluation. It found one
+remaining runtime overclaim: R09 is now `partial`, because deterministic risk
+mechanisms do not prove real-model recognition/application. The report now
+links the candidate-specific rejected-ideas matrix instead of grouping it as if
+that were the complete record.
+
+The audit also distinguished internally closable gates (last-commit suites,
+delta reviews, resumability/worktree evidence dispositions) from key-dependent
+behavior. Exact-revision suites and final delta reviews must be bound through a
+detached attestation after the last commit; real-model routing, ambiguity,
+risk/skill activation, context metrics, paired tasks, and the credential/network
+canary remain genuinely dependent on the dedicated evaluation run. R45/R46 stay
+partial until those receipts exist.

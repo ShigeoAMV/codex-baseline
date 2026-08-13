@@ -26,10 +26,13 @@ live files changed after planning, and network content are untrusted.
   `-LiteralPath`, raw local-drive validation, and Junction/reparse tests.
 - Every installable source file is pinned by path, byte length, and SHA-256 plus
   an aggregate digest. Unsigned local source is labelled and requires explicit
-  acknowledgement; Windows creates the verified snapshot under a local,
-  reparse-free temp root with a protected DACL owned by the caller and limited
-  to caller/SYSTEM/Administrators. Directory identity, owner/DACL, manifest, and
-  every payload hash are checked again immediately before candidate construction.
+  acknowledgement; Windows creates the verified snapshot under the local,
+  reparse-free HOME rather than a potentially shared `%TEMP%`; HOME and every
+  exchange-relevant ancestor reject untrusted owner/ACL mutation rights,
+  with a protected child DACL owned by the caller and limited to caller/SYSTEM/
+  Administrators. Parent owner/DACL plus child identity/owner/DACL, manifest,
+  and every payload hash are checked again immediately before candidate
+  construction.
 - Onboarding apply requires explicit acknowledgement when existing AI
   instructions need reconciliation. Unix anchors discovery and mutation to an
   open repository directory; Windows combines native directory identity checks

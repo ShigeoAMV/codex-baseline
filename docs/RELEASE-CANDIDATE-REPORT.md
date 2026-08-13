@@ -31,6 +31,8 @@ skill discovery, project guidance, and app worktrees.
   marker-block apply; semantic interpretation remains a focused skill step.
 - Executable verifiers, fresh advisory review, original-request traceability,
   and failure routing to the lowest reliable control layer.
+- Native Goal continuation with durable repository state, plus explicit
+  worktree isolation only for conflicting writable workers.
 
 ## Rejected or deferred mechanisms
 
@@ -42,6 +44,9 @@ cost without measured benefit. Hooks are deferred because current coverage,
 trust, transcript, and subagent-payload behavior are not strong enough for a
 core safety boundary. Ralph/Gauntlet ideas were reduced to bounded native Goal,
 state, acceptance, verifier, and stop contracts.
+The candidate-by-candidate record and strongest reasons are linked in
+[`REJECTED-IDEAS.md`](research/REJECTED-IDEAS.md); this grouping is only the
+release summary, not a substitute for the evidence matrix.
 
 ## Community and research effects
 
@@ -57,11 +62,12 @@ separated in the five dated research records and 12-source manifest.
 
 ## Verification performed
 
-- WSL2/Linux: `./tests/run.sh`, 11/11 groups, including syntax/ShellCheck,
+- WSL2/Linux: `./tests/run.sh`, 12/12 groups, including syntax/ShellCheck,
   payload/contract checks, clean install/idempotence/exact rollback, hard-crash
   recovery, journal/path/link/concurrency attacks, bounded onboarding, ten
   verifier fixtures, deterministic paired/routing mechanics, documentation, and
-  real Codex 0.147 `debug prompt-input` discovery.
+  real Codex 0.147 `debug prompt-input` discovery, and conflicting-write
+  worktree isolation.
 - Native Windows PowerShell 5.1: lifecycle and onboarding/benchmark suites cover
   install/update/doctor/rollback/uninstall, exact recovery, DACL/owner/Junction/
   path attacks, post-verification source mutation, conflict-safe onboarding,

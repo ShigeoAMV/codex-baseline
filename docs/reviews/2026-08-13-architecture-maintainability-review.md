@@ -39,3 +39,24 @@ critical issue. Its actionable findings are disposed as follows:
 A final read-only delta review against the immutable candidate is still required;
 this record proves that the second-round findings drove changes, not final
 mission completion.
+
+## Third-round delta and disposition
+
+The next read-only review of clean commit `0b3cf89` found no critical issue and
+confirmed the future-version Doctor fix, narrowed D003/D017 scope, honest
+traceability downgrades, and RC-report boundaries. It found three additional
+internal parity/truth defects, now addressed in the candidate:
+
+- PowerShell now rejects duplicate/missing operations object IDs with an
+  ordinal set; the draft-2020 schema requires each ID exactly once and the
+  negative native test recomputes an otherwise valid source payload.
+- Unix Doctor records the three distinct required feature names instead of
+  accepting three duplicate lines; a negative duplicate-output probe is added.
+- D003 no longer claims fault injection after every OS I/O instruction, and
+  D017 lists only the Windows surfaces actually covered while preserving the
+  untested Unicode/case/long-path/lock risks explicitly.
+
+The duplicated native Windows identity bridge remains accepted low-level debt,
+not a release blocker. Final architecture/maintainability sign-off still waits
+for a read-only audit of the last commit and its detached exact-revision test
+attestation.

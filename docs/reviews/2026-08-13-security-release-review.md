@@ -45,3 +45,26 @@ live-run risks remain explicit: the API parent carries the dedicated key, and
 `prlimit` is not an aggregate cgroup/PID/disk quota. A final read-only delta
 review of the immutable candidate is still required; this record does not claim
 that review before it happens.
+
+## Third-round delta and disposition
+
+The next read-only review of clean commit `0b3cf89` found no critical issue but
+correctly withheld local-RC sign-off for two remaining Windows ACL windows:
+untrusted `WRITE_DAC`/`WRITE_OWNER` rights were not treated as mutation-capable,
+and only the private snapshot child, not its exchange-relevant temp ancestors,
+was ACL-gated. The resulting candidate now:
+
+- rejects untrusted Delete/DeleteChild/ChangePermissions/TakeOwnership rights
+  across every relevant onboarding path component and tests broad-group Delete,
+  WRITE_DAC, WRITE_OWNER, plus an injected untrusted-owner observation;
+- avoids the observed shared `%TEMP%` boundary entirely, stages directly below
+  validated local HOME, validates owner and mutation-capable ACLs through every
+  HOME ancestor, then enforces the protected caller-owned child DACL and native
+  child identity/full-payload rehash;
+- points exact final-revision evidence to a detached Git attestation rather than
+  pretending the historical tracked receipt covers later code.
+
+The same review confirmed lazy `MaxVisited`, complete journal recovery checks,
+the Unix directory-handle boundary, and the static benchmark key/verifier split.
+Final sign-off still depends on a fresh read-only audit of the last commit and
+the exact-commit platform attestation.

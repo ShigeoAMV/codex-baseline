@@ -196,6 +196,15 @@ function Get-ObRuleSid {
 
 function Get-ObOwnerSid {
     param($Acl, [string]$Path)
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+        -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_ONBOARD_UNTRUSTED_OWNER_PATH) -and
+        [string]::Equals(
+            [System.IO.Path]::GetFullPath($Path),
+            [System.IO.Path]::GetFullPath($env:CODEX_BASELINE_TEST_ONBOARD_UNTRUSTED_OWNER_PATH),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        return 'S-1-5-32-545'
+    }
     try {
         return $Acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
     }
@@ -214,6 +223,8 @@ function Assert-ObPrivateApplyPath {
         'S-1-5-32-544',
         'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
     )
+    $aclEscalationRights = [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
     $cursor = [System.IO.Path]::GetFullPath($Path)
     while ($true) {
         $parent = [System.IO.Directory]::GetParent($cursor)
@@ -232,7 +243,7 @@ function Assert-ObPrivateApplyPath {
                 if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
                 $sid = Get-ObRuleSid $rule
                 if ($sid -in $trustedAccessSids) { continue }
-                if (($rule.FileSystemRights -band $check.Right) -ne 0) {
+                if (($rule.FileSystemRights -band ($check.Right -bor $aclEscalationRights)) -ne 0) {
                     throw "Onboarding apply is disabled for a shared/untrusted parent ACL: $($check.Path) ($sid)"
                 }
             }

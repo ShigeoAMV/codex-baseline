@@ -684,15 +684,18 @@ function Read-CbManifest {
         '31' = @('file', 'home', '.local/bin/codex-baseline{platform-extension}', 'generated/wrapper')
     }
     if (@($operations.objects).Count -ne $expectedObjects.Count) { throw 'Operations contract object count is invalid.' }
+    $seenOperationObjectIds = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
     foreach ($object in @($operations.objects)) {
         Assert-CbExactProperties $object @('id', 'kind', 'root', 'destination', 'source') 'Operations object'
         $id = [string]$object.id
         if (-not $expectedObjects.ContainsKey($id)) { throw "Operations contract object id is invalid: $id" }
+        if (-not $seenOperationObjectIds.Add($id)) { throw "Operations contract object id is duplicated: $id" }
         $actual = @([string]$object.kind, [string]$object.root, [string]$object.destination, [string]$object.source)
         if (($actual -join "`n") -ne (@($expectedObjects[$id]) -join "`n")) {
             throw "Operations contract object differs from the native implementation: $id"
         }
     }
+    if ($seenOperationObjectIds.Count -ne $expectedObjects.Count) { throw 'Operations contract object inventory is incomplete.' }
     return $manifest
 }
 
@@ -1202,28 +1205,51 @@ function New-CbPrivateDirectorySecurity {
     return $security
 }
 
-function Assert-CbPrivateDirectory {
-    param([string]$Path)
+function Get-CbAclRuleSid {
+    param($Rule)
+    try {
+        if ($Rule.IdentityReference -is [System.Security.Principal.SecurityIdentifier]) {
+            return $Rule.IdentityReference.Value
+        }
+        return $Rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    }
+    catch {
+        throw "Cannot resolve an ACL identity for a private temporary path: $($Rule.IdentityReference)"
+    }
+}
+
+function Assert-CbPrivatePathComponent {
+    param(
+        [string]$Path,
+        [string[]]$TrustedOwnerSids,
+        [string[]]$TrustedAccessSids,
+        [System.Security.AccessControl.FileSystemRights]$UntrustedRights,
+        [switch]$RequireProtected,
+        [switch]$RequireCurrentUserOwner,
+        [switch]$RequireCurrentUserFullControl
+    )
     $item = Get-CbItem $Path
-    if ($null -eq $item) { throw "Private temporary directory is missing: $Path" }
+    if ($null -eq $item) { throw "Private temporary path is missing: $Path" }
     Assert-CbOrdinaryItem $item 'tree'
-    Assert-CbExistingAncestorsSafe $item.FullName
-    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $trustedSids = @($currentSid) + $script:TrustedPrivateDirectorySids
     $acl = Get-Acl -LiteralPath $item.FullName -ErrorAction Stop
     $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
-    if ($ownerSid -ne $currentSid) {
+    if ($ownerSid -notin $TrustedOwnerSids) {
+        throw "Private temporary path has an untrusted owner: $($item.FullName) ($ownerSid)"
+    }
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($RequireCurrentUserOwner -and $ownerSid -ne $currentSid) {
         throw "Private temporary directory owner changed: $($item.FullName) ($ownerSid)"
     }
-    if (-not $acl.AreAccessRulesProtected) {
+    if ($RequireProtected -and -not $acl.AreAccessRulesProtected) {
         throw "Private temporary directory inherits access rules: $($item.FullName)"
     }
     $currentHasFullControl = $false
-    foreach ($rule in @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))) {
+    foreach ($rule in @($acl.Access)) {
         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-        $sid = $rule.IdentityReference.Value
-        if ($sid -notin $trustedSids) {
-            throw "Private temporary directory grants access to an untrusted SID: $($item.FullName) ($sid)"
+        if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+        $sid = Get-CbAclRuleSid $rule
+        if ($sid -notin $TrustedAccessSids -and ($rule.FileSystemRights -band $UntrustedRights) -ne 0) {
+            throw "Private temporary path grants mutation rights to an untrusted SID: $($item.FullName) ($sid)"
         }
         if ($sid -eq $currentSid -and
             ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
@@ -1231,15 +1257,58 @@ function Assert-CbPrivateDirectory {
             $currentHasFullControl = $true
         }
     }
-    if (-not $currentHasFullControl) {
+    if ($RequireCurrentUserFullControl -and -not $currentHasFullControl) {
         throw "Private temporary directory does not grant the current user full control: $($item.FullName)"
     }
 }
 
+function Assert-CbPrivateDirectory {
+    param([string]$Path)
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $trustedSids = @($currentSid) + $script:TrustedPrivateDirectorySids
+    $mutationRights = [System.Security.AccessControl.FileSystemRights]::Delete -bor
+        [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    Assert-CbExistingAncestorsSafe $Path
+    Assert-CbPrivatePathComponent $Path $trustedSids $trustedSids $mutationRights -RequireProtected -RequireCurrentUserOwner -RequireCurrentUserFullControl
+}
+
+function Assert-CbPrivateTemporaryRoot {
+    param([string]$Path)
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $trustedAccessSids = @($identity.User.Value) + $script:TrustedPrivateDirectorySids
+    $trustedOwnerSids = @(
+        $identity.User.Value,
+        'S-1-5-18',
+        'S-1-5-32-544',
+        'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+    )
+    $escalationRights = [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+        [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    Assert-CbExistingAncestorsSafe $Path
+    $cursor = Get-CbFullPath $Path
+    while ($true) {
+        Assert-CbPrivatePathComponent $cursor $trustedOwnerSids $trustedAccessSids (
+            [System.Security.AccessControl.FileSystemRights]::Delete -bor $escalationRights
+        )
+        $parent = [System.IO.Directory]::GetParent($cursor)
+        if ($null -eq $parent -or (Test-CbSamePath $parent.FullName $cursor)) { break }
+        Assert-CbPrivatePathComponent $parent.FullName $trustedOwnerSids $trustedAccessSids (
+            [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor $escalationRights
+        )
+        $cursor = $parent.FullName
+    }
+}
+
 function New-CbTemporaryDirectory {
-    $temporaryRoot = [System.IO.Path]::GetTempPath()
-    Assert-CbRawLocalRootPath $temporaryRoot 'Windows temporary root'
-    Assert-CbExistingAncestorsSafe $temporaryRoot
+    $temporaryRoot = if (-not [string]::IsNullOrWhiteSpace($env:HOME)) { $env:HOME } else { $env:USERPROFILE }
+    Assert-CbRawLocalRootPath $temporaryRoot 'Windows private staging root'
+    $temporaryRoot = Get-CbFullPath $temporaryRoot
+    $temporaryRootItem = Get-CbItem $temporaryRoot
+    if ($null -eq $temporaryRootItem) { throw "Windows private staging root is missing: $temporaryRoot" }
+    Assert-CbOrdinaryItem $temporaryRootItem 'tree'
+    Assert-CbPrivateTemporaryRoot $temporaryRoot
     $path = Join-Path $temporaryRoot ('codex-baseline-{0}' -f [guid]::NewGuid().ToString('N'))
     [System.IO.Directory]::CreateDirectory($path, (New-CbPrivateDirectorySecurity)) | Out-Null
     Assert-CbPrivateDirectory $path

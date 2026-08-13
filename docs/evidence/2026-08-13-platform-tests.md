@@ -1,5 +1,21 @@
 # Platform verification receipt - 2026-08-13
 
+This tracked file preserves the initial immutable execution receipt below. The
+last source commit cannot contain its own hash without creating a new untested
+commit. Therefore the authoritative final-candidate binding is a detached Git
+note created only after both full suites finish on a clean `HEAD`:
+
+```bash
+git notes --ref=release-attestations show HEAD
+```
+
+The note must name exact commit, payload hash, commands, exits, platform
+versions, 12/12 Unix groups, 93 native lifecycle assertions, and 69 native
+onboarding/benchmark assertions. Absence or mismatch means there is no exact
+final-revision attestation.
+
+## Initial immutable receipt
+
 Source state at execution: commit
 `4b0430cbb3328e40c7da837d72c770e9ac4d88b7`. Installable payload SHA-256:
 `23c8a3dc7087fce163aa78ede49561a2ebbd9d542a4cab41160bce187f744c51`.

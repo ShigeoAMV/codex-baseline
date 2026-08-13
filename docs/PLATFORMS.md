@@ -5,10 +5,10 @@ Status vocabulary is fixed: `tested`, `partially tested`, `statically validated`
 
 | Surface | Status for 0.1.0 | Evidence / boundary |
 | --- | --- | --- |
-| WSL2 Ubuntu 26.04 lifecycle | tested | 11/11 Unix end-to-end groups, including real SIGKILL recovery, provenance, symlink/race boundaries, onboarding, benchmark mechanics, routing, and discovery |
+| WSL2 Ubuntu 26.04 lifecycle | tested | 12/12 Unix end-to-end groups, including real SIGKILL recovery, provenance, symlink/race boundaries, onboarding, benchmark/routing mechanics, worktree isolation, and discovery |
 | Linux CLI implementation | partially tested | Executed under WSL2 Linux kernel/filesystem; shell/static behavior covered, separate bare-metal distro run absent |
-| Native Windows PowerShell 5.1 lifecycle | tested | PowerShell 5.1.26100.8875 through WSL interop: 90 lifecycle assertions, including current/old/future-version probes, protected snapshot DACL/identity and post-verify tampering, Junction, path/journal tampering, recovery, provenance, rollback/uninstall |
-| Native Windows onboarding/benchmark contract | tested | 61 native assertions; lazy bounded discovery, owner/broad-group ACL rejection, apply/conflict acknowledgement and static benchmark contracts execute; Bash verifier/live arms are explicitly not executed |
+| Native Windows PowerShell 5.1 lifecycle | tested | PowerShell 5.1.26100.8875 through WSL interop: 93 lifecycle assertions, including current/old/future-version probes, exact operations IDs, protected snapshot/ancestor DACL and post-verify tampering, Junction, path/journal tampering, recovery, provenance, rollback/uninstall |
+| Native Windows onboarding/benchmark contract | tested | 69 native assertions; lazy bounded discovery, owner and broad-group Delete/WRITE_DAC/WRITE_OWNER rejection, apply/conflict acknowledgement and static benchmark contracts execute; Bash verifier/live arms are explicitly not executed |
 | Native Windows Codex CLI | not verified | Native Codex binary is not installed in this environment |
 | Codex CLI 0.147 prompt discovery | tested | `codex debug prompt-input` proved global, root, nested guidance and skill metadata |
 | Linux/WSL paired benchmark isolation | tested | Static four-class verifiers plus deterministic fake-Codex paired mechanics execute in separate Bubblewrap worker/verifier sandboxes; final real-model paired result pending |

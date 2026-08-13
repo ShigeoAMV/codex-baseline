@@ -35,6 +35,18 @@ snapshot_files() {
   find "$root" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >"$output"
 }
 
+refresh_test_source_manifest() {
+  local root=$1 generated payload_hash bytes digest
+  generated=$("$root/scripts/release-payload.sh")
+  payload_hash=$(jq -r .payload_hash <<<"$generated")
+  bytes=$(jq -r '.payload[] | select(.path == "baseline/operations.json") | .bytes' <<<"$generated")
+  digest=$(jq -r '.payload[] | select(.path == "baseline/operations.json") | .sha256' <<<"$generated")
+  sed -i -E \
+    -e "s#^(  \"payload_hash\": )\"[0-9a-f]{64}\"#\\1\"$payload_hash\"#" \
+    -e "s#^    \{\"path\": \"baseline/operations.json\", \"bytes\": [0-9]+, \"sha256\": \"[0-9a-f]{64}\"\},#    {\"path\": \"baseline/operations.json\", \"bytes\": $bytes, \"sha256\": \"$digest\"},#" \
+    "$root/baseline/manifest.json"
+}
+
 test_static_quality() {
   bash -n "$TEST_ROOT/scripts/"*.sh "$TEST_ROOT/scripts/lib/"*.sh "$TEST_ROOT/benchmarks/verifiers/"*.sh
   shellcheck "$TEST_ROOT/scripts/lib/common.sh" "$TEST_ROOT/scripts/codex-baseline.sh" \
@@ -54,6 +66,17 @@ test_static_quality() {
     ([.objects[].id] | sort) == ["00","10","11","12","13","20","30","31"] and
     .reports == {doctor:"codex-baseline-doctor/v1",onboarding:"codex-baseline-onboarding/v1",benchmark:"codex-baseline-benchmark/v1"}
   ' "$TEST_ROOT/baseline/operations.json" >/dev/null
+  jq -e --slurpfile operations "$TEST_ROOT/baseline/operations.json" '
+    [.properties.transaction_states.prefixItems[].const] == $operations[0].transaction_states and
+    [.properties.object_states.prefixItems[].const] == $operations[0].object_states and
+    [.properties.operations.prefixItems[].const] == $operations[0].operations and
+    ([.properties.objects.allOf[].contains.const] | sort_by(.id)) == ($operations[0].objects | sort_by(.id)) and
+    .properties.reports.properties == {
+      doctor:{const:"codex-baseline-doctor/v1"},
+      onboarding:{const:"codex-baseline-onboarding/v1"},
+      benchmark:{const:"codex-baseline-benchmark/v1"}
+    }
+  ' "$TEST_ROOT/contracts/operations.schema.json" >/dev/null
   "$TEST_ROOT/scripts/release-payload.sh" | jq -e --slurpfile manifest "$TEST_ROOT/baseline/manifest.json" '
     .payload_hash == $manifest[0].payload_hash and .payload == $manifest[0].payload and
     $manifest[0].source_trust == "unsigned-local-source"
@@ -68,7 +91,7 @@ test_static_quality() {
 }
 
 test_dry_run_and_lifecycle() {
-  local root status tampered_source tampered_root racy_source racy_root
+  local root status tampered_source tampered_root racy_source racy_root duplicate_source duplicate_root
   root=$(new_home lifecycle)
   printf 'custom-before\n' >"$root/home/.codex/AGENTS.md"
   printf 'unrelated\n' >"$root/home/.agents/keep.txt"
@@ -158,6 +181,32 @@ test_dry_run_and_lifecycle() {
   HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" PATH="$root/future-codex:$PATH" \
     "$TEST_ROOT/scripts/codex-baseline.sh" doctor --json >"$root/future-doctor.json"
   jq -e '.failure_count == 0 and .native_capabilities == "unverified-future-version" and any(.warnings[]; test("newer than the tested version 0.147.0"))' "$root/future-doctor.json" >/dev/null
+  mkdir -p -- "$root/duplicate-feature-codex"
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ ${1:-} == --version || ${1:-} == --strict-config ]]; then printf "%s\n" "codex-cli 0.147.0"; exit 0; fi' \
+    'if [[ ${1:-} == features && ${2:-} == list ]]; then printf "%s\n" "goals stable true" "goals stable true" "goals stable true"; exit 0; fi' \
+    'exit 1' >"$root/duplicate-feature-codex/codex"
+  chmod 0755 "$root/duplicate-feature-codex/codex"
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" PATH="$root/duplicate-feature-codex:$PATH" \
+    "$TEST_ROOT/scripts/codex-baseline.sh" doctor --json >"$root/duplicate-feature-doctor.json"
+  jq -e '.native_capabilities == "degraded" and any(.warnings[]; test("capability probe is degraded"))' "$root/duplicate-feature-doctor.json" >/dev/null
+
+  duplicate_source="$TEST_TMP/duplicate-operation-source"
+  mkdir -p -- "$duplicate_source"
+  cp -a -- "$TEST_ROOT/VERSION" "$TEST_ROOT/baseline" "$TEST_ROOT/benchmarks" "$TEST_ROOT/scripts" "$duplicate_source/"
+  awk '/"id": "00"/ { duplicate = $0 } /"id": "10"/ { $0 = duplicate } { print }' \
+    "$duplicate_source/baseline/operations.json" >"$duplicate_source/baseline/operations.json.tmp"
+  mv -- "$duplicate_source/baseline/operations.json.tmp" "$duplicate_source/baseline/operations.json"
+  refresh_test_source_manifest "$duplicate_source"
+  duplicate_root=$(new_home duplicate-operation-contract)
+  set +e
+  HOME="$duplicate_root/home" CODEX_HOME="$duplicate_root/home/.codex" AGENTS_HOME="$duplicate_root/home/.agents" \
+    "$duplicate_source/scripts/codex-baseline.sh" install --dry-run >"$duplicate_root/install.log" 2>&1
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  grep -q 'operations object contract mismatch' "$duplicate_root/install.log"
   baseline "$root" rollback --dry-run >"$root/rollback-dry.log"
   baseline "$root" rollback >"$root/rollback.log"
   cmp <(printf 'custom-before\n') "$root/home/.codex/AGENTS.md"
@@ -460,6 +509,31 @@ test_routing_contract() {
   pass 'routing fixtures and isolated repeated-probe mechanics are valid'
 }
 
+test_worktree_isolation() {
+  local repository="$TEST_TMP/worktree-source" worker_a="$TEST_TMP/worktree-agent-a" worker_b="$TEST_TMP/worktree-agent-b"
+  mkdir -p -- "$repository"
+  git -C "$repository" init -q
+  git -C "$repository" config user.name 'Codex Baseline Test'
+  git -C "$repository" config user.email 'codex-baseline-test@localhost'
+  printf 'base\n' >"$repository/shared.txt"
+  git -C "$repository" add shared.txt
+  git -C "$repository" commit -q -m base
+  git -C "$repository" branch agent-a
+  git -C "$repository" branch agent-b
+  git -C "$repository" worktree add -q "$worker_a" agent-a
+  git -C "$repository" worktree add -q "$worker_b" agent-b
+  printf 'agent-a\n' >"$worker_a/shared.txt"
+  printf 'agent-b\n' >"$worker_b/shared.txt"
+  cmp <(printf 'base\n') "$repository/shared.txt"
+  cmp <(printf 'agent-a\n') "$worker_a/shared.txt"
+  cmp <(printf 'agent-b\n') "$worker_b/shared.txt"
+  test "$(git -C "$worker_a" status --short)" = ' M shared.txt'
+  test "$(git -C "$worker_b" status --short)" = ' M shared.txt'
+  git -C "$repository" worktree remove --force "$worker_a"
+  git -C "$repository" worktree remove --force "$worker_b"
+  pass 'conflicting writable workers remain isolated in explicit worktrees'
+}
+
 test_documentation_contract() {
   "$TEST_ROOT/scripts/check-docs.sh" >/dev/null
   for document in README.md CHANGELOG.md PLAN.md docs/ARCHITECTURE.md docs/INSTALL.md \
@@ -496,7 +570,7 @@ test_codex_discovery() {
   pass 'Codex prompt input loads global/root/nested guidance and all skill metadata'
 }
 
-printf '1..11\n'
+printf '1..12\n'
 test_static_quality
 test_dry_run_and_lifecycle
 test_drift_and_user_content
@@ -506,5 +580,6 @@ test_symlink_boundaries
 test_onboarding
 test_benchmark_contract
 test_routing_contract
+test_worktree_isolation
 test_documentation_contract
 test_codex_discovery
