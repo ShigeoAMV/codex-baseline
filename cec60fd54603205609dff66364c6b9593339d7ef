@@ -1,0 +1,21 @@
+codex-baseline release attestation v1
+date: 2026-08-14
+source_commit: cec60fd54603205609dff66364c6b9593339d7ef
+source_tree: ea20b0ccce823de24284f4950f1eb3ec953aa424
+payload_hash: d5562ae5d3b6319dff1b1608e438db06d30123ab764cd9fbfc9b4aa07cc596fe
+source_state_before_and_after: clean
+unix_command: ./tests/run.sh
+unix_exit: 0
+unix_result: 12/12 groups passed
+unix_platform: Ubuntu 26.04 under WSL2; Linux 6.18.33.2-microsoft-standard-WSL2 x86_64
+unix_codex: codex-cli 0.147.0
+unix_log_sha256: 0d674a09d0ef07526160db9a62e8ed7aa4ebe273970682c860bfa53b633652b4
+windows_command: ./tests/run-powershell.sh
+windows_exit: 0
+windows_lifecycle: 95 assertions passed
+windows_onboarding_benchmark: 69 assertions passed
+windows_shell: Windows PowerShell 5.1.26100.8875
+windows_log_sha256: 062fbe61776a8b6e9f8bfa37efb2b507291a7349506a65d8bc66a7f809b16a57
+network_fetch: none
+real_model_evaluation: not run; dedicated short-lived key still required
+trust: unsigned local source; no publisher authenticity claim
