@@ -52,6 +52,9 @@ independent audits.
   runtime dependency.
 - The active global Codex configuration is customized and therefore provides a
   real preservation/merge test case. Authentication data was not read.
+- Initial immutable source anchor:
+  `4b0430cbb3328e40c7da837d72c770e9ac4d88b7`; the complete Unix and native
+  PowerShell matrices passed from its clean tree.
 
 ## Open decisions
 
@@ -70,7 +73,7 @@ independent audits.
 
 ## Next action
 
-Create the initial immutable source revision, run fresh security,
-architecture/maintainability, and conformance reviews against it, fix justified
-findings, rerun the complete platform matrix, then run live evaluation when its
-dedicated credential is available and close traceability only against receipts.
+Run fresh security, architecture/maintainability, and conformance reviews
+against the immutable evidence revision, fix justified findings and rerun
+affected checks. Then run live evaluation when its dedicated credential is
+available and close traceability only against receipts.

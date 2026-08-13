@@ -9,7 +9,7 @@ disposition pass and is not the final immutable-revision sign-off.
 
 | Severity | Finding | Current disposition / evidence |
 | --- | --- | --- |
-| Critical | The repository had no commit, so source/version/provenance claims lacked an immutable anchor | Open until the release-candidate tree is committed and the full matrix is rerun at that revision |
+| Critical | The repository had no commit, so source/version/provenance claims lacked an immutable anchor | Closed. Initial commit `4b0430cbb3328e40c7da837d72c770e9ac4d88b7` anchors the candidate; 11/11 Unix, 83 lifecycle, and 58 onboarding/benchmark assertions passed from that clean revision |
 | High | Documentation claimed a bundled isolated reviewer runner that did not exist | Closed by correcting D007, architecture, and changelog: the role is advisory; v0.1.0 ships no isolated runner and review artifacts must label actual external isolation |
 | High | Windows Doctor did not enforce minimum Codex version or probe required stable capabilities | Closed. It parses manifest `minimum_codex`, executes strict-config and feature probes, and native PowerShell tests cover current/older test doubles while retaining the real-binary limitation |
 | High | Onboarding reported existing instructions but applied without explicit conflict acknowledgement; generated guidance carried too few discovered boundaries | Closed. Apply now stops before mutation on conflicts unless explicitly acknowledged; model guidance adds safe source/architecture/generated/risk paths while excluding unsafe path strings; Unix and Windows tests cover it |
@@ -20,7 +20,7 @@ disposition pass and is not the final immutable-revision sign-off.
 
 ## Review status
 
-The critical immutable-revision finding remains open until the initial commit
-and post-commit rerun. A fresh final architecture/maintainability review is then
-required; this record proves dogfood feedback and disposition, not final
+The critical immutable-revision finding is closed. A fresh final
+architecture/maintainability review against the resulting evidence revision is
+still required; this record proves dogfood feedback and disposition, not final
 completion.

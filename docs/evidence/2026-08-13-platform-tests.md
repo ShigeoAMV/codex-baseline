@@ -1,8 +1,9 @@
 # Platform verification receipt - 2026-08-13
 
-Source state at execution: local uncommitted release-candidate tree. Installable
-payload SHA-256: `2b5515ec4baa1f81938c459b198fa873cf294bb334e2fc7bbc5db5fcb5d0419b`.
-The final immutable-revision rerun must supersede this receipt before release.
+Source state at execution: commit
+`4b0430cbb3328e40c7da837d72c770e9ac4d88b7`. Installable payload SHA-256:
+`23c8a3dc7087fce163aa78ede49561a2ebbd9d542a4cab41160bce187f744c51`.
+The tree was clean when the parallel platform reruns started.
 
 ## WSL2/Linux
 
@@ -25,10 +26,12 @@ WSL2. This is not a separate bare-metal/distribution matrix.
 ## Native Windows PowerShell
 
 - Shell: Windows PowerShell `5.1.26100.8875`, invoked through WSL interop.
-- Command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
-  "$(wslpath -w tests/windows/lifecycle.ps1)"`.
+- Command: `./tests/run-powershell.sh` (dispatches the following two native
+  PowerShell suites).
+- Lifecycle subcommand: `powershell.exe -NoProfile -ExecutionPolicy Bypass
+  -File "$(wslpath -w tests/windows/lifecycle.ps1)"`.
 - Result: exit 0, 83 assertions passed.
-- Command: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+- Onboarding/benchmark subcommand: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File
   "$(wslpath -w tests/windows/onboard-benchmark.ps1)"`.
 - Result: exit 0, 58 assertions passed.
 
