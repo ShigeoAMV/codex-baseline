@@ -119,7 +119,7 @@ Each entry explicitly answers the mission policy in order: **C** capability,
   Proof Loop Windows evidence weak; D clean standalone removal; E narrow paired
   verifier comparison before adding either dependency.
 
-No external framework is adopted in v0.1.1, so the policy's adoption benchmark
+No external framework is adopted in v0.2.0, so the policy's adoption benchmark
 condition is not triggered. Extracted mechanisms are independently tested by
 the baseline routing, lifecycle, conformance, and evaluation contracts.
 

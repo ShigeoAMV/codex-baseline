@@ -44,7 +44,8 @@ a pinned revision/hash, a documented license, and paired baseline benchmarks.
 **Decision:** Ship equivalent POSIX/Bash and Windows PowerShell 5.1 entry points.
 Keep platform-neutral content and manifests shared. Do not require Node, Python,
 `uv`, Go, Rust, Docker, admin rights, or network access for install/doctor/
-rollback.
+rollback. Remote self-update alone uses an existing platform HTTPS/archive
+capability; local/offline update remains networkless.
 
 **Why:** Bash is available on Linux/WSL and PowerShell 5.1 is native on supported
 Windows environments. No single scripting runtime is guaranteed on all three
@@ -75,8 +76,9 @@ ownership semantics.
 - Never overwrite a non-owned skill directory with the same name.
 - Write candidate content beside the target, verify it, then replace.
 - Rollback restores bytes and metadata recorded by a specific transaction.
-- Update never performs an implicit network fetch; source acquisition is a
-  separate user-controlled Git/package operation.
+- Checkout-local and offline update never fetch. Installed-runtime update may
+  explicitly acquire only the bounded stable-release assets in the v1 update
+  contract; it never edits or pulls a Git checkout.
 
 **Normative transaction state machine:**
 
@@ -383,8 +385,8 @@ entry points. It exposes:
 - `doctor [--json]` - augment redacted native `codex doctor` with version,
   active guidance, skill/agent hashes, state, path, platform, dependency, and
   conflict checks;
-- `update [--dry-run]` - deploy the current local source version without
-  fetching from the network;
+- `update [--check|--remote|--local|--offline ARCHIVE] [--dry-run]` - check or
+  transactionally deploy the stable release; local/offline modes never fetch;
 - `rollback [--dry-run]` - transactionally undo the current committed operation
   after drift checks; repeated rollback walks further back through history;
 - `uninstall [--dry-run]` - remove only baseline-owned blocks/files, preserving

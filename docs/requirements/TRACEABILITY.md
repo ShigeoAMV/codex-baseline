@@ -56,3 +56,23 @@ written justification. All rows start unproven.
 | R44 | Final architecture review has no unresolved critical issue | Independent review and disposition | verified | The detached final Architecture and Maintainability reviews on immutable commit `a11ed2a` report C0/H0/M0 and sign off the unchanged production payload |
 | R45 | Final conformance review finds no unjustified omission from the original mission | Requirement-by-requirement completion audit with authoritative evidence | verified | The detached Original-mission Conformance review on `a11ed2a` reports C0/H0/M0; this ledger still labels missing external real-model evidence partial, so the sign-off does not claim mission completion |
 | R46 | Final report covers architecture, adopted/rejected mechanisms, community effects, exact verification, platform status, benchmark, minimal usage, and remaining uncertainty | Final report linked from release documentation | verified | `docs/RELEASE-CANDIDATE-REPORT.md` consolidates every named section, exact deterministic evidence, absent real-model results, platform limits, minimal use, Apache-2.0 public-source status, and the unsigned publisher boundary |
+
+## 2026-08-14 self-update addendum
+
+These supplemental gates freeze the later user request for a Git-checkout-free
+update path. They do not retroactively redefine the original R01-R46 mission.
+Detailed constraints and the exact descriptor grammar are in
+`docs/plans/2026-08-14-self-update.md`.
+
+| ID | Self-update gate | Status | Current evidence |
+| --- | --- | --- | --- |
+| U1 | Installed `update --check` is non-mutating and reports current/latest stable versions | partial | Unix installed-wrapper fixture passes with exact managed-file and complete transaction-state snapshots; equivalent PowerShell fixture is implemented but the native suite is environment-blocked |
+| U2 | Installed remote dry-run verifies the release and previews without mutation | partial | Unix local-transport fixture passes; equivalent PowerShell execution remains environment-blocked |
+| U3 | Acknowledged remote apply never executes downloaded updater code, Doctor reports the new release, and rollback exactly restores prior state | partial | Unix 0.2.0 -> 0.2.1 canary/apply/Doctor/rollback/hash fixture passes; PowerShell fixture is implemented but not executed through completion |
+| U4 | Checkout-local and explicit offline archive paths remain networkless | partial | Unix local/offline fixture passes without external network; PowerShell execution remains environment-blocked |
+| U5 | Malformed, replaced, hostile, oversized, colliding, downgraded, or tampered update inputs fail before mutation | partial | Unix corrupt-hash, traversal, symlink, PAX/special header, raw-stream bomb, case collision, extra inventory, growing/path-replaced/in-place-mutated offline input, and concurrent anti-downgrade cases pass with state snapshots; bounded forged-length ZIP and equivalent PowerShell fixtures exist but the native suite has not completed |
+| U6 | Remote acquisition is bounded, sends no Codex/GitHub credentials, disables user client configuration, and validates every redirect | partial | Both clients implement the fixed HTTPS host/redirect/time/size policy; static/local-transport checks and fresh independent security review pass, while production-endpoint and native execution remain |
+| U7 | Release archives and descriptor are reproducible and mutually consistent | verified | `scripts/release-update.py` produces byte-identical tar/zip/descriptor outputs twice in the focused group; descriptor bytes and SHA-256 fields are checked |
+| U8 | Help and docs distinguish remote, local, offline, unsigned trust, preview, apply, and rollback | verified | Bash/PowerShell help plus README, Operations, Release, Architecture, and Security docs; `scripts/check-docs.sh` passes |
+| U9 | Existing lifecycle behavior and both full platform suites remain green | partial | Focused self-update and static checks pass; full Unix is blocked by missing ShellCheck (and the host Codex is 0.145.0 versus required 0.147.0), while the native host cannot load `Microsoft.PowerShell.Security` for `Get-Acl` during lifecycle setup |
+| U10 | The one-time v0.1.1 -> v0.2.0 local transition is documented and future v1 self-update compatibility is tested | partial | README/Operations document the unavoidable transition; the Unix cross-version fixture starts at the first self-update-capable runtime, while native completion remains blocked |

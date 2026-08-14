@@ -9,5 +9,7 @@
   of source unless explicitly documented.
 - Run `./tests/run.sh` for the full local suite. Run
   `./tests/run-powershell.sh` when native Windows PowerShell is reachable.
-- No network fetch is part of install, update, rollback, uninstall, or tests.
+- No network fetch is part of install, doctor, rollback, uninstall, offline/local
+  update, or tests. Installed-runtime/explicit remote update may fetch only the
+  bounded public release endpoints defined by the self-update contract.
 - Do not read, copy, log, or test with real Codex authentication/session files.

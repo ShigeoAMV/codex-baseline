@@ -2,12 +2,21 @@
 
 ## Verdict
 
-Version 0.1.1 is an evidence-backed, Apache-2.0-licensed **unsigned public source
+Version 0.2.0 is an evidence-backed, Apache-2.0-licensed **unsigned public source
 preview**, not a mission-complete or publisher-authenticated release.
 Deterministic lifecycle, onboarding, recovery, prompt-input discovery, and
 evaluation-runner mechanics are implemented. Mandatory real-model
 paired/routing evaluation is still missing because no dedicated short-lived
 benchmark key was available.
+
+The focused v0.2.0 Unix self-update group passes, including deterministic
+release assets, hostile archives, downloaded-code canary, concurrent
+anti-downgrade, apply, Doctor, rollback, and exact restoration. The inherited
+v0.1.1 full-platform receipts remain useful regression evidence but do not bind
+the current change: this host lacks ShellCheck and has Codex 0.145.0 below the
+required 0.147.0, while native Windows fails closed on a foreign-writable
+`%LOCALAPPDATA%` ancestor. Accordingly v0.2.0 remains partially tested, not a
+verified release candidate.
 
 ## Architecture
 
@@ -75,14 +84,14 @@ separated in the five dated research records and 21-source manifest.
 
 ## Verification performed
 
-- WSL2/Linux: `./tests/run.sh`, 12/12 groups, including syntax/ShellCheck,
+- Inherited v0.1.1 WSL2/Linux receipt: `./tests/run.sh`, 12/12 groups, including syntax/ShellCheck,
   payload/contract checks, clean install/idempotence/exact rollback, hard-crash
   recovery, journal/path/link/concurrency attacks, bounded onboarding, ten
   verifier fixtures, deterministic paired/routing/behavior/Canary mechanics,
   documentation, and
   real Codex 0.147 `debug prompt-input` discovery, and conflicting-write
   worktree isolation.
-- Native Windows PowerShell 5.1: lifecycle and onboarding/benchmark suites cover
+- Inherited v0.1.1 native Windows PowerShell 5.1 receipt: lifecycle and onboarding/benchmark suites cover
   install/update/doctor/rollback/uninstall, exact recovery, DACL/owner/Junction/
   path attacks, post-verification source mutation, conflict-safe onboarding,
   lazy traversal limits, and static benchmark contracts.
@@ -105,9 +114,9 @@ untested commit.
 
 | Surface | Status | Boundary |
 | --- | --- | --- |
-| WSL2 Ubuntu implementation | tested | Executed on the WSL2 Linux kernel/filesystem |
+| WSL2 Ubuntu implementation | partially tested | v0.2.0 focused self-update passes; the current full rerun lacks ShellCheck and a supported host Codex, while 12/12 belongs to inherited v0.1.1 evidence |
 | Bare-metal Linux implementation | partially tested | Same Bash/Linux path plus static and isolated mechanics execute under WSL2; no separate distro/kernel matrix |
-| Native Windows PowerShell 5.1 | tested | Real Windows filesystem/PowerShell; real native Windows Codex is absent |
+| Native Windows PowerShell 5.1 | partially tested | v0.2.0 parses and has native fixtures, but the current suite fails closed on a foreign-writable staging ancestor; 95/69 assertions belong to inherited v0.1.1 evidence |
 | Codex CLI 0.147 prompt discovery | tested | Global/root/nested guidance and all skill metadata rendered |
 | Real-model Linux/WSL paired, routing/behavior, and Canary runs | not verified | Dedicated evaluation key absent |
 | Codex App/IDE | partially tested | Official contracts plus CLI discovery; no complete local cross-client run |

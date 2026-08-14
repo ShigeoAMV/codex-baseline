@@ -19,24 +19,47 @@ Windows path on Windows). Inspect it, but do not hand-edit an active journal.
 
 ## Update
 
-Acquire a reviewed source release separately, inspect its revision/diff, then:
+The installed wrapper can check and stage the latest stable GitHub release:
 
 ```bash
-./scripts/codex-baseline.sh update --dry-run
-./scripts/codex-baseline.sh update --acknowledge-unverified-source
+codex-baseline update --check
+codex-baseline update --dry-run
+codex-baseline update --acknowledge-unverified-source
 codex-baseline doctor
 ```
 
-Both preview and apply verify the exact versioned payload. The installer prints
-local source origin, revision/dirty state when available, unsigned trust label,
-and aggregate payload SHA-256. Apply requires acknowledgement because the
-manifest is integrity metadata, not a publisher signature. Fetch stays outside
-the installer: acquire -> inspect -> preview -> apply.
+`--check` downloads only the strict v1 descriptor. Preview/apply downloads the
+platform archive into private staging, enforces HTTPS redirect/host/time/size
+limits, verifies descriptor byte count and SHA-256, rejects unsafe/special/
+oversize archive members, and requires the extracted inventory to equal the
+payload manifest plus manifest file. Downloaded scripts are never executed;
+the already-installed updater verifies and applies the data through the normal
+transaction engine. It repeats anti-downgrade validation while holding the
+mutation lock.
+
+The descriptor and archive are still on the same unsigned publisher boundary.
+Apply therefore requires explicit acknowledgement and reports
+`unsigned-github-release`; the installed artifact remains labelled
+`unsigned-local-source` until publisher signing and an independent trust root
+exist. No GitHub/Codex credential is used. Platform-native HTTPS proxy settings
+remain user-controlled transport configuration.
+
+For a reviewed local checkout or pre-acquired archive, keep networking outside:
+
+```bash
+./scripts/codex-baseline.sh update --local --dry-run
+codex-baseline update --offline /path/to/codex-baseline-0.2.0.tar.gz --dry-run
+codex-baseline update --offline /path/to/codex-baseline-0.2.0.tar.gz --acknowledge-unverified-source
+```
+
+Native Windows uses the equivalent `-Check`, `-Local`, and `-Offline <zip>`
+spellings. v0.1.1 predates self-update and needs one reviewed local transition
+to v0.2.0; the v1 descriptor/assets are retained by later supported releases.
 
 An update is another parent-linked transaction. Schema migrations must be added
 to both platform implementations and the shared `baseline/operations.json`
 contract, then exercised against the previous release before changing `schema`.
-v0.1.1 supports schema 1 only and fails closed on a different source schema.
+v0.2.0 supports schema 1 only and fails closed on a different source schema.
 
 ## Rollback and uninstall
 

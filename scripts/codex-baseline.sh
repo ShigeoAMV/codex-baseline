@@ -48,6 +48,15 @@ CB_MUTATION_COUNT=0
 CB_VERSION='unknown'
 CB_VERIFIED_SOURCE_ROOT=''
 CB_TEMP_PATHS=()
+CB_UPDATE_CHECK=0
+CB_UPDATE_REMOTE=0
+CB_UPDATE_LOCAL=0
+CB_UPDATE_OFFLINE=''
+CB_UPDATE_METADATA_URL='https://github.com/ShigeoAMV/codex-baseline/releases/latest/download/codex-baseline-update-v1.txt'
+CB_UPDATE_MAX_ARCHIVE_BYTES=67108864
+CB_UPDATE_MAX_CONTENT_BYTES=134217728
+CB_UPDATE_MAX_RAW_TAR_BYTES=138412032
+CB_UPDATE_TEMP_ROOT=''
 
 cb_usage() {
   cat <<'EOF'
@@ -56,8 +65,10 @@ Usage: codex-baseline <command> [options]
 Commands:
   install [--dry-run] [--acknowledge-unverified-source]
                             Install from this reviewed local source tree
-  update [--dry-run] [--acknowledge-unverified-source]
-                            Apply the current local source as an update
+  update [--check|--remote|--local|--offline ARCHIVE] [--dry-run]
+         [--acknowledge-unverified-source]
+                            Check/apply the latest stable release; a checkout
+                            remains local by default, installed runtime remote
   doctor [--json]           Inspect installation, Codex, paths, and conflicts
   rollback [--dry-run]      Restore the state before the current transaction
   uninstall [--dry-run]     Remove only baseline-owned content
@@ -65,14 +76,15 @@ Commands:
   benchmark [options]       Run the maintained evaluation harness
   help                      Show this help
 
-Global mutation rules: no network fetch, no auth/session access, dry-run shows
-targets, live drift is a conflict, and every applied operation records a backup
-transaction under CODEX_HOME/codex-baseline/state.
+Global mutation rules: only installed-runtime update/--remote performs a bounded
+public release fetch. No auth/session access occurs, dry-run shows targets, live
+drift is a conflict, and every applied operation records a backup transaction
+under CODEX_HOME/codex-baseline/state.
 EOF
 }
 
 cb_print_source_provenance() {
-  local root=$1 payload_hash=$2 revision=unversioned dirty=unknown status_output='' untracked_output=''
+  local root=$1 payload_hash=$2 acquisition=${3:-local-checkout} revision=unversioned dirty=unknown status_output='' untracked_output=''
   if command -v git >/dev/null 2>&1 && [[ -e $root/.git ]]; then
     revision=$(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 \
       git -c core.fsmonitor=false -C "$root" rev-parse --verify HEAD 2>/dev/null || printf 'unversioned')
@@ -85,8 +97,8 @@ cb_print_source_provenance() {
       if [[ -n $status_output || -n $untracked_output ]]; then dirty=yes; else dirty=no; fi
     fi
   fi
-  printf 'source-origin: %s\nsource-revision: %s\nsource-dirty: %s\nsource-trust: unverified-source (unsigned-local-source)\nsource-payload-sha256: %s\n' \
-    "$root" "$revision" "$dirty" "$payload_hash"
+  printf 'source-origin: %s\nsource-revision: %s\nsource-dirty: %s\nsource-trust: unverified-source (unsigned-local-source)\nsource-acquisition: %s\nsource-payload-sha256: %s\n' \
+    "$root" "$revision" "$dirty" "$acquisition" "$payload_hash"
 }
 
 cb_freeze_verified_source() {
@@ -108,6 +120,9 @@ cb_freeze_verified_source() {
     "$snapshot/scripts/"
   cp -p -- "$source/scripts/lib/common.sh" "$source/scripts/lib/evaluation.sh" "$snapshot/scripts/lib/"
   cp -a -- "$source/benchmarks" "$snapshot/benchmarks"
+  find -P "$snapshot" -type d -exec chmod 0755 {} +
+  find -P "$snapshot" -type f -exec chmod 0644 {} +
+  find -P "$snapshot/scripts" -type f -name '*.sh' -exec chmod 0755 {} +
 
   version=$(cb_verify_source_manifest "$snapshot")
   manifest_hash=$(cb_sha256_file "$snapshot/baseline/manifest.json")
@@ -156,6 +171,285 @@ cb_cleanup_temps() {
     esac
   done
   CB_TEMP_PATHS=()
+}
+
+cb_update_temp_root() {
+  local mode owner root
+  if [[ -n $CB_UPDATE_TEMP_ROOT ]]; then
+    [[ -d $CB_UPDATE_TEMP_ROOT && ! -L $CB_UPDATE_TEMP_ROOT ]] || cb_die 'private update staging root changed unexpectedly'
+    return
+  fi
+  [[ -d /tmp && ! -L /tmp ]] || cb_die 'remote/offline update requires an ordinary /tmp directory'
+  mode=$(stat -c '%a' -- /tmp)
+  owner=$(stat -c '%u' -- /tmp)
+  [[ $mode =~ ^[0-7]{3,4}$ && ( $owner == 0 || $owner == "$EUID" ) ]] || cb_die '/tmp ownership or mode is unsafe for update staging'
+  (( (8#$mode & 0022) == 0 || (8#$mode & 01000) != 0 )) || cb_die 'writable /tmp must have the sticky bit for update staging'
+  root=$(mktemp -d /tmp/codex-baseline-update.XXXXXX)
+  chmod 0700 -- "$root"
+  [[ -d $root && ! -L $root && $(stat -c '%u' -- "$root") == "$EUID" && $(stat -c '%a' -- "$root") == 700 ]] || cb_die 'cannot establish a private update staging root'
+  CB_UPDATE_TEMP_ROOT=$root
+  cb_register_temp "$root"
+}
+
+cb_semver_valid() {
+  [[ $1 =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+cb_semver_compare() {
+  local left=$1 right=$2 left_major left_minor left_patch right_major right_minor right_patch
+  cb_semver_valid "$left" && cb_semver_valid "$right" || cb_die 'version comparison requires stable MAJOR.MINOR.PATCH values'
+  IFS=. read -r left_major left_minor left_patch <<<"$left"
+  IFS=. read -r right_major right_minor right_patch <<<"$right"
+  if (( 10#$left_major != 10#$right_major )); then
+    (( 10#$left_major > 10#$right_major )) && printf '1' || printf '%s' '-1'
+  elif (( 10#$left_minor != 10#$right_minor )); then
+    (( 10#$left_minor > 10#$right_minor )) && printf '1' || printf '%s' '-1'
+  elif (( 10#$left_patch != 10#$right_patch )); then
+    (( 10#$left_patch > 10#$right_patch )) && printf '1' || printf '%s' '-1'
+  else
+    printf '0'
+  fi
+}
+
+cb_update_url_allowed() {
+  [[ $1 =~ ^https://(github\.com|release-assets\.githubusercontent\.com|objects\.githubusercontent\.com)/[^[:space:]\\]*$ ]]
+}
+
+cb_fetch_update_url() {
+  local url=$1 output=$2 maximum=$3 curl_path current headers body status location curl_status redirects=0 update_temp
+  curl_path=$(command -v curl 2>/dev/null || true)
+  [[ $curl_path == /* && -f $curl_path && ! -L $curl_path ]] || cb_die 'remote update requires an ordinary absolute curl executable'
+  cb_update_temp_root
+  update_temp=$CB_UPDATE_TEMP_ROOT
+  current=$url
+  while :; do
+    cb_update_url_allowed "$current" || cb_die "update redirect host or scheme is not allowed: $current"
+    headers="$update_temp/headers-$redirects"
+    body="$update_temp/body-$redirects"
+    set +e
+    status=$(
+      unset GH_TOKEN GITHUB_TOKEN OPENAI_API_KEY CODEX_API_KEY CODEX_BASELINE_BENCHMARK_API_KEY
+      ulimit -f $(( (maximum + 511) / 512 ))
+      "$curl_path" --disable --silent --show-error --fail-with-body \
+        --proto '=https' --connect-timeout 10 --max-time 60 --max-redirs 0 \
+        --request GET --dump-header "$headers" --output "$body" \
+        --write-out '%{http_code}' "$current"
+    )
+    curl_status=$?
+    set -e
+    [[ $curl_status -eq 0 || $status =~ ^30[12378]$ ]] || cb_die "update download failed for $current"
+    [[ -f $body && ! -L $body && $(stat -c '%s' -- "$body") -le $maximum ]] || cb_die 'update response exceeded its byte limit'
+    if [[ $status == 200 ]]; then
+      mv -- "$body" "$output"
+      return 0
+    fi
+    (( redirects < 3 )) || cb_die 'update download exceeded three redirects'
+    location=$(awk 'BEGIN { IGNORECASE=1 } /^Location:/ { sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print }' "$headers")
+    [[ -n $location && $(grep -ci '^location:' "$headers") -eq 1 ]] || cb_die 'update redirect has no unique Location header'
+    cb_update_url_allowed "$location" || cb_die "update redirect host or scheme is not allowed: $location"
+    current=$location
+    redirects=$((redirects + 1))
+  done
+}
+
+cb_copy_update_input() {
+  local source=$1 output=$2 maximum=$3 copy_status fd identity captured_hash pre_copy_hash post_copy_hash replacement error=''
+  [[ -f $source && ! -L $source ]] || cb_die "update input is not an ordinary file: $source"
+  exec {fd}<"$source" || cb_die 'cannot open update input for freezing'
+  [[ -f /proc/self/fd/$fd && ! -L $source ]] || error='update input changed before it could be frozen'
+  if [[ -z $error ]]; then
+    identity=$(stat -Lc '%d:%i' -- "/proc/self/fd/$fd")
+    [[ $(stat -Lc '%d:%i' -- "$source") == "$identity" ]] || error='update input identity changed before it could be frozen'
+  fi
+  if [[ -z $error && $(stat -Lc '%s' -- "/proc/self/fd/$fd") -gt $maximum ]]; then error='update input exceeded its byte limit before it could be frozen'; fi
+  if [[ -z $error ]]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      pre_copy_hash=$(head -c $((maximum + 1)) -- "/proc/self/fd/$fd" | sha256sum | awk '{print $1}')
+    else
+      pre_copy_hash=$(head -c $((maximum + 1)) -- "/proc/self/fd/$fd" | shasum -a 256 | awk '{print $1}')
+    fi
+  fi
+  if [[ -z $error && ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_MUTATE_UPDATE_INPUT:-0} == 1 ]]; then
+    replacement=${CODEX_BASELINE_TEST_MUTATE_UPDATE_INPUT_PATH:-}
+    [[ -f $replacement && ! -L $replacement ]] || cb_die 'test update-input replacement is not an ordinary file'
+    cp --reflink=never -- "$replacement" "$source"
+  fi
+  if [[ -z $error && ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT:-0} == 1 ]]; then
+    mv -- "$source" "$source.original"
+    cp --reflink=never -- "$source.original" "$source"
+  fi
+  if [[ ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_GROW_UPDATE_INPUT:-0} == 1 ]]; then
+    truncate -s $((maximum + 1)) -- "$source"
+  fi
+  if [[ -z $error ]]; then
+    set +e
+    head -c $((maximum + 1)) <&$fd >"$output"
+    copy_status=$?
+    set -e
+    [[ $copy_status -eq 0 && -f $output && ! -L $output ]] || error='cannot freeze update input'
+  fi
+  if [[ -z $error && $(stat -c '%s' -- "$output") -gt $maximum ]]; then error='update input exceeded its byte limit while it was frozen'; fi
+  if [[ -z $error && ( ! -f $source || -L $source || $(stat -Lc '%d:%i' -- "$source") != "$identity" ) ]]; then
+    error='update input identity changed while it was frozen'
+  fi
+  if [[ -z $error && $(stat -Lc '%s' -- "/proc/self/fd/$fd") -gt $maximum ]]; then error='update input exceeded its byte limit while it was frozen'; fi
+  if [[ -z $error ]]; then
+    captured_hash=$(cb_sha256_file "$output")
+    if command -v sha256sum >/dev/null 2>&1; then
+      post_copy_hash=$(head -c $((maximum + 1)) -- "/proc/self/fd/$fd" | sha256sum | awk '{print $1}')
+    else
+      post_copy_hash=$(head -c $((maximum + 1)) -- "/proc/self/fd/$fd" | shasum -a 256 | awk '{print $1}')
+    fi
+    [[ $pre_copy_hash == "$captured_hash" && $captured_hash == "$post_copy_hash" ]] || error='update input changed while it was frozen'
+  fi
+  exec {fd}<&-
+  [[ -z $error ]] || cb_die "$error"
+}
+
+cb_read_update_descriptor() {
+  local descriptor=$1 byte_count last_byte
+  local -a lines
+  byte_count=$(stat -c '%s' -- "$descriptor")
+  [[ $byte_count -gt 0 && $byte_count -le 16384 ]] || cb_die 'update descriptor size is invalid'
+  last_byte=$(od -An -tuC -j $((byte_count - 1)) -N 1 "$descriptor" | tr -d ' ')
+  [[ $last_byte == 10 ]] || cb_die 'update descriptor must end with LF'
+  if LC_ALL=C grep -n '[^ -~]' "$descriptor" >/dev/null; then cb_die 'update descriptor contains non-ASCII or control bytes'; fi
+  mapfile -t lines <"$descriptor"
+  [[ ${#lines[@]} -eq 10 ]] || cb_die 'update descriptor must contain exactly ten lines'
+  [[ ${lines[0]} == 'contract=codex-baseline-update/v1' ]] || cb_die 'update descriptor contract is unsupported'
+  CB_UPDATE_VERSION=${lines[1]#version=}
+  CB_UPDATE_TAG=${lines[2]#tag=}
+  CB_UPDATE_TRUST=${lines[3]#trust=}
+  CB_UPDATE_TAR_NAME=${lines[4]#tar_name=}
+  CB_UPDATE_TAR_BYTES=${lines[5]#tar_bytes=}
+  CB_UPDATE_TAR_SHA256=${lines[6]#tar_sha256=}
+  CB_UPDATE_ZIP_NAME=${lines[7]#zip_name=}
+  CB_UPDATE_ZIP_BYTES=${lines[8]#zip_bytes=}
+  CB_UPDATE_ZIP_SHA256=${lines[9]#zip_sha256=}
+  [[ ${lines[1]} == "version=$CB_UPDATE_VERSION" && ${lines[2]} == "tag=$CB_UPDATE_TAG" && \
+     ${lines[3]} == "trust=$CB_UPDATE_TRUST" && ${lines[4]} == "tar_name=$CB_UPDATE_TAR_NAME" && \
+     ${lines[5]} == "tar_bytes=$CB_UPDATE_TAR_BYTES" && ${lines[6]} == "tar_sha256=$CB_UPDATE_TAR_SHA256" && \
+     ${lines[7]} == "zip_name=$CB_UPDATE_ZIP_NAME" && ${lines[8]} == "zip_bytes=$CB_UPDATE_ZIP_BYTES" && \
+     ${lines[9]} == "zip_sha256=$CB_UPDATE_ZIP_SHA256" ]] || cb_die 'update descriptor field order or names are invalid'
+  cb_semver_valid "$CB_UPDATE_VERSION" || cb_die 'update descriptor version is not stable MAJOR.MINOR.PATCH'
+  [[ $CB_UPDATE_TAG == "v$CB_UPDATE_VERSION" && $CB_UPDATE_TRUST == unsigned-github-release ]] || cb_die 'update descriptor version/tag/trust binding is invalid'
+  [[ $CB_UPDATE_TAR_NAME == "codex-baseline-$CB_UPDATE_VERSION.tar.gz" && \
+     $CB_UPDATE_ZIP_NAME == "codex-baseline-$CB_UPDATE_VERSION.zip" ]] || cb_die 'update descriptor asset name is invalid'
+  [[ $CB_UPDATE_TAR_BYTES =~ ^[1-9][0-9]*$ && $CB_UPDATE_TAR_BYTES -le $CB_UPDATE_MAX_ARCHIVE_BYTES && \
+     $CB_UPDATE_ZIP_BYTES =~ ^[1-9][0-9]*$ && $CB_UPDATE_ZIP_BYTES -le $CB_UPDATE_MAX_ARCHIVE_BYTES ]] || cb_die 'update descriptor asset size is invalid'
+  [[ $CB_UPDATE_TAR_SHA256 =~ ^[0-9a-f]{64}$ && $CB_UPDATE_ZIP_SHA256 =~ ^[0-9a-f]{64}$ ]] || cb_die 'update descriptor asset SHA-256 is invalid'
+}
+
+cb_validate_update_path() {
+  local path=$1 trimmed segment base upper depth
+  [[ $path =~ ^[A-Za-z0-9._/-]+$ && $path != /* && $path != *'//' ]] || cb_die "unsafe update archive path: $path"
+  trimmed=${path%/}
+  [[ -n $trimmed && ${#trimmed} -le 240 ]] || cb_die "update archive path length is invalid: $path"
+  IFS=/ read -r -a CB_UPDATE_PATH_PARTS <<<"$trimmed"
+  depth=${#CB_UPDATE_PATH_PARTS[@]}
+  (( depth <= 8 )) || cb_die "update archive path is too deep: $path"
+  for segment in "${CB_UPDATE_PATH_PARTS[@]}"; do
+    [[ -n $segment && $segment != . && $segment != .. && $segment != *: && $segment != *':'* && $segment != *'.' && $segment != *' ' ]] || cb_die "unsafe update archive path segment: $path"
+    base=${segment%%.*}
+    upper=${base^^}
+    case $upper in CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]) cb_die "Windows device name is forbidden in update archive: $path" ;; esac
+    [[ ${segment,,} != .git ]] || cb_die "Git metadata is forbidden in update archive: $path"
+  done
+}
+
+cb_validate_raw_tar_headers() {
+  local raw=$1 raw_bytes offset=0 type size_field size advance headers=0
+  command -v dd >/dev/null 2>&1 && command -v od >/dev/null 2>&1 || cb_die 'tar.gz update requires coreutils dd and od'
+  raw_bytes=$(stat -c '%s' -- "$raw")
+  (( raw_bytes > 0 && raw_bytes <= CB_UPDATE_MAX_RAW_TAR_BYTES && raw_bytes % 512 == 0 )) || cb_die 'update archive raw tar size is invalid'
+  while (( offset + 512 <= raw_bytes )); do
+    type=$(od -An -tuC -j $((offset + 156)) -N 1 -- "$raw" | tr -d ' ')
+    size_field=$(dd if="$raw" bs=1 skip=$((offset + 124)) count=12 status=none | tr -d '\000 ')
+    if [[ -z $size_field && $type == 0 ]]; then
+      offset=$((offset + 512))
+      continue
+    fi
+    [[ $type == 0 || $type == 48 || $type == 53 ]] || cb_die 'PAX, GNU, sparse, linked, or special tar headers are forbidden'
+    [[ $size_field =~ ^[0-7]{1,11}$ ]] || cb_die 'update archive tar header size is not canonical octal'
+    size=$((8#$size_field))
+    [[ $type != 53 || $size -eq 0 ]] || cb_die 'update archive directory header has content'
+    advance=$((512 + ((size + 511) / 512) * 512))
+    offset=$((offset + advance))
+    (( offset <= raw_bytes )) || cb_die 'update archive tar header exceeds the raw stream'
+    headers=$((headers + 1))
+  done
+  (( headers > 0 && offset == raw_bytes )) || cb_die 'update archive raw tar structure is invalid'
+}
+
+cb_validate_and_extract_tar() {
+  local archive=$1 expected_version=${2:-} extract_root=$3 listing verbose raw gzip_status count=0 total=0 line kind name size root='' duplicate folded update_temp
+  local -A case_seen=()
+  command -v gzip >/dev/null 2>&1 || cb_die 'tar.gz update requires gzip'
+  command -v tar >/dev/null 2>&1 || cb_die 'tar.gz update requires tar'
+  tar --version 2>/dev/null | grep -q 'GNU tar' || cb_die 'tar.gz update requires GNU tar'
+  cb_update_temp_root
+  update_temp=$CB_UPDATE_TEMP_ROOT
+  raw="$update_temp/raw.tar"
+  listing="$update_temp/listing"
+  verbose="$update_temp/verbose"
+  set +e
+  ( ulimit -f $(( (CB_UPDATE_MAX_RAW_TAR_BYTES + 1023) / 1024 )); gzip -cd -- "$archive" >"$raw" ) 2>/dev/null
+  gzip_status=$?
+  set -e
+  [[ $gzip_status -eq 0 && $(stat -c '%s' -- "$raw") -le $CB_UPDATE_MAX_RAW_TAR_BYTES ]] || cb_die 'update archive gzip stream is invalid or exceeds the raw tar limit'
+  cb_validate_raw_tar_headers "$raw"
+  tar --list --file "$raw" --quoting-style=escape >"$listing" || cb_die 'cannot list update archive'
+  tar --list --verbose --numeric-owner --file "$raw" --quoting-style=escape >"$verbose" || cb_die 'cannot inspect update archive types'
+  [[ $(wc -l <"$listing") -eq $(wc -l <"$verbose") ]] || cb_die 'update archive inventory/type listing disagrees'
+  duplicate=$(LC_ALL=C sort "$listing" | uniq -d | head -n 1)
+  [[ -z $duplicate ]] || cb_die "duplicate update archive member: $duplicate"
+  while IFS= read -r line && IFS= read -r name <&3; do
+    count=$((count + 1))
+    (( count <= 512 )) || cb_die 'update archive contains too many entries'
+    kind=${line:0:1}
+    [[ $kind == - || $kind == d ]] || cb_die "linked or special update archive member is forbidden: $name"
+    [[ $(awk '{print NF}' <<<"$line") -eq 6 && $(awk '{print $6}' <<<"$line") == "$name" ]] || cb_die 'update archive verbose inventory is not canonical'
+    cb_validate_update_path "$name"
+    folded=${name,,}
+    [[ -z ${case_seen[$folded]+x} ]] || cb_die "case-colliding update archive member: $name"
+    case_seen[$folded]=1
+    if [[ -z $root ]]; then root=${name%%/*}; fi
+    [[ ${name%%/*} == "$root" ]] || cb_die 'update archive must contain one top-level source root'
+    if [[ $kind == - ]]; then
+      size=$(awk '{print $3}' <<<"$line")
+      [[ $size =~ ^[0-9]+$ ]] || cb_die "update archive member size is invalid: $name"
+      total=$((total + size))
+      (( total <= CB_UPDATE_MAX_CONTENT_BYTES )) || cb_die 'update archive uncompressed content exceeds 128 MiB'
+    fi
+  done <"$verbose" 3<"$listing"
+  (( count > 0 )) || cb_die 'update archive is empty'
+  [[ $root =~ ^codex-baseline-((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]] || cb_die 'update archive root has an invalid version'
+  CB_UPDATE_ARCHIVE_VERSION=${BASH_REMATCH[1]}
+  [[ -z $expected_version || $CB_UPDATE_ARCHIVE_VERSION == "$expected_version" ]] || cb_die 'update descriptor and archive root version disagree'
+  mkdir -p -- "$extract_root"
+  tar --extract --file "$raw" --directory "$extract_root" --no-same-owner --no-same-permissions --delay-directory-restore || cb_die 'cannot extract update archive'
+  CB_UPDATE_SOURCE_ROOT="$extract_root/$root"
+  [[ -d $CB_UPDATE_SOURCE_ROOT && ! -L $CB_UPDATE_SOURCE_ROOT ]] || cb_die 'extracted update source root is unsafe'
+  if find -P "$CB_UPDATE_SOURCE_ROOT" -mindepth 1 ! -type f ! -type d -print -quit | grep -q .; then cb_die 'extracted update source contains a linked or special object'; fi
+}
+
+cb_verify_update_source_inventory() {
+  local root=$1 expected actual version line path update_temp
+  version=$(cb_verify_source_manifest "$root")
+  cb_update_temp_root
+  update_temp=$CB_UPDATE_TEMP_ROOT
+  expected="$update_temp/expected-inventory"
+  actual="$update_temp/actual-inventory"
+  printf '%s\n' baseline/manifest.json >"$expected"
+  while IFS= read -r line; do
+    path=$(sed -n 's/^    {"path": "\([A-Za-z0-9._\/-]*\)", "bytes": [0-9][0-9]*, "sha256": "[0-9a-f][0-9a-f]*"}[,]*$/\1/p' <<<"$line")
+    [[ -n $path ]] || cb_die 'cannot derive update inventory from source manifest'
+    printf '%s\n' "$path" >>"$expected"
+  done < <(grep '^    {"path": ' "$root/baseline/manifest.json")
+  find -P "$root" -type f -printf '%P\n' | LC_ALL=C sort >"$actual"
+  LC_ALL=C sort -u -o "$expected" "$expected"
+  cmp -s "$expected" "$actual" || cb_die 'update archive file inventory differs from manifest payload plus manifest'
+  printf '%s' "$version"
 }
 
 cb_release_lock() {
@@ -970,19 +1264,37 @@ cb_begin_operation() {
 }
 
 cb_install_like() {
-  local operation=$1 version payload_hash manifest_hash verified_root tx dir agents_file block_tmp runtime_tmp wrapper_tmp obj changed=0
-  version=$(cb_verify_source_manifest "$CB_SOURCE_ROOT")
-  payload_hash=$(sed -n 's/^  "payload_hash": "\([0-9a-f]\{64\}\)",$/\1/p' "$CB_SOURCE_ROOT/baseline/manifest.json")
-  manifest_hash=$(cb_sha256_file "$CB_SOURCE_ROOT/baseline/manifest.json")
-  cb_print_source_provenance "$CB_SOURCE_ROOT" "$payload_hash"
+  local operation=$1 source_root=${2:-$CB_SOURCE_ROOT} acquisition=${3:-local-checkout}
+  local version payload_hash manifest_hash verified_root tx dir agents_file block_tmp runtime_tmp wrapper_tmp obj changed=0 current current_version pause_attempt
+  version=$(cb_verify_source_manifest "$source_root")
+  payload_hash=$(sed -n 's/^  "payload_hash": "\([0-9a-f]\{64\}\)",$/\1/p' "$source_root/baseline/manifest.json")
+  manifest_hash=$(cb_sha256_file "$source_root/baseline/manifest.json")
+  cb_print_source_provenance "$source_root" "$payload_hash" "$acquisition"
   if [[ $CB_DRY_RUN -eq 0 && $CB_ACKNOWLEDGE_UNVERIFIED_SOURCE -ne 1 ]]; then
     cb_die 'unsigned local source requires --acknowledge-unverified-source before mutation'
   fi
   CB_VERSION=$version
-  cb_freeze_verified_source "$CB_SOURCE_ROOT" "$manifest_hash" "$payload_hash"
+  cb_freeze_verified_source "$source_root" "$manifest_hash" "$payload_hash"
   verified_root=$CB_VERIFIED_SOURCE_ROOT
   cb_init_paths
+  if [[ $acquisition == unsigned-github-release && ${CODEX_BASELINE_TESTING:-0} == 1 && \
+        -n ${CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK:-} ]]; then
+    [[ -d $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK && ! -L $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK ]] || cb_die 'update pause fixture directory is unsafe'
+    printf 'ready\n' >"$CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK/ready"
+    for (( pause_attempt=0; pause_attempt < 600; pause_attempt++ )); do
+      [[ ! -f $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK/continue ]] || break
+      sleep 0.05
+    done
+    [[ -f $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK/continue ]] || cb_die 'timed out waiting for concurrent update fixture'
+  fi
   cb_begin_operation
+  if [[ $acquisition == unsigned-github-release && $CB_DRY_RUN -eq 0 ]]; then
+    current=$(cb_current_tx)
+    if [[ -n $current ]]; then
+      current_version=$(cb_read_field "$(cb_tx_dir "$current")/version")
+      [[ $(cb_semver_compare "$version" "$current_version") -ge 0 ]] || cb_die "remote update would downgrade installed $current_version to $version"
+    fi
+  fi
   cb_new_tx "$operation"
   tx=$CB_NEW_TX
   dir=$(cb_tx_dir "$tx")
@@ -1415,6 +1727,107 @@ cb_doctor() {
   [[ $failures -eq 0 ]]
 }
 
+cb_prepare_update_archive() {
+  local archive_input=$1 expected_version=${2:-} acquisition=$3 archive extract_root archive_size version update_temp
+  cb_update_temp_root
+  update_temp=$CB_UPDATE_TEMP_ROOT
+  archive="$update_temp/archive.tar.gz"
+  extract_root="$update_temp/extract"
+  mkdir -- "$extract_root"
+  if [[ $acquisition == unsigned-github-release ]]; then
+    cb_fetch_update_url "$archive_input" "$archive" "$CB_UPDATE_MAX_ARCHIVE_BYTES"
+  else
+    cb_copy_update_input "$archive_input" "$archive" "$CB_UPDATE_MAX_ARCHIVE_BYTES"
+  fi
+  archive_size=$(stat -c '%s' -- "$archive")
+  if [[ $acquisition == unsigned-github-release || $acquisition == test-remote-copy ]]; then
+    [[ $archive_size == "$CB_UPDATE_TAR_BYTES" ]] || cb_die 'update archive byte length mismatch'
+    [[ $(cb_sha256_file "$archive") == "$CB_UPDATE_TAR_SHA256" ]] || cb_die 'update archive SHA-256 mismatch'
+  fi
+  cb_validate_and_extract_tar "$archive" "$expected_version" "$extract_root"
+  version=$(cb_verify_update_source_inventory "$CB_UPDATE_SOURCE_ROOT")
+  [[ -z $expected_version || $version == "$expected_version" ]] || cb_die 'update descriptor and source manifest version disagree'
+  CB_UPDATE_ARCHIVE_VERSION=$version
+}
+
+cb_update_remote_flow() {
+  local current_version descriptor archive_url comparison update_temp
+  cb_init_paths
+  current_version=$(<"$CB_SOURCE_ROOT/VERSION")
+  cb_semver_valid "$current_version" || cb_die 'installed updater version is not stable MAJOR.MINOR.PATCH'
+  cb_update_temp_root
+  update_temp=$CB_UPDATE_TEMP_ROOT
+  descriptor="$update_temp/descriptor"
+  if [[ ${CODEX_BASELINE_TESTING:-0} == 1 && -n ${CODEX_BASELINE_TEST_UPDATE_METADATA_PATH:-} ]]; then
+    cb_copy_update_input "$CODEX_BASELINE_TEST_UPDATE_METADATA_PATH" "$descriptor" 16384
+  else
+    cb_fetch_update_url "$CB_UPDATE_METADATA_URL" "$descriptor" 16384
+  fi
+  cb_read_update_descriptor "$descriptor"
+  comparison=$(cb_semver_compare "$CB_UPDATE_VERSION" "$current_version")
+  if [[ $comparison -lt 0 ]]; then cb_die "latest release $CB_UPDATE_VERSION is older than installed $current_version"; fi
+  if [[ $CB_UPDATE_CHECK -eq 1 ]]; then
+    if [[ $comparison -eq 0 ]]; then
+      printf 'codex-baseline %s is already current (latest stable %s)\n' "$current_version" "$CB_UPDATE_VERSION"
+    else
+      printf 'codex-baseline update available: %s -> %s\n' "$current_version" "$CB_UPDATE_VERSION"
+    fi
+    printf 'source-acquisition: unsigned-github-release\nsource-authentication: not-publisher-authenticated\n'
+    return 0
+  fi
+  archive_url="https://github.com/ShigeoAMV/codex-baseline/releases/download/$CB_UPDATE_TAG/$CB_UPDATE_TAR_NAME"
+  if [[ ${CODEX_BASELINE_TESTING:-0} == 1 && -n ${CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH:-} ]]; then
+    cb_prepare_update_archive "$CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH" "$CB_UPDATE_VERSION" test-remote-copy
+  else
+    cb_prepare_update_archive "$archive_url" "$CB_UPDATE_VERSION" unsigned-github-release
+  fi
+  cb_install_like update "$CB_UPDATE_SOURCE_ROOT" unsigned-github-release
+}
+
+cb_update_offline_flow() {
+  local archive_path=$1
+  cb_prepare_update_archive "$archive_path" '' offline-archive
+  cb_install_like update "$CB_UPDATE_SOURCE_ROOT" offline-archive
+}
+
+cb_parse_update_flags() {
+  local modes
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --check) CB_UPDATE_CHECK=1 ;;
+      --remote) CB_UPDATE_REMOTE=1 ;;
+      --local) CB_UPDATE_LOCAL=1 ;;
+      --offline)
+        shift
+        [[ $# -gt 0 && -n $1 ]] || cb_die '--offline requires a tar.gz archive path'
+        CB_UPDATE_OFFLINE=$1
+        ;;
+      --dry-run) CB_DRY_RUN=1 ;;
+      --acknowledge-unverified-source) CB_ACKNOWLEDGE_UNVERIFIED_SOURCE=1 ;;
+      *) cb_die "unknown option: $1" ;;
+    esac
+    shift
+  done
+  modes=$((CB_UPDATE_CHECK + CB_UPDATE_REMOTE + CB_UPDATE_LOCAL))
+  [[ -z $CB_UPDATE_OFFLINE ]] || modes=$((modes + 1))
+  (( modes <= 1 )) || cb_die 'choose only one of --check, --remote, --local, or --offline'
+  [[ $CB_UPDATE_CHECK -eq 0 || $CB_DRY_RUN -eq 0 ]] || cb_die '--check and --dry-run are separate preview modes'
+}
+
+cb_update() {
+  cb_parse_update_flags "$@"
+  cb_init_paths
+  if [[ -n $CB_UPDATE_OFFLINE ]]; then
+    cb_update_offline_flow "$CB_UPDATE_OFFLINE"
+  elif [[ $CB_UPDATE_LOCAL -eq 1 ]]; then
+    cb_install_like update "$CB_SOURCE_ROOT" local-checkout
+  elif [[ $CB_UPDATE_CHECK -eq 1 || $CB_UPDATE_REMOTE -eq 1 || $CB_SOURCE_ROOT == "$CB_RUNTIME" ]]; then
+    cb_update_remote_flow
+  else
+    cb_install_like update "$CB_SOURCE_ROOT" local-checkout
+  fi
+}
+
 cb_parse_common_flags() {
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -1432,9 +1845,12 @@ main() {
   [[ $# -eq 0 ]] || shift
   trap cb_on_exit EXIT
   case $command in
-    install|update)
+    install)
       cb_parse_common_flags "$@"
       cb_install_like "$command"
+      ;;
+    update)
+      cb_update "$@"
       ;;
     doctor)
       cb_parse_common_flags "$@"

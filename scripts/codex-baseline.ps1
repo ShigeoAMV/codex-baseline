@@ -9,6 +9,14 @@ param(
     [Alias('acknowledge-unverified-source')]
     [switch]$AcknowledgeUnverifiedSource,
 
+    [switch]$Check,
+
+    [switch]$Remote,
+
+    [switch]$Local,
+
+    [string]$Offline,
+
     [switch]$Json,
 
     [switch]$Apply,
@@ -47,6 +55,9 @@ $script:LockHeld = $false
 $script:ActiveTransaction = $null
 $script:MutationStarted = $false
 $script:TrustedPrivateDirectorySids = @('S-1-5-18', 'S-1-5-32-544')
+$script:UpdateMetadataUrl = 'https://github.com/ShigeoAMV/codex-baseline/releases/latest/download/codex-baseline-update-v1.txt'
+$script:UpdateMaxArchiveBytes = 67108864
+$script:UpdateMaxContentBytes = 134217728
 
 function Write-CbError {
     param([string]$Message)
@@ -59,6 +70,20 @@ function Get-CbFullPath {
         throw 'A required path is empty.'
     }
     return [System.IO.Path]::GetFullPath($Path)
+}
+
+function Compare-CbSemVer {
+    param([string]$Left, [string]$Right)
+    $pattern = '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+    if ($Left -notmatch $pattern) { throw "Invalid stable version: $Left" }
+    $leftParts = @($Left.Split('.') | ForEach-Object { [uint64]::Parse($_, [Globalization.CultureInfo]::InvariantCulture) })
+    if ($Right -notmatch $pattern) { throw "Invalid stable version: $Right" }
+    $rightParts = @($Right.Split('.') | ForEach-Object { [uint64]::Parse($_, [Globalization.CultureInfo]::InvariantCulture) })
+    for ($index = 0; $index -lt 3; $index++) {
+        if ($leftParts[$index] -gt $rightParts[$index]) { return 1 }
+        if ($leftParts[$index] -lt $rightParts[$index]) { return -1 }
+    }
+    return 0
 }
 
 function Assert-CbRawLocalRootPath {
@@ -700,10 +725,10 @@ function Read-CbManifest {
 }
 
 function Write-CbSourceProvenance {
-    param($Manifest)
+    param($Manifest, [string]$SourceRoot = $script:SourceRoot, [string]$Acquisition = 'local-checkout')
     $revision = 'unversioned'
     $dirty = 'unknown'
-    $gitDirectory = Join-Path $script:SourceRoot '.git'
+    $gitDirectory = Join-Path $SourceRoot '.git'
     $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
     if ($null -ne $git -and (Test-CbExists $gitDirectory)) {
         $environmentNames = @('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_OPTIONAL_LOCKS')
@@ -717,7 +742,7 @@ function Write-CbSourceProvenance {
             $env:GIT_CONFIG_NOSYSTEM = '1'
             $env:GIT_CONFIG_GLOBAL = 'NUL'
             $env:GIT_OPTIONAL_LOCKS = '0'
-            $revisionOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $script:SourceRoot 'rev-parse' '--verify' 'HEAD' 2>$null)
+            $revisionOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $SourceRoot 'rev-parse' '--verify' 'HEAD' 2>$null)
             if ($LASTEXITCODE -eq 0 -and $revisionOutput.Count -eq 1 -and
                 [string]$revisionOutput[0] -match '^[0-9a-fA-F]{40,64}$') {
                 $revision = ([string]$revisionOutput[0]).ToLowerInvariant()
@@ -726,9 +751,9 @@ function Write-CbSourceProvenance {
                 $dirty = 'yes'
             }
             else {
-                $statusOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $script:SourceRoot 'status' '--porcelain=v1' '--untracked-files=no' 2>$null)
+                $statusOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $SourceRoot 'status' '--porcelain=v1' '--untracked-files=no' 2>$null)
                 $statusExit = $LASTEXITCODE
-                $untrackedOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $script:SourceRoot 'ls-files' '--others' '--exclude-standard' '--directory' 2>$null)
+                $untrackedOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $SourceRoot 'ls-files' '--others' '--exclude-standard' '--directory' 2>$null)
                 if ($statusExit -eq 0 -and $LASTEXITCODE -eq 0) {
                     $dirty = if ($statusOutput.Count -gt 0 -or $untrackedOutput.Count -gt 0) { 'yes' } else { 'no' }
                 }
@@ -749,10 +774,11 @@ function Write-CbSourceProvenance {
             }
         }
     }
-    Write-Output ("source-origin: {0}" -f $script:SourceRoot)
+    Write-Output ("source-origin: {0}" -f $SourceRoot)
     Write-Output ("source-revision: {0}" -f $revision)
     Write-Output ("source-dirty: {0}" -f $dirty)
     Write-Output 'source-trust: unverified-source (unsigned-local-source)'
+    Write-Output ("source-acquisition: {0}" -f $Acquisition)
     Write-Output ("source-payload-sha256: {0}" -f [string]$Manifest.payload_hash)
 }
 
@@ -1317,9 +1343,345 @@ function New-CbTemporaryDirectory {
     return $path
 }
 
+function Test-CbUpdateUriAllowed {
+    param([uri]$Uri)
+    if ($Uri.Scheme -ne 'https' -or -not $Uri.IsDefaultPort) { return $false }
+    return @('github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com') -contains $Uri.DnsSafeHost.ToLowerInvariant()
+}
+
+function Copy-CbUpdateInput {
+    param([string]$Source, [string]$Destination, [long]$MaximumBytes)
+    $item = Get-CbItem $Source
+    if ($null -eq $item) { throw "Update input is missing: $Source" }
+    Assert-CbOrdinaryItem $item 'file'
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and $env:CODEX_BASELINE_TEST_GROW_UPDATE_INPUT -eq '1') {
+        $grow = New-Object System.IO.FileStream($item.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        try { $grow.SetLength($MaximumBytes + 1) } finally { $grow.Dispose() }
+    }
+    $input = New-Object System.IO.FileStream($item.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        if ($env:CODEX_BASELINE_TESTING -eq '1' -and $env:CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT -eq '1') {
+            $moved = $item.FullName + '.replacement-race'
+            try {
+                [System.IO.File]::Move($item.FullName, $moved)
+                [System.IO.File]::Move($moved, $item.FullName)
+                throw 'Update input replacement unexpectedly succeeded while the source handle was frozen.'
+            }
+            catch [System.IO.IOException] {
+                throw 'Update input replacement was blocked while the source handle was frozen.'
+            }
+        }
+        $openedItem = Get-CbItem $Source
+        if ($null -eq $openedItem) { throw 'Update input changed before it could be frozen.' }
+        Assert-CbOrdinaryItem $openedItem 'file'
+        if ([long]$input.Length -ne [long]$openedItem.Length) { throw 'Update input identity or length changed before it could be frozen.' }
+        if ([long]$input.Length -gt $MaximumBytes) { throw 'Update input exceeded its byte limit while it was frozen.' }
+        $output = New-Object System.IO.FileStream($Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+        $buffer = New-Object byte[] 65536
+        [long]$total = 0
+        while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $total += $read
+            if ($total -gt $MaximumBytes) { throw 'Update input exceeded its byte limit while it was frozen.' }
+            $output.Write($buffer, 0, $read)
+        }
+        $output.Flush($true)
+        }
+        finally { $output.Dispose() }
+    }
+    finally { $input.Dispose() }
+}
+
+function Receive-CbUpdateUrl {
+    param([uri]$Uri, [string]$Destination, [long]$MaximumBytes)
+    $current = $Uri
+    $oldProtocol = [Net.ServicePointManager]::SecurityProtocol
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        for ($redirects = 0; $redirects -le 3; $redirects++) {
+            if (-not (Test-CbUpdateUriAllowed $current)) {
+                throw "Update redirect host or scheme is not allowed: $current"
+            }
+            $requestClock = [Diagnostics.Stopwatch]::StartNew()
+            $request = [System.Net.HttpWebRequest]::CreateHttp($current)
+            $request.Method = 'GET'
+            $request.AllowAutoRedirect = $false
+            $request.MaximumAutomaticRedirections = 0
+            $request.Timeout = 10000
+            $request.ReadWriteTimeout = 60000
+            $request.UserAgent = 'codex-baseline-update/1'
+            $request.PreAuthenticate = $false
+            $request.UseDefaultCredentials = $false
+            $request.Credentials = $null
+            $pendingResponse = $null
+            try {
+                $pendingResponse = $request.BeginGetResponse($null, $null)
+                if (-not $pendingResponse.AsyncWaitHandle.WaitOne(10000)) {
+                    $request.Abort()
+                    throw "Update connection/response-header timeout for $current"
+                }
+                $response = [System.Net.HttpWebResponse]$request.EndGetResponse($pendingResponse)
+            }
+            catch [System.Net.WebException] {
+                if ($null -eq $_.Exception.Response) { throw "Update download failed for $current`: $($_.Exception.Message)" }
+                $response = [System.Net.HttpWebResponse]$_.Exception.Response
+            }
+            finally {
+                if ($null -ne $pendingResponse) { $pendingResponse.AsyncWaitHandle.Close() }
+            }
+            try {
+                $status = [int]$response.StatusCode
+                if ($status -eq 200) {
+                    if ($response.ContentLength -gt $MaximumBytes) { throw 'Update response exceeded its byte limit.' }
+                    $input = $response.GetResponseStream()
+                    $output = New-Object System.IO.FileStream($Destination, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                    try {
+                        $buffer = New-Object byte[] 65536
+                        [long]$total = 0
+                        while ($true) {
+                            $remaining = 60000 - [long]$requestClock.ElapsedMilliseconds
+                            if ($remaining -le 0) {
+                                $request.Abort()
+                                throw "Update request exceeded 60 seconds for $current"
+                            }
+                            $readTask = $input.ReadAsync($buffer, 0, $buffer.Length)
+                            if (-not $readTask.Wait([int]$remaining)) {
+                                $request.Abort()
+                                throw "Update request exceeded 60 seconds for $current"
+                            }
+                            $read = $readTask.Result
+                            if ($read -le 0) { break }
+                            $total += $read
+                            if ($total -gt $MaximumBytes) { throw 'Update response exceeded its byte limit.' }
+                            $output.Write($buffer, 0, $read)
+                        }
+                        $output.Flush($true)
+                    }
+                    finally {
+                        $output.Dispose()
+                        $input.Dispose()
+                    }
+                    return
+                }
+                if ($status -notin @(301, 302, 303, 307, 308)) { throw "Update download returned HTTP $status for $current" }
+                if ($redirects -ge 3) { throw 'Update download exceeded three redirects.' }
+                $location = $response.Headers['Location']
+                if ([string]::IsNullOrWhiteSpace($location)) { throw 'Update redirect has no Location header.' }
+                $next = $null
+                if (-not [uri]::TryCreate($location, [UriKind]::Absolute, [ref]$next) -or -not (Test-CbUpdateUriAllowed $next)) {
+                    throw "Update redirect host or scheme is not allowed: $location"
+                }
+                $current = $next
+            }
+            finally { $response.Dispose() }
+        }
+        throw 'Update download exceeded three redirects.'
+    }
+    finally { [Net.ServicePointManager]::SecurityProtocol = $oldProtocol }
+}
+
+function Read-CbUpdateDescriptor {
+    param([string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -lt 1 -or $bytes.Length -gt 16384 -or $bytes[$bytes.Length - 1] -ne 10) {
+        throw 'Update descriptor size or LF termination is invalid.'
+    }
+    foreach ($byte in $bytes) {
+        if ($byte -ne 10 -and ($byte -lt 32 -or $byte -gt 126)) {
+            throw 'Update descriptor contains non-ASCII or control bytes.'
+        }
+    }
+    $text = [Text.Encoding]::ASCII.GetString($bytes)
+    $lines = @($text.Substring(0, $text.Length - 1).Split("`n"))
+    if ($lines.Count -ne 10 -or $lines[0] -ne 'contract=codex-baseline-update/v1') {
+        throw 'Update descriptor contract or line count is invalid.'
+    }
+    $values = @()
+    $names = @('version', 'tag', 'trust', 'tar_name', 'tar_bytes', 'tar_sha256', 'zip_name', 'zip_bytes', 'zip_sha256')
+    for ($index = 0; $index -lt $names.Count; $index++) {
+        $prefix = $names[$index] + '='
+        if (-not $lines[$index + 1].StartsWith($prefix, [StringComparison]::Ordinal)) {
+            throw 'Update descriptor field order or names are invalid.'
+        }
+        $values += $lines[$index + 1].Substring($prefix.Length)
+    }
+    $version = [string]$values[0]
+    if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
+        [string]$values[1] -ne "v$version" -or [string]$values[2] -ne 'unsigned-github-release') {
+        throw 'Update descriptor version/tag/trust binding is invalid.'
+    }
+    if ([string]$values[3] -ne "codex-baseline-$version.tar.gz" -or
+        [string]$values[6] -ne "codex-baseline-$version.zip") {
+        throw 'Update descriptor asset name is invalid.'
+    }
+    [long]$tarBytes = 0
+    [long]$zipBytes = 0
+    if (-not [long]::TryParse([string]$values[4], [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$tarBytes) -or
+        -not [long]::TryParse([string]$values[7], [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref]$zipBytes) -or
+        $tarBytes -lt 1 -or $zipBytes -lt 1 -or $tarBytes -gt $script:UpdateMaxArchiveBytes -or $zipBytes -gt $script:UpdateMaxArchiveBytes) {
+        throw 'Update descriptor asset size is invalid.'
+    }
+    if ([string]$values[5] -notmatch '^[0-9a-f]{64}$' -or [string]$values[8] -notmatch '^[0-9a-f]{64}$') {
+        throw 'Update descriptor asset SHA-256 is invalid.'
+    }
+    return [pscustomobject]@{
+        Version = $version; Tag = [string]$values[1]; Trust = [string]$values[2]
+        TarName = [string]$values[3]; TarBytes = $tarBytes; TarSha256 = [string]$values[5]
+        ZipName = [string]$values[6]; ZipBytes = $zipBytes; ZipSha256 = [string]$values[8]
+    }
+}
+
+function Assert-CbUpdateMemberName {
+    param([string]$Name)
+    if ($Name -notmatch '^[A-Za-z0-9._/-]+$' -or $Name.StartsWith('/') -or $Name.Contains('//') -or
+        [Text.Encoding]::ASCII.GetByteCount($Name) -gt 240) {
+        throw "Unsafe update archive path: $Name"
+    }
+    $trimmed = $Name.TrimEnd('/')
+    $segments = @($trimmed.Split('/'))
+    if ($segments.Count -gt 8) { throw "Update archive path is too deep: $Name" }
+    foreach ($segment in $segments) {
+        if ([string]::IsNullOrWhiteSpace($segment) -or $segment -eq '.' -or $segment -eq '..' -or
+            $segment.Contains(':') -or $segment.EndsWith('.') -or $segment.EndsWith(' ') -or
+            $segment.Equals('.git', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe update archive path segment: $Name"
+        }
+        $base = $segment.Split('.')[0].ToUpperInvariant()
+        if ($base -match '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$') {
+            throw "Windows device name is forbidden in update archive: $Name"
+        }
+    }
+}
+
+function Expand-CbUpdateZip {
+    param([string]$Archive, [string]$ExtractRoot, [string]$ExpectedVersion = '')
+    Add-Type -AssemblyName System.IO.Compression
+    $stream = New-Object System.IO.FileStream($Archive, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try { $zip = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Read, $false) }
+    catch { $stream.Dispose(); throw }
+    try {
+        if ($zip.Entries.Count -lt 1 -or $zip.Entries.Count -gt 512) { throw 'Update archive entry count is invalid.' }
+        $ordinal = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        $folded = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        [long]$total = 0
+        $root = $null
+        foreach ($entry in $zip.Entries) {
+            $name = [string]$entry.FullName
+            Assert-CbUpdateMemberName $name
+            if (-not $ordinal.Add($name) -or -not $folded.Add($name)) { throw "Duplicate or case-colliding update archive member: $name" }
+            $memberRoot = $name.TrimEnd('/').Split('/')[0]
+            if ($null -eq $root) { $root = $memberRoot }
+            if ($memberRoot -ne $root) { throw 'Update archive must contain one top-level source root.' }
+            $isDirectory = $name.EndsWith('/')
+            $attributes = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$entry.ExternalAttributes), 0)
+            $unixType = ($attributes -shr 16) -band 0xF000
+            if (($isDirectory -and $unixType -notin @(0, 0x4000)) -or
+                (-not $isDirectory -and $unixType -notin @(0, 0x8000))) {
+                throw "Linked or special update archive member is forbidden: $name"
+            }
+            if (-not $isDirectory) {
+                $total += [long]$entry.Length
+                if ($total -gt $script:UpdateMaxContentBytes) { throw 'Update archive uncompressed content exceeds 128 MiB.' }
+            }
+        }
+        if ($root -notmatch '^codex-baseline-((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            throw 'Update archive root has an invalid version.'
+        }
+        $archiveVersion = [string]$Matches[1]
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $archiveVersion -ne $ExpectedVersion) {
+            throw 'Update descriptor and archive root version disagree.'
+        }
+        Ensure-CbSafeDirectory $ExtractRoot | Out-Null
+        $prefix = (Get-CbFullPath $ExtractRoot).TrimEnd('\') + '\'
+        [long]$writtenTotal = 0
+        foreach ($entry in $zip.Entries) {
+            $name = [string]$entry.FullName
+            $destination = Get-CbFullPath (Join-Path $ExtractRoot ($name.Replace('/', '\')))
+            if (-not $destination.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw "Update archive escaped extraction root: $name" }
+            if ($name.EndsWith('/')) {
+                Ensure-CbSafeDirectory $destination | Out-Null
+                continue
+            }
+            Ensure-CbSafeDirectory ([IO.Path]::GetDirectoryName($destination)) | Out-Null
+            $input = $entry.Open()
+            $output = New-Object System.IO.FileStream($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try {
+                $buffer = New-Object byte[] 65536
+                [long]$writtenEntry = 0
+                while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $writtenEntry += $read
+                    $writtenTotal += $read
+                    if ($writtenEntry -gt [long]$entry.Length -or $writtenTotal -gt $script:UpdateMaxContentBytes) {
+                        throw "Update archive member exceeded its declared or total content limit: $name"
+                    }
+                    $output.Write($buffer, 0, $read)
+                }
+                if ($writtenEntry -ne [long]$entry.Length) { throw "Extracted update member length mismatch: $name" }
+                $output.Flush($true)
+            }
+            finally { $output.Dispose(); $input.Dispose() }
+            if ((Get-Item -LiteralPath $destination).Length -ne $writtenEntry) { throw "Extracted update member length mismatch: $name" }
+        }
+        $sourceRoot = Join-Path $ExtractRoot $root
+        Assert-CbTreeSafe $sourceRoot
+        return [pscustomobject]@{ Root = $sourceRoot; Version = $archiveVersion }
+    }
+    finally { $zip.Dispose(); $stream.Dispose() }
+}
+
+function Assert-CbUpdateSourceInventory {
+    param([string]$Root)
+    $manifest = Read-CbManifest $Root
+    $expected = New-Object 'System.Collections.Generic.List[string]'
+    $expected.Add('baseline/manifest.json') | Out-Null
+    foreach ($entry in @($manifest.payload)) { $expected.Add([string]$entry.path) | Out-Null }
+    $actual = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($file in @(Get-ChildItem -LiteralPath $Root -Recurse -Force -File)) {
+        Assert-CbOrdinaryItem $file 'file'
+        $relative = $file.FullName.Substring((Get-CbFullPath $Root).TrimEnd('\').Length + 1).Replace('\', '/')
+        $actual.Add($relative) | Out-Null
+    }
+    $expectedArray = [string[]]$expected.ToArray()
+    $actualArray = [string[]]$actual.ToArray()
+    [Array]::Sort($expectedArray, [StringComparer]::Ordinal)
+    [Array]::Sort($actualArray, [StringComparer]::Ordinal)
+    if (($expectedArray -join "`n") -ne ($actualArray -join "`n")) {
+        throw 'Update archive file inventory differs from manifest payload plus manifest.'
+    }
+    return $manifest
+}
+
+function Get-CbPreparedUpdateSource {
+    param([string]$ArchiveInput, [string]$ExpectedVersion = '', $Descriptor = $null, [bool]$RemoteSource = $false)
+    $temporary = New-CbTemporaryDirectory
+    try {
+        $archive = Join-Path $temporary 'release.zip'
+        if ($RemoteSource -and $env:CODEX_BASELINE_TESTING -ne '1') {
+            Receive-CbUpdateUrl ([uri]$ArchiveInput) $archive $script:UpdateMaxArchiveBytes
+        }
+        else { Copy-CbUpdateInput $ArchiveInput $archive $script:UpdateMaxArchiveBytes }
+        if ($null -ne $Descriptor) {
+            $item = Get-Item -LiteralPath $archive
+            if ([long]$item.Length -ne [long]$Descriptor.ZipBytes) { throw 'Update archive byte length mismatch.' }
+            if ((Get-CbFileHash $archive) -ne [string]$Descriptor.ZipSha256) { throw 'Update archive SHA-256 mismatch.' }
+        }
+        $extract = Join-Path $temporary 'source'
+        $expanded = Expand-CbUpdateZip $archive $extract $ExpectedVersion
+        $manifest = Assert-CbUpdateSourceInventory ([string]$expanded.Root)
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and [string]$manifest.version -ne $ExpectedVersion) {
+            throw 'Update descriptor and source manifest version disagree.'
+        }
+        return [pscustomobject]@{ Temporary = $temporary; Root = [string]$expanded.Root; Manifest = $manifest }
+    }
+    catch {
+        if (Test-CbExists $temporary) { Remove-CbSafeItem $temporary }
+        throw
+    }
+}
+
 function New-CbVerifiedSourceSnapshot {
-    param($OriginalManifest)
-    $sourceManifestPath = Join-Path $script:SourceRoot 'baseline\manifest.json'
+    param($OriginalManifest, [string]$SourceRoot = $script:SourceRoot)
+    $sourceManifestPath = Join-Path $SourceRoot 'baseline\manifest.json'
     $expectedManifestHash = Get-CbFileHash $sourceManifestPath
     $expectedPayloadHash = [string]$OriginalManifest.payload_hash
     $expectedVersion = [string]$OriginalManifest.version
@@ -1328,21 +1690,21 @@ function New-CbVerifiedSourceSnapshot {
         if ($env:CODEX_BASELINE_TESTING -eq '1' -and
             $env:CODEX_BASELINE_TEST_MUTATE_SOURCE_AFTER_VERIFY -eq '1') {
             [System.IO.File]::AppendAllText(
-                (Join-Path $script:SourceRoot 'baseline\global\AGENTS.block.md'),
+                (Join-Path $SourceRoot 'baseline\global\AGENTS.block.md'),
                 "`nsource-race-test`n",
                 $script:Utf8NoBom
             )
         }
 
         Ensure-CbSafeDirectory (Join-Path $snapshot 'scripts\lib') | Out-Null
-        Copy-CbFileSafe (Join-Path $script:SourceRoot 'VERSION') (Join-Path $snapshot 'VERSION')
-        Copy-CbTreeSafe (Join-Path $script:SourceRoot 'baseline') (Join-Path $snapshot 'baseline')
+        Copy-CbFileSafe (Join-Path $SourceRoot 'VERSION') (Join-Path $snapshot 'VERSION')
+        Copy-CbTreeSafe (Join-Path $SourceRoot 'baseline') (Join-Path $snapshot 'baseline')
         foreach ($scriptName in @('codex-baseline.sh', 'codex-baseline.ps1', 'onboard.sh', 'onboard.ps1', 'benchmark.sh', 'benchmark.ps1')) {
-            Copy-CbFileSafe (Join-Path $script:SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $snapshot ("scripts\{0}" -f $scriptName))
+            Copy-CbFileSafe (Join-Path $SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $snapshot ("scripts\{0}" -f $scriptName))
         }
-        Copy-CbFileSafe (Join-Path $script:SourceRoot 'scripts\lib\common.sh') (Join-Path $snapshot 'scripts\lib\common.sh')
-        Copy-CbFileSafe (Join-Path $script:SourceRoot 'scripts\lib\evaluation.sh') (Join-Path $snapshot 'scripts\lib\evaluation.sh')
-        Copy-CbTreeSafe (Join-Path $script:SourceRoot 'benchmarks') (Join-Path $snapshot 'benchmarks')
+        Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\common.sh') (Join-Path $snapshot 'scripts\lib\common.sh')
+        Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\evaluation.sh') (Join-Path $snapshot 'scripts\lib\evaluation.sh')
+        Copy-CbTreeSafe (Join-Path $SourceRoot 'benchmarks') (Join-Path $snapshot 'benchmarks')
 
         $snapshotManifest = Read-CbManifest $snapshot
         if ((Get-CbFileHash (Join-Path $snapshot 'baseline\manifest.json')) -ne $expectedManifestHash) {
@@ -1433,6 +1795,12 @@ param(
     [string]$Command = 'help',
     [Alias('dry-run')]
     [switch]$DryRun,
+    [Alias('acknowledge-unverified-source')]
+    [switch]$AcknowledgeUnverifiedSource,
+    [switch]$Check,
+    [switch]$Remote,
+    [switch]$Local,
+    [string]$Offline,
     [switch]$Json,
     [switch]$Apply,
     [Alias('acknowledge-existing-instructions')]
@@ -1454,6 +1822,11 @@ $entryPoint = Join-Path $codexHome 'codex-baseline\runtime\scripts\codex-baselin
 $parameters = @{
     Command = $Command
     DryRun = [bool]$DryRun
+    AcknowledgeUnverifiedSource = [bool]$AcknowledgeUnverifiedSource
+    Check = [bool]$Check
+    Remote = [bool]$Remote
+    Local = [bool]$Local
+    Offline = $Offline
     Json = [bool]$Json
     Apply = [bool]$Apply
     AcknowledgeExistingInstructions = [bool]$AcknowledgeExistingInstructions
@@ -1970,13 +2343,17 @@ function Invoke-CbTransaction {
 }
 
 function Invoke-CbInstallLike {
-    param([string]$Operation)
-    $manifest = Read-CbManifest
-    Write-CbSourceProvenance $manifest
+    param(
+        [string]$Operation,
+        [string]$SourceRoot = $script:SourceRoot,
+        [string]$Acquisition = 'local-checkout'
+    )
+    $manifest = Read-CbManifest $SourceRoot
+    Write-CbSourceProvenance $manifest $SourceRoot $Acquisition
     if (-not $DryRun -and -not $AcknowledgeUnverifiedSource) {
         throw 'Unsigned local source requires -AcknowledgeUnverifiedSource before mutation.'
     }
-    $sourceSnapshot = New-CbVerifiedSourceSnapshot $manifest
+    $sourceSnapshot = New-CbVerifiedSourceSnapshot $manifest $SourceRoot
     $temporaryRoot = $null
     try {
         $manifest = Assert-CbVerifiedSourceSnapshot $sourceSnapshot
@@ -1989,9 +2366,30 @@ function Invoke-CbInstallLike {
         else {
             Ensure-CbSafeDirectory $script:CodexHome | Out-Null
             Ensure-CbSafeDirectory $script:AgentsHome | Out-Null
+            if ($Acquisition -eq 'unsigned-github-release' -and $env:CODEX_BASELINE_TESTING -eq '1' -and
+                -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK)) {
+                $pauseDirectory = Get-CbItem $env:CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK
+                if ($null -eq $pauseDirectory) { throw 'Update pause fixture directory is missing.' }
+                Assert-CbOrdinaryItem $pauseDirectory 'tree'
+                [System.IO.File]::WriteAllText((Join-Path $pauseDirectory.FullName 'ready'), "ready`n", $script:Utf8NoBom)
+                for ($pauseAttempt = 0; $pauseAttempt -lt 200; $pauseAttempt++) {
+                    if (Test-CbExists (Join-Path $pauseDirectory.FullName 'continue')) { break }
+                    Start-Sleep -Milliseconds 50
+                }
+                if (-not (Test-CbExists (Join-Path $pauseDirectory.FullName 'continue'))) {
+                    throw 'Timed out waiting for concurrent update fixture.'
+                }
+            }
             Acquire-CbLock
             $script:MutationStarted = $true
             Recover-CbPending
+            if ($Acquisition -eq 'unsigned-github-release') {
+                $lockedCurrent = Get-CbCurrentTransaction
+                if ($null -ne $lockedCurrent -and
+                    (Compare-CbSemVer ([string]$manifest.version) ([string]$lockedCurrent.Version)) -lt 0) {
+                    throw ("Remote update would downgrade installed {0} to {1}." -f $lockedCurrent.Version, $manifest.version)
+                }
+            }
         }
         $temporaryRoot = New-CbTemporaryDirectory
         $manifest = Assert-CbVerifiedSourceSnapshot $sourceSnapshot
@@ -2020,6 +2418,58 @@ function Invoke-CbInstallLike {
         if ($null -ne $sourceSnapshot -and (Test-CbExists ([string]$sourceSnapshot.Root))) {
             Remove-CbSafeItem ([string]$sourceSnapshot.Root)
         }
+    }
+}
+
+function Invoke-CbUpdate {
+    Initialize-CbPaths
+    $modeCount = @(@($Check, $Remote, $Local) | Where-Object { $_ }).Count
+    if (-not [string]::IsNullOrWhiteSpace($Offline)) { $modeCount++ }
+    if ($modeCount -gt 1) { throw 'Choose only one of -Check, -Remote, -Local, or -Offline.' }
+    if ($Check -and $DryRun) { throw '-Check and -DryRun are separate preview modes.' }
+    if (-not [string]::IsNullOrWhiteSpace($Offline)) {
+        $prepared = Get-CbPreparedUpdateSource $Offline
+        try { Invoke-CbInstallLike 'update' ([string]$prepared.Root) 'offline-archive' }
+        finally { if ($null -ne $prepared -and (Test-CbExists ([string]$prepared.Temporary))) { Remove-CbSafeItem ([string]$prepared.Temporary) } }
+        return
+    }
+    $installedRuntime = Test-CbSamePath $script:SourceRoot $script:RuntimePath
+    if ($Local -or (-not $Check -and -not $Remote -and -not $installedRuntime)) {
+        Invoke-CbInstallLike 'update' $script:SourceRoot 'local-checkout'
+        return
+    }
+
+    $temporary = New-CbTemporaryDirectory
+    $prepared = $null
+    try {
+        $descriptorPath = Join-Path $temporary 'codex-baseline-update-v1.txt'
+        if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+            -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH)) {
+            Copy-CbUpdateInput $env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH $descriptorPath 16384
+        }
+        else { Receive-CbUpdateUrl ([uri]$script:UpdateMetadataUrl) $descriptorPath 16384 }
+        $descriptor = Read-CbUpdateDescriptor $descriptorPath
+        $currentVersion = (Read-CbUtf8Text (Join-Path $script:SourceRoot 'VERSION')).Trim()
+        $comparison = Compare-CbSemVer ([string]$descriptor.Version) $currentVersion
+        if ($comparison -lt 0) { throw "Latest release $($descriptor.Version) is older than installed $currentVersion." }
+        if ($Check) {
+            if ($comparison -eq 0) { Write-Output ("codex-baseline {0} is already current (latest stable {1})" -f $currentVersion, $descriptor.Version) }
+            else { Write-Output ("codex-baseline update available: {0} -> {1}" -f $currentVersion, $descriptor.Version) }
+            Write-Output 'source-acquisition: unsigned-github-release'
+            Write-Output 'source-authentication: not-publisher-authenticated'
+            return
+        }
+        $assetUri = "https://github.com/ShigeoAMV/codex-baseline/releases/download/{0}/{1}" -f $descriptor.Tag, $descriptor.ZipName
+        if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+            -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH)) {
+            $prepared = Get-CbPreparedUpdateSource $env:CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH ([string]$descriptor.Version) $descriptor $false
+        }
+        else { $prepared = Get-CbPreparedUpdateSource $assetUri ([string]$descriptor.Version) $descriptor $true }
+        Invoke-CbInstallLike 'update' ([string]$prepared.Root) 'unsigned-github-release'
+    }
+    finally {
+        if ($null -ne $prepared -and (Test-CbExists ([string]$prepared.Temporary))) { Remove-CbSafeItem ([string]$prepared.Temporary) }
+        if (Test-CbExists $temporary) { Remove-CbSafeItem $temporary }
     }
 }
 
@@ -2432,12 +2882,14 @@ function Invoke-CbDoctor {
 function Show-CbUsage {
     Write-Output @'
 Usage: powershell -File codex-baseline.ps1 <command> [-DryRun] [-Json]
-       install/update [-AcknowledgeUnverifiedSource]
+       install [-AcknowledgeUnverifiedSource]
+       update [-Check|-Remote|-Local|-Offline ARCHIVE] [-DryRun]
+              [-AcknowledgeUnverifiedSource]
        onboard [-Apply] [-AcknowledgeExistingInstructions] [repository]
 
 Commands:
   install     Install from this reviewed local source tree
-  update      Apply the current local source as an update
+  update      Check/apply latest stable release; checkout remains local by default
   doctor      Inspect native-Windows paths, state, drift, and Codex availability
   rollback    Restore the state before the current transaction
   uninstall   Remove only baseline-owned content; rollback can restore it
@@ -2445,8 +2897,8 @@ Commands:
   benchmark   Validate native static fixtures/contracts; live is unsupported
   help        Show this help
 
-Mutation commands perform no network access and never inspect authentication or
-session files. Dry-run writes no target or state files. Existing unowned targets,
+Only installed-runtime update/-Remote performs a bounded public release fetch;
+no command inspects authentication/session files. Dry-run writes no target or state files. Existing unowned targets,
 managed drift, malformed markers, symlinks, junctions, and other reparse points
 fail closed. This unsigned local source requires explicit acknowledgement before
 install or update mutation.
@@ -2457,7 +2909,7 @@ $exitCode = 0
 try {
     switch ($Command.ToLowerInvariant()) {
         'install' { Invoke-CbInstallLike 'install' }
-        'update' { Invoke-CbInstallLike 'update' }
+        'update' { Invoke-CbUpdate }
         'doctor' { $exitCode = Invoke-CbDoctor }
         'rollback' { Invoke-CbRollback }
         'uninstall' { Invoke-CbUninstall }

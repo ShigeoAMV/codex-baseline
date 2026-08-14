@@ -22,15 +22,20 @@ Codex native: config precedence, permissions/sandbox, Plan, Goal, Review,
               Subagents, skill discovery, project guidance, app worktrees
 ```
 
-No framework, plugin, MCP server, hook, network fetch, daemon, database, Node,
-Python, Docker, or administrator privilege is an installation dependency. Bash
+No framework, plugin, MCP server, hook, daemon, database, Node, Python, Docker,
+or administrator privilege is an installation dependency. Install/doctor/
+rollback/uninstall remain networkless; explicit/installed-runtime remote update
+uses bounded public GitHub release fetches. Bash
 is the Linux/WSL runtime; Windows PowerShell 5.1 is the native Windows runtime.
 `jq`, Node, Git, Bubblewrap, `timeout`, `prlimit`, and an operational systemd
 user manager/cgroup are Linux/WSL evaluation-only dependencies; the
 PowerShell benchmark command performs native static contract validation without
-pretending to execute Bash verifiers or live model arms. Python plus
-`jsonschema` is a repository-test dependency, not an installed runtime
-dependency.
+pretending to execute Bash verifiers or live model arms. Python is a
+maintainer/repository-test dependency, and `jsonschema` is test-only; neither is
+an installed runtime dependency. Linux/WSL remote update uses the existing
+platform `curl`, `gzip`, and GNU tar commands, while local lifecycle operations
+do not depend on them. Native Windows uses PowerShell 5.1 and its bundled .NET
+HTTPS/ZIP APIs.
 
 The source manifest is not a loose file list: both installers require the exact
 path inventory, byte lengths, file hashes, aggregate canonical payload digest,
@@ -44,6 +49,14 @@ On Windows the snapshot has a protected caller-owned DACL, stable native
 directory identity, and a second owner/DACL/manifest/full-payload check directly
 before candidate construction. Publisher authenticity remains a
 release-distribution concern.
+
+The self-update acquisition layer is outside the transaction engine. The
+currently installed updater downloads a strict descriptor and platform archive,
+enforces transport/archive limits, verifies SHA-256 plus the complete payload
+manifest, and supplies the frozen extracted tree as data to that same trusted
+engine. It never executes downloaded scripts before commit. Remote update
+rechecks anti-downgrade under the lifecycle lock; local/offline update and every
+other lifecycle operation perform no fetch.
 
 ## Ownership and precedence
 
@@ -97,7 +110,7 @@ failure retrospectives. Routine LEAN/STRICT work uses native behavior.
 Subagents are justified by independent breadth, isolated implementation, or a
 fresh review. Delegation includes scope, ownership/read-only status, output,
 deadline, and receipt. Writable parallel work requires separate worktrees. The
-reviewer TOML is advisory. v0.1.1 ships no automated isolated review runner;
+reviewer TOML is advisory. v0.2.0 ships no automated isolated review runner;
 fresh review artifacts must record the actual external sandbox and otherwise
 use the label `advisory review`.
 

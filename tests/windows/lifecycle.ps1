@@ -117,7 +117,7 @@ try {
     }
     finally { $ErrorActionPreference = $savedPreference }
     Assert-True ($unacknowledgedExit -eq 1) 'unsigned source install must require explicit acknowledgement'
-    Assert-True ($unacknowledgedOutput -match 'AcknowledgeUnverifiedSource') 'acknowledgement failure must be actionable'
+    Assert-True ($unacknowledgedOutput -match 'AcknowledgeUnverifiedSource') ("acknowledgement failure must be actionable; output: {0}" -f $unacknowledgedOutput)
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) 'unacknowledged source must not mutate state'
 
     $tamperedSource = Join-Path $script:TestRoot 'tampered-source'
@@ -156,7 +156,7 @@ try {
         Remove-Item Env:\CODEX_BASELINE_TEST_MUTATE_SOURCE_AFTER_VERIFY
         Remove-Item Env:\CODEX_BASELINE_TESTING
     }
-    Assert-True ($racyExit -eq 1 -and $racyOutput -match 'Payload byte length mismatch|changed while creating the verified snapshot') 'source mutation between verification and snapshot must fail closed'
+    Assert-True ($racyExit -eq 1 -and $racyOutput -match 'Payload byte length mismatch|changed while creating the verified snapshot') ("source mutation between verification and snapshot must fail closed; output: {0}" -f $racyOutput)
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'source-race rejection must not create AGENTS_HOME'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) 'source-race rejection must not mutate state'
 
@@ -280,10 +280,10 @@ exit 1
     Assert-True ([System.Linq.Enumerable]::SequenceEqual($originalBytes, [System.IO.File]::ReadAllBytes($agentsFile))) 'dry-run must preserve AGENTS bytes'
 
     $installOutput = Invoke-Baseline @('install')
-    Assert-True ($installOutput -match 'installed codex-baseline 0\.1\.1') 'clean install must report version'
+    Assert-True ($installOutput -match 'installed codex-baseline 0\.2\.0') 'clean install must report version'
     $agentsText = [System.IO.File]::ReadAllText($agentsFile, $script:Utf8NoBom)
     Assert-True ($agentsText.StartsWith($originalText, [System.StringComparison]::Ordinal)) 'install must preserve existing guidance prefix'
-    Assert-True ($agentsText -match '<!-- codex-baseline:begin version=0\.1\.1 -->') 'managed block must be installed'
+    Assert-True ($agentsText -match '<!-- codex-baseline:begin version=0\.2\.0 -->') 'managed block must be installed'
     Assert-True ((Get-ChildItem -LiteralPath (Join-Path $env:AGENTS_HOME 'skills') -Directory).Count -eq 4) 'exactly four baseline skills must be installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'agents\codex-baseline-reviewer.toml') -PathType Leaf) 'reviewer must be installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline\runtime\scripts\codex-baseline.ps1') -PathType Leaf) 'Windows runtime entry point must be installed'
@@ -307,6 +307,132 @@ exit 1
 
     $currentPath = Join-Path $env:CODEX_HOME 'codex-baseline\state\current'
     $firstTransaction = [System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim()
+    $updateArtifacts = Join-Path $script:TestRoot 'update-artifacts'
+    $futureSource = Join-Path $script:TestRoot 'update-source-0.2.1'
+    $futureArtifacts = Join-Path $script:TestRoot 'update-artifacts-0.2.1'
+    $newerSource = Join-Path $script:TestRoot 'update-source-0.2.2'
+    $newerArtifacts = Join-Path $script:TestRoot 'update-artifacts-0.2.2'
+    $adversarialArtifacts = Join-Path $script:TestRoot 'update-adversaries'
+    [System.IO.Directory]::CreateDirectory($updateArtifacts) | Out-Null
+    [System.IO.Directory]::CreateDirectory($futureArtifacts) | Out-Null
+    [System.IO.Directory]::CreateDirectory($newerArtifacts) | Out-Null
+    $python = Get-Command python.exe -CommandType Application -ErrorAction Stop
+    $artifactOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'scripts\release-update.py') '--output' $updateArtifacts 2>&1 | Out-String).Trim()
+    Assert-True ($LASTEXITCODE -eq 0 -and $artifactOutput -match 'codex-baseline-update-v1\.txt') ("release artifact builder must succeed: {0}" -f $artifactOutput)
+    $currentArchive = Join-Path $updateArtifacts ("codex-baseline-{0}.zip" -f ([System.IO.File]::ReadAllText((Join-Path $script:RepositoryRoot 'VERSION'), $script:Utf8NoBom).Trim()))
+    $fixtureOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'tests\make-update-fixture.py') '--source' $script:RepositoryRoot '--output' $futureSource '--version' '0.2.1' 2>&1 | Out-String).Trim()
+    Assert-True ($LASTEXITCODE -eq 0) ("future update fixture builder must succeed: {0}" -f $fixtureOutput)
+    $futureArtifactOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'scripts\release-update.py') '--source' $futureSource '--output' $futureArtifacts 2>&1 | Out-String).Trim()
+    Assert-True ($LASTEXITCODE -eq 0 -and $futureArtifactOutput -match 'codex-baseline-0\.2\.1\.zip') ("future release artifact builder must succeed: {0}" -f $futureArtifactOutput)
+    $newerFixtureOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'tests\make-update-fixture.py') '--source' $script:RepositoryRoot '--output' $newerSource '--version' '0.2.2' 2>&1 | Out-String).Trim()
+    Assert-True ($LASTEXITCODE -eq 0) ("newer update fixture builder must succeed: {0}" -f $newerFixtureOutput)
+    $newerArtifactOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'scripts\release-update.py') '--source' $newerSource '--output' $newerArtifacts 2>&1 | Out-String).Trim()
+    Assert-True ($LASTEXITCODE -eq 0 -and $newerArtifactOutput -match 'codex-baseline-0\.2\.2\.zip') ("newer release artifact builder must succeed: {0}" -f $newerArtifactOutput)
+    $updateDescriptor = Join-Path $futureArtifacts 'codex-baseline-update-v1.txt'
+    $updateArchive = Join-Path $futureArtifacts 'codex-baseline-0.2.1.zip'
+    $adversaryOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'tests\make-update-adversaries.py') '--tar' (Join-Path $updateArtifacts 'codex-baseline-0.2.0.tar.gz') '--zip' $currentArchive '--output' $adversarialArtifacts 2>&1 | Out-String).Trim()
+    Assert-True ($LASTEXITCODE -eq 0) ("adversarial update archive builder must succeed: {0}" -f $adversaryOutput)
+    $env:CODEX_BASELINE_TESTING = '1'
+    $env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH = $updateDescriptor
+    $env:CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH = $updateArchive
+    $pausedProcess = $null
+    try {
+        $wrapperCheck = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Check 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0 -and $wrapperCheck -match 'update available: 0\.2\.0 -> 0\.2\.1') ("installed wrapper update check must succeed: {0}" -f $wrapperCheck)
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'update check must preserve current transaction'
+        $wrapperDry = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -DryRun 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0 -and $wrapperDry -match 'dry-run: no files changed') ("installed wrapper remote update dry-run must succeed: {0}" -f $wrapperDry)
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'remote update dry-run must preserve current transaction'
+        $wrapperOffline = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline $currentArchive -DryRun 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0 -and $wrapperOffline -match 'already installed; no changes') ("installed wrapper offline update dry-run must succeed: {0}" -f $wrapperOffline)
+
+        $growingArchive = Join-Path $script:TestRoot 'growing-offline.zip'
+        [System.IO.File]::Copy($currentArchive, $growingArchive)
+        $env:CODEX_BASELINE_TEST_GROW_UPDATE_INPUT = '1'
+        $growingUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline $growingArchive -DryRun 2>&1 | Out-String).Trim()
+        Remove-Item Env:\CODEX_BASELINE_TEST_GROW_UPDATE_INPUT
+        Assert-True ($LASTEXITCODE -ne 0 -and $growingUpdate -match 'exceeded its byte limit while it was frozen') ("growing offline archive must fail at the bounded copy: {0}" -f $growingUpdate)
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'growing offline archive rejection must preserve current transaction'
+
+        $substitutedArchive = Join-Path $script:TestRoot 'substituted-offline.zip'
+        [System.IO.File]::Copy($currentArchive, $substitutedArchive)
+        $env:CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT = '1'
+        $substitutedUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline $substitutedArchive -DryRun 2>&1 | Out-String).Trim()
+        Remove-Item Env:\CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT
+        Assert-True ($LASTEXITCODE -ne 0 -and $substitutedUpdate -match 'replacement was blocked while the source handle was frozen') ("offline archive substitution must be blocked by the frozen handle: {0}" -f $substitutedUpdate)
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'offline substitution rejection must preserve current transaction'
+
+        $corruptDescriptor = Join-Path $script:TestRoot 'corrupt-update.txt'
+        $corruptText = [System.IO.File]::ReadAllText($updateDescriptor, $script:Utf8NoBom) -replace '(?m)^zip_sha256=.*$', ('zip_sha256=' + ('0' * 64))
+        [System.IO.File]::WriteAllText($corruptDescriptor, $corruptText, $script:Utf8NoBom)
+        $env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH = $corruptDescriptor
+        $corruptUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -DryRun 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -ne 0 -and $corruptUpdate -match 'archive SHA-256 mismatch') ("remote update must reject descriptor/archive hash mismatch: {0}" -f $corruptUpdate)
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'failed remote update must preserve current transaction'
+
+        foreach ($adversary in @('traversal.zip', 'symlink.zip', 'case-collision.zip', 'forged-length.zip')) {
+            $adversarialUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline (Join-Path $adversarialArtifacts $adversary) -DryRun 2>&1 | Out-String).Trim()
+            Assert-True ($LASTEXITCODE -ne 0 -and $adversarialUpdate -match 'Unsafe update archive path|Linked or special update archive member|Duplicate or case-colliding|declared or total content limit|length mismatch') ("adversarial archive must fail before mutation ({0}): {1}" -f $adversary, $adversarialUpdate)
+            Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'adversarial archive rejection must preserve current transaction'
+        }
+
+        $pauseDirectory = Join-Path $script:TestRoot 'concurrent-update-pause'
+        [System.IO.Directory]::CreateDirectory($pauseDirectory) | Out-Null
+        $pausedStdout = Join-Path $script:TestRoot 'paused-update.stdout'
+        $pausedStderr = Join-Path $script:TestRoot 'paused-update.stderr'
+        $env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH = $updateDescriptor
+        $env:CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK = $pauseDirectory
+        $pausedProcess = Start-Process -FilePath $script:PowerShell -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $wrapper,
+            'update', '-AcknowledgeUnverifiedSource'
+        ) -PassThru -RedirectStandardOutput $pausedStdout -RedirectStandardError $pausedStderr -WindowStyle Hidden
+        for ($pauseAttempt = 0; $pauseAttempt -lt 200 -and -not (Test-Path -LiteralPath (Join-Path $pauseDirectory 'ready')); $pauseAttempt++) {
+            Start-Sleep -Milliseconds 50
+        }
+        Assert-True (Test-Path -LiteralPath (Join-Path $pauseDirectory 'ready')) 'remote update must reach the deterministic pre-lock concurrency point'
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK
+        $newerApply = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline (Join-Path $newerArtifacts 'codex-baseline-0.2.2.zip') -AcknowledgeUnverifiedSource 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0 -and $newerApply -match 'installed codex-baseline 0\.2\.2') ("concurrent newer update must succeed: {0}" -f $newerApply)
+        [System.IO.File]::WriteAllText((Join-Path $pauseDirectory 'continue'), "continue`n", $script:Utf8NoBom)
+        Assert-True ($pausedProcess.WaitForExit(15000)) 'paused remote update must exit after the concurrency fixture continues'
+        $pausedOutput = ([System.IO.File]::ReadAllText($pausedStdout, $script:Utf8NoBom) + [System.IO.File]::ReadAllText($pausedStderr, $script:Utf8NoBom))
+        Assert-True ($pausedProcess.ExitCode -ne 0 -and $pausedOutput -match 'Remote update would downgrade installed 0\.2\.2 to 0\.2\.1') ("locked anti-downgrade must reject the stale acquisition: {0}" -f $pausedOutput)
+        $newerRollback = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper rollback 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0 -and $newerRollback -match 'rolled back transaction') 'newer concurrency fixture must roll back cleanly'
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'concurrency fixture rollback must restore the first transaction'
+
+        $env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH = $updateDescriptor
+        $executionCanary = Join-Path $script:TestRoot 'downloaded-code-executed'
+        $env:CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY = $executionCanary
+        $wrapperApply = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -AcknowledgeUnverifiedSource 2>&1 | Out-String).Trim()
+        Remove-Item Env:\CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY
+        Assert-True ($LASTEXITCODE -eq 0 -and $wrapperApply -match 'installed codex-baseline 0\.2\.1') ("installed wrapper remote update apply must succeed: {0}" -f $wrapperApply)
+        Assert-True (-not (Test-Path -LiteralPath $executionCanary)) 'trusted updater must not execute downloaded release code before apply'
+        $updatedTransaction = [System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim()
+        Assert-True ($updatedTransaction -ne $firstTransaction) 'remote update apply must commit a new transaction'
+        $updatedDoctorOutput = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper doctor -Json 2>&1 | Out-String).Trim()
+        $updatedDoctor = $updatedDoctorOutput | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $updatedDoctor.baseline_version -eq '0.2.1' -and @($updatedDoctor.failures).Count -eq 0) 'doctor must report the remotely updated version'
+        $updateRollback = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper rollback 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0 -and $updateRollback -match 'rolled back transaction') ("remote update rollback must succeed: {0}" -f $updateRollback)
+        Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'remote update rollback must restore the prior current transaction'
+        $rollbackDoctorOutput = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper doctor -Json 2>&1 | Out-String).Trim()
+        $rollbackDoctor = $rollbackDoctorOutput | ConvertFrom-Json
+        Assert-True ($LASTEXITCODE -eq 0 -and $rollbackDoctor.baseline_version -eq '0.2.0' -and @($rollbackDoctor.failures).Count -eq 0) 'doctor must verify the exact prior managed state after update rollback'
+    }
+    finally {
+        if ($null -ne $pausedProcess -and -not $pausedProcess.HasExited) {
+            $pausedProcess.Kill()
+            $pausedProcess.WaitForExit()
+        }
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_METADATA_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TEST_GROW_UPDATE_INPUT -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TESTING -ErrorAction SilentlyContinue
+    }
     $journalPath = Join-Path $env:CODEX_HOME ("codex-baseline\state\transactions\{0}\transaction.json" -f $firstTransaction)
     Assert-True (Test-NoBom $journalPath) 'transaction journal must be UTF-8 without BOM'
     $journal = [System.IO.File]::ReadAllText($journalPath, $script:Utf8NoBom) | ConvertFrom-Json
@@ -332,7 +458,7 @@ exit 1
     $doctorGolden = [System.IO.File]::ReadAllText((Join-Path $script:RepositoryRoot 'contracts\golden\doctor-windows.json'), $script:Utf8NoBom) | ConvertFrom-Json
     Assert-True ($doctorJson.platform -eq 'native-windows') 'doctor must label native Windows explicitly'
     Assert-True ($doctorJson.contract -eq 'codex-baseline-doctor/v1') 'doctor must emit the shared v1 report contract'
-    Assert-True ($doctorJson.baseline_version -eq '0.1.1') 'doctor must report the installed baseline version'
+    Assert-True ($doctorJson.baseline_version -eq '0.2.0') 'doctor must report the installed baseline version'
     Assert-True ($doctorJson.source_provenance.scope -eq 'local-source' -and $doctorJson.source_provenance.trust -eq 'unsigned-local-source') 'source invocation must report explicit local-source trust provenance'
     Assert-True ($doctorJson.codex_verification -eq 'unverified-native-codex-not-installed') 'missing native Codex must be labelled unverified'
     Assert-True ($doctorJson.managed_objects.ok -eq 8 -and $doctorJson.managed_objects.total -eq 8) 'doctor must report all managed objects through the shared shape'
@@ -492,6 +618,15 @@ finally {
     }
     if (Test-Path Env:\CODEX_BASELINE_TESTING) {
         Remove-Item Env:\CODEX_BASELINE_TESTING
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_UPDATE_METADATA_PATH) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_METADATA_PATH
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK
     }
     Remove-TestRoot $script:TestRoot
 }

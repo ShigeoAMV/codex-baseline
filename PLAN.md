@@ -14,9 +14,10 @@ The full acceptance contract is the original mission supplied for this project.
 
 ## Current milestone
 
-Milestones 4, 6, and 7 - external real-model evaluation and authenticated
-release provenance. The deterministic implementation and final local audits are
-complete.
+Milestone 8 - remote self-update v0.2.0 final audit, alongside the existing
+Milestones 4, 6, and 7 external-evidence work. The bounded update implementation
+and Unix adversarial fixture pass; a clean full-matrix rerun and fresh review
+remain before this change can be released.
 
 ### Acceptance criteria
 
@@ -40,6 +41,7 @@ complete.
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
 | 7. Dogfood and completion audit | In progress | Final immutable local revision and detached C0/H0/M0 review attestation are complete; live-model evidence and publisher signing remain |
+| 8. Explicit remote self-update | In progress | Deterministic v1 release assets, Unix installed-wrapper/adversarial tests, and fresh security review pass; native Windows/full regression reruns remain |
 
 ## Current evidence
 
@@ -94,6 +96,16 @@ complete.
   private vulnerability-reporting policy. It remains an unsigned public preview
   until an owner-controlled signing identity and independently distributed
   trust root exist.
+- v0.2.0 adds an explicit installed-runtime release updater without `git pull`.
+  The focused Unix group passes deterministic build, check/dry-run/apply,
+  downloaded-code canary, hostile archives, concurrent anti-downgrade,
+  rollback, and exact-state restoration.
+- The current WSL regression environment lacks ShellCheck and has Codex CLI
+  0.145.0 below the required 0.147.0, so the unchanged full Unix matrix cannot
+  currently produce a clean receipt. Native Windows correctly refuses its test
+  staging tree because `%LOCALAPPDATA%` inherits FullControl for foreign SID
+  `S-1-5-21-2363829159-3772595814-2973517376-1002`; this security check is not
+  weakened to make the suite run.
 
 ## Open decisions
 
@@ -114,11 +126,11 @@ complete.
 
 ## Next action
 
-When the dedicated credential is available, run preliminary evaluation,
-finalize and commit tracked reports, then rerun all three live checkout commands
-on that unchanged commit. Bind their safe receipt hashes through a detached
-attestation and close only the real-model-dependent traceability rows. Separately,
-the owner may establish an offline-controlled signing identity, publish its
-trust root independently, and replace the unsigned preview with a
-publisher-authenticated release; never generate or commit that private key as
-part of an automated repository workflow.
+First rerun the v0.2.0 full Unix and native Windows matrices in compliant test
+environments (ShellCheck and Codex >= 0.147.0 on Unix; a private Windows staging
+ancestor without foreign write ACLs), then bind the fresh review and release
+asset hashes. Publishing the GitHub v0.2.0 release remains an explicit owner
+action. When the dedicated benchmark credential is available, continue the
+existing live-evaluation work. Separately, the owner may establish an
+offline-controlled signing identity and independently distributed trust root;
+never generate or commit that private key through this workflow.

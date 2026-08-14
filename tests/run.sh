@@ -37,6 +37,17 @@ snapshot_files() {
   find "$root" -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >"$output"
 }
 
+snapshot_managed_files() {
+  local home=$1 output=$2
+  find -P \
+    "$home/.codex/AGENTS.md" \
+    "$home/.codex/agents/codex-baseline-reviewer.toml" \
+    "$home/.codex/codex-baseline/runtime" \
+    "$home/.agents/skills" \
+    "$home/.local/bin/codex-baseline" \
+    -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >"$output"
+}
+
 validate_schema() {
   PYTHONDONTWRITEBYTECODE=1 python3 "$TEST_ROOT/tests/validate-json-schema.py" "$1" "$2"
 }
@@ -77,6 +88,8 @@ test_static_quality() {
   local worktree_output worktree_status
   bash -n "$TEST_ROOT/scripts/"*.sh "$TEST_ROOT/scripts/lib/"*.sh "$TEST_ROOT/benchmarks/verifiers/"*.sh \
     "$TEST_ROOT/tests/behavior/"*.sh "$TEST_ROOT/tests/behavior/verifiers/"*.sh
+  python3 -c 'import pathlib; [compile(path.read_text(encoding="utf-8"), str(path), "exec") for path in map(pathlib.Path, __import__("sys").argv[1:])]' \
+    "$TEST_ROOT/scripts/release-update.py" "$TEST_ROOT/tests/make-update-fixture.py" "$TEST_ROOT/tests/make-update-adversaries.py"
   shellcheck "$TEST_ROOT/scripts/lib/common.sh" "$TEST_ROOT/scripts/lib/evaluation.sh" "$TEST_ROOT/scripts/codex-baseline.sh" \
     "$TEST_ROOT/scripts/onboard.sh" "$TEST_ROOT/scripts/benchmark.sh" "$TEST_ROOT/scripts/routing-probe.sh" "$TEST_ROOT/scripts/release-payload.sh" "$TEST_ROOT/scripts/research-check.sh" \
     "$TEST_ROOT/benchmarks/verifiers/"*.sh "$TEST_ROOT/tests/behavior/"*.sh "$TEST_ROOT/tests/behavior/verifiers/"*.sh
@@ -354,8 +367,8 @@ test_dry_run_and_lifecycle() {
   cmp "$root/installed-before" "$root/installed-after"
   baseline "$root" doctor --json | jq -e --arg payload "$(jq -r .payload_hash "$TEST_ROOT/baseline/manifest.json")" '
     .contract == "codex-baseline-doctor/v1" and .failure_count == 0 and
-    .baseline_version == "0.1.1" and
-    .source_provenance == {scope:"installed-runtime",version:"0.1.1",trust:"unsigned-local-source",payload_sha256:$payload} and
+    .baseline_version == "0.2.0" and
+    .source_provenance == {scope:"installed-runtime",version:"0.2.0",trust:"unsigned-local-source",payload_sha256:$payload} and
     .managed_objects == {ok:8,total:8} and .skills == {ok:4,total:4} and
     .runtime_dependencies.status == "verified" and (.runtime_dependencies.missing | length) == 0 and
     .active_config.status == "accepted-by-strict-config" and
@@ -1178,6 +1191,206 @@ test_worktree_isolation() {
   pass 'conflicting writable workers remain isolated in explicit worktrees'
 }
 
+test_self_update() {
+  local artifacts_a="$TEST_TMP/update-artifacts-a" artifacts_b="$TEST_TMP/update-artifacts-b"
+  local future_source="$TEST_TMP/update-source-0.2.1" future_artifacts="$TEST_TMP/update-artifacts-0.2.1"
+  local newer_source="$TEST_TMP/update-source-0.2.2" newer_artifacts="$TEST_TMP/update-artifacts-0.2.2"
+  local root wrapper before after before_state after_state output status descriptor archive current_descriptor current_archive corrupt_descriptor growing_archive substituted_archive first_tx updated_tx pause_dir paused_pid attempt adversarial_archive
+  mkdir -p -- "$artifacts_a" "$artifacts_b" "$future_artifacts" "$newer_artifacts"
+  python3 "$TEST_ROOT/scripts/release-update.py" --output "$artifacts_a"
+  python3 "$TEST_ROOT/scripts/release-update.py" --output "$artifacts_b"
+  current_descriptor="$artifacts_a/codex-baseline-update-v1.txt"
+  current_archive="$artifacts_a/codex-baseline-$(<"$TEST_ROOT/VERSION").tar.gz"
+  test -f "$current_descriptor" && test -f "$current_archive"
+  cmp "$current_descriptor" "$artifacts_b/codex-baseline-update-v1.txt"
+  cmp "$current_archive" "$artifacts_b/$(basename -- "$current_archive")"
+  cmp "$artifacts_a/codex-baseline-$(<"$TEST_ROOT/VERSION").zip" "$artifacts_b/codex-baseline-$(<"$TEST_ROOT/VERSION").zip"
+  test "$(stat -c '%s' -- "$current_archive")" = "$(sed -n 's/^tar_bytes=//p' "$current_descriptor")"
+  test "$(sha256sum -- "$current_archive" | awk '{print $1}')" = "$(sed -n 's/^tar_sha256=//p' "$current_descriptor")"
+  test "$(stat -c '%s' -- "$artifacts_a/codex-baseline-$(<"$TEST_ROOT/VERSION").zip")" = "$(sed -n 's/^zip_bytes=//p' "$current_descriptor")"
+  test "$(sha256sum -- "$artifacts_a/codex-baseline-$(<"$TEST_ROOT/VERSION").zip" | awk '{print $1}')" = "$(sed -n 's/^zip_sha256=//p' "$current_descriptor")"
+  python3 "$TEST_ROOT/tests/make-update-fixture.py" --source "$TEST_ROOT" --output "$future_source" --version 0.2.1
+  python3 "$TEST_ROOT/scripts/release-update.py" --source "$future_source" --output "$future_artifacts"
+  python3 "$TEST_ROOT/tests/make-update-fixture.py" --source "$TEST_ROOT" --output "$newer_source" --version 0.2.2
+  python3 "$TEST_ROOT/scripts/release-update.py" --source "$newer_source" --output "$newer_artifacts"
+  descriptor="$future_artifacts/codex-baseline-update-v1.txt"
+  archive="$future_artifacts/codex-baseline-0.2.1.tar.gz"
+
+  root=$(new_home self-update)
+  baseline "$root" install >/dev/null
+  wrapper="$root/home/.local/bin/codex-baseline"
+  before="$root/before-update"
+  after="$root/after-update"
+  first_tx=$(<"$root/home/.codex/codex-baseline/state/current")
+  before_state="$root/before-preview-state"
+  after_state="$root/after-preview-state"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$before_state"
+  snapshot_managed_files "$root/home" "$root/before-check"
+  output=$(HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_UPDATE_METADATA_PATH="$descriptor" \
+    CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH="$archive" \
+    "$wrapper" update --check)
+  grep -q 'update available: 0.2.0 -> 0.2.1' <<<"$output"
+  snapshot_managed_files "$root/home" "$root/after-check"
+  cmp "$root/before-check" "$root/after-check"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+  cmp "$before_state" "$after_state"
+
+  snapshot_managed_files "$root/home" "$before"
+  mutated_archive="$root/mutated-offline.tar.gz"
+  cp --reflink=never -- "$current_archive" "$mutated_archive"
+  set +e
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_MUTATE_UPDATE_INPUT=1 \
+    CODEX_BASELINE_TEST_MUTATE_UPDATE_INPUT_PATH="$archive" \
+    "$wrapper" update --offline "$mutated_archive" --dry-run >"$root/mutated-update.log" 2>&1
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  grep -q 'update input changed while it was frozen' "$root/mutated-update.log"
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+  cmp "$before_state" "$after_state"
+
+  substituted_archive="$root/substituted-offline.tar.gz"
+  cp --reflink=never -- "$current_archive" "$substituted_archive"
+  set +e
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT=1 \
+    "$wrapper" update --offline "$substituted_archive" --dry-run >"$root/substituted-update.log" 2>&1
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  grep -q 'identity changed while it was frozen' "$root/substituted-update.log"
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+  cmp "$before_state" "$after_state"
+
+  growing_archive="$root/growing-offline.tar.gz"
+  cp --reflink=never -- "$current_archive" "$growing_archive"
+  set +e
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_GROW_UPDATE_INPUT=1 \
+    "$wrapper" update --offline "$growing_archive" --dry-run >"$root/growing-update.log" 2>&1
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  grep -q 'exceeded its byte limit while it was frozen' "$root/growing-update.log"
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+  cmp "$before_state" "$after_state"
+
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_UPDATE_METADATA_PATH="$descriptor" \
+    CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH="$archive" \
+    "$wrapper" update --dry-run >"$root/update-dry.log"
+  grep -q 'dry-run: no files changed' "$root/update-dry.log"
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+  cmp "$before_state" "$after_state"
+
+  corrupt_descriptor="$root/corrupt-update.txt"
+  sed 's/^tar_sha256=.*/tar_sha256=0000000000000000000000000000000000000000000000000000000000000000/' \
+    "$descriptor" >"$corrupt_descriptor"
+  set +e
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_UPDATE_METADATA_PATH="$corrupt_descriptor" \
+    CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH="$archive" \
+    "$wrapper" update --dry-run >"$root/corrupt-update.log" 2>&1
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  grep -q 'archive SHA-256 mismatch' "$root/corrupt-update.log"
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+  snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+  cmp "$before_state" "$after_state"
+
+  python3 "$TEST_ROOT/tests/make-update-adversaries.py" \
+    --tar "$current_archive" --zip "$artifacts_a/codex-baseline-$(<"$TEST_ROOT/VERSION").zip" \
+    --output "$root/adversarial-archives"
+  for adversarial_archive in \
+    "$root/adversarial-archives/traversal.tar.gz" \
+    "$root/adversarial-archives/symlink.tar.gz" \
+    "$root/adversarial-archives/pax.tar.gz" \
+    "$root/adversarial-archives/raw-bomb.tar.gz" \
+    "$root/adversarial-archives/case-collision.tar.gz" \
+    "$root/adversarial-archives/extra.tar.gz"; do
+    set +e
+    HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+      "$wrapper" update --offline "$adversarial_archive" --dry-run >"$root/adversarial-update.log" 2>&1
+    status=$?
+    set -e
+    [[ $status -ne 0 ]]
+    grep -Eq 'unsafe update archive path|linked or special update archive member|inventory differs|tar headers are forbidden|raw tar limit|case-colliding update archive member' "$root/adversarial-update.log"
+    snapshot_managed_files "$root/home" "$after"
+    cmp "$before" "$after"
+    snapshot_files "$root/home/.codex/codex-baseline/state" "$after_state"
+    cmp "$before_state" "$after_state"
+  done
+
+  pause_dir="$root/concurrent-pause"
+  mkdir -- "$pause_dir"
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_UPDATE_METADATA_PATH="$descriptor" \
+    CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH="$archive" \
+    CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK="$pause_dir" \
+    "$wrapper" update --acknowledge-unverified-source >"$root/paused-update.log" 2>&1 &
+  paused_pid=$!
+  for (( attempt=0; attempt < 200; attempt++ )); do
+    [[ ! -f $pause_dir/ready ]] || break
+    sleep 0.05
+  done
+  [[ -f $pause_dir/ready ]]
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    "$wrapper" update --offline "$newer_artifacts/codex-baseline-0.2.2.tar.gz" \
+      --acknowledge-unverified-source >"$root/newer-update.log"
+  printf 'continue\n' >"$pause_dir/continue"
+  set +e
+  wait "$paused_pid"
+  status=$?
+  set -e
+  [[ $status -ne 0 ]]
+  if ! grep -q 'remote update would downgrade installed 0.2.2 to 0.2.1' "$root/paused-update.log"; then
+    sed -n '1,80p' "$root/paused-update.log" >&2
+    return 1
+  fi
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    "$wrapper" rollback >"$root/newer-rollback.log"
+  [[ $(<"$root/home/.codex/codex-baseline/state/current") == "$first_tx" ]]
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    CODEX_BASELINE_TESTING=1 CODEX_BASELINE_TEST_UPDATE_METADATA_PATH="$descriptor" \
+    CODEX_BASELINE_TEST_UPDATE_ARCHIVE_PATH="$archive" \
+    CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY="$root/downloaded-code-executed" \
+    "$wrapper" update --acknowledge-unverified-source >"$root/update-apply.log"
+  grep -q 'installed codex-baseline 0.2.1' "$root/update-apply.log"
+  test ! -e "$root/downloaded-code-executed"
+  updated_tx=$(<"$root/home/.codex/codex-baseline/state/current")
+  [[ $updated_tx != "$first_tx" ]]
+  set +e
+  output=$(HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    "$wrapper" doctor --json)
+  set -e
+  jq -e '.baseline_version == "0.2.1" and .managed_objects == {ok:8,total:8}' <<<"$output" >/dev/null
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    "$wrapper" rollback >"$root/update-rollback.log"
+  [[ $(<"$root/home/.codex/codex-baseline/state/current") == "$first_tx" ]]
+  snapshot_managed_files "$root/home" "$after"
+  cmp "$before" "$after"
+
+  HOME="$root/home" CODEX_HOME="$root/home/.codex" AGENTS_HOME="$root/home/.agents" \
+    "$wrapper" update --offline "$current_archive" --dry-run >"$root/offline-update.log"
+  grep -Eq 'already installed; no changes|dry-run: no files changed' "$root/offline-update.log"
+  pass 'release artifacts and installed-wrapper remote/offline update fail closed without external network'
+}
+
 test_documentation_contract() {
   "$TEST_ROOT/scripts/check-docs.sh" >/dev/null
   for document in README.md CHANGELOG.md PLAN.md docs/ARCHITECTURE.md docs/INSTALL.md \
@@ -1214,7 +1427,13 @@ test_codex_discovery() {
   pass 'Codex prompt input loads global/root/nested guidance and all skill metadata'
 }
 
-printf '1..12\n'
+if [[ ${CODEX_BASELINE_TEST_GROUP:-} == self-update ]]; then
+  printf '1..1\n'
+  test_self_update
+  exit 0
+fi
+
+printf '1..13\n'
 test_static_quality
 test_dry_run_and_lifecycle
 test_drift_and_user_content
@@ -1225,5 +1444,6 @@ test_onboarding
 test_benchmark_contract
 test_routing_contract
 test_worktree_isolation
+test_self_update
 test_documentation_contract
 test_codex_discovery

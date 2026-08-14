@@ -3,6 +3,21 @@
 This project follows Semantic Versioning. Releases update `VERSION`, the source
 manifest version, payload checks, platform evidence, and this log together.
 
+## 0.2.0 - 2026-08-14
+
+- Add an installed-runtime self-update path with `update --check`, remote
+  preview/apply, explicit local mode, and reviewed offline archive support.
+- Download only fixed public GitHub release metadata/assets with bounded HTTPS
+  redirects, time, size, and host policy; no GitHub or Codex authentication is
+  used.
+- Build deterministic payload-only `.tar.gz`/`.zip` release assets and a strict
+  shared v1 descriptor with per-archive byte counts and SHA-256 values.
+- Treat downloaded archives only as untrusted data: validate path/type/resource
+  limits and exact manifest inventory, then let the already-installed trusted
+  transaction engine perform apply and locked anti-downgrade checks.
+- Exercise the installed Bash and PowerShell wrappers for remote/offline check,
+  dry-run, integrity failure, transaction preservation, and rollback behavior.
+
 ## 0.1.1 - 2026-08-14
 
 - Add a compact native-minimalism invariant: reuse suitable repository code,

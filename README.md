@@ -5,7 +5,7 @@ Windows. It adds universal engineering invariants, four progressively disclosed
 skills, safe repository onboarding, health/lifecycle operations, and a paired
 evaluation harness without installing an external orchestration framework.
 
-> **Status:** v0.1.1 is an Apache-2.0-licensed public source preview. The
+> **Status:** v0.2.0 is an Apache-2.0-licensed public source preview. The
 > deterministic Linux/WSL and native PowerShell evidence is recorded, while
 > repeated real-model routing and paired A/B evaluation remains explicitly
 > pending. Release provenance is currently unsigned, so installation retains
@@ -41,7 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-baseline
 & "$HOME\.local\bin\codex-baseline.ps1" doctor
 ```
 
-The v0.1.1 checkout is an unsigned local source. Both installers verify every
+The v0.2.0 checkout is an unsigned local source. Both installers verify every
 installable file against the versioned path/byte/SHA-256 manifest, print source
 origin, revision/dirty state when available, trust label, and aggregate payload
 hash, then require explicit acknowledgement before mutation. That proves the
@@ -89,8 +89,10 @@ a substantial delivery gets acceptance criteria and conformance evidence.
 
 ```bash
 codex-baseline doctor --json
+codex-baseline update --check
 codex-baseline update --dry-run
 codex-baseline update --acknowledge-unverified-source
+codex-baseline update --offline /path/to/codex-baseline-0.2.0.tar.gz --dry-run
 codex-baseline rollback --dry-run
 codex-baseline rollback
 codex-baseline uninstall --dry-run
@@ -98,10 +100,17 @@ codex-baseline uninstall
 codex-baseline benchmark --static
 ```
 
-`update` applies the reviewed local source; it never fetches. Mutations use a
-locked journal, per-object previous/installed/desired hashes, backups, staged
-replacement, and recovery of incomplete transactions. Managed drift is a hard
-conflict. Rollback/uninstall never silently discard drifted managed content.
+From the installed wrapper, `update` checks/downloads the latest stable GitHub
+release; a checkout script remains local unless `--remote` is explicit.
+Downloads use a strict descriptor, bounded HTTPS redirects, per-asset SHA-256,
+safe archive extraction, and the existing exact payload manifest. The release
+is still unsigned, so apply requires `--acknowledge-unverified-source`; this is
+integrity and transport consistency, not publisher authentication. `--offline`
+keeps the reviewed/pre-acquired path networkless. Existing locked journals,
+three-way drift checks, backups, recovery, and rollback remain the mutation
+boundary. Existing v0.1.1 installations need one final reviewed local v0.2.0
+install/update because old installed code cannot acquire this command
+retroactively; subsequent v1 updates are self-contained.
 
 ## Validate and benchmark
 
@@ -120,7 +129,7 @@ CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
   scripts/benchmark.sh --canary
 ```
 
-These live commands are Linux/WSL-only in v0.1.1, consume account quota, and
+These live commands are Linux/WSL-only in v0.2.0, consume account quota, and
 never mount or copy normal Codex auth/session files. The routing command also
 runs read-only, host-verified DEEP/high-risk planning, ambiguity, onboarding,
 and conformance cases. Each Codex arm runs in a fresh Bubblewrap filesystem with

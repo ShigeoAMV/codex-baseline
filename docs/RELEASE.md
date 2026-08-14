@@ -2,7 +2,7 @@
 
 ## Current status
 
-Version 0.1.1 is an Apache-2.0-licensed public source preview. The installable
+Version 0.2.0 is an Apache-2.0-licensed public source preview. The installable
 payload is pinned by path, byte length, per-file SHA-256, and aggregate digest,
 and both installers freeze a reverified private snapshot before use. This
 proves internal integrity relative to the checked-out manifest. It does not
@@ -35,6 +35,7 @@ notes retain that label.
 ```bash
 scripts/research-check.sh --json
 scripts/release-payload.sh
+python3 scripts/release-update.py --output /private/release-output
 ./tests/run.sh
 ./tests/run-powershell.sh
 git status --short
@@ -59,5 +60,6 @@ runtime and therefore is not the final full-checkout release evidence path.
 Compare the payload generator with `baseline/manifest.json`, inspect every
 changed file, and save command exits, platform versions, source revision, and
 payload hash in the release evidence. Signing and publishing are separate,
-explicit maintainer actions; lifecycle commands perform no fetch or network
-access.
+explicit maintainer actions. Install, doctor, rollback, uninstall, local/offline
+update, and tests perform no fetch; installed-runtime/explicit remote update
+uses only the published bounded v1 descriptor and platform assets.

@@ -6,10 +6,11 @@ Use a reviewed, immutable release or trusted checkout. The installer validates
 the exact installable path inventory, byte lengths, per-file SHA-256 values,
 aggregate payload hash, operations contract, and version. It prints the local
 origin, Git revision/dirty state when safely available, and the
-`unsigned-local-source` trust label. v0.1.1 does not authenticate a publisher or
+`unsigned-local-source` trust label. v0.2.0 does not authenticate a publisher or
 verify a release signature, so mutation requires an explicit acknowledgement.
 Installation never performs `git pull`, package installation, or any network
-request.
+request. Network access is confined to an explicit/installed-runtime remote
+`update`; local and offline update remain networkless.
 
 Backups are part of the transaction. A preview is still recommended:
 
@@ -22,7 +23,9 @@ git status --short
 ## Linux
 
 Requires Bash, coreutils (`find`, `realpath`, `stat`, `sort`, SHA-256 tool), and
-a supported Codex CLI. Run:
+a supported Codex CLI. Remote update additionally requires an ordinary `curl`
+executable, `gzip`, and GNU tar; the command reports a missing capability and
+stops before mutation. Local install/update does not require them. Run:
 
 ```bash
 ./scripts/codex-baseline.sh install --acknowledge-unverified-source

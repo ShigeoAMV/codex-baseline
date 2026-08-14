@@ -10,8 +10,10 @@ live files changed after planning, and network content are untrusted.
 
 ## Controls
 
-- No network, package bootstrap, auth/session inspection, privilege escalation,
-  hook installation, broad permission enablement, or project-code execution.
+- No package bootstrap, auth/session inspection, privilege escalation, hook
+  installation, broad permission enablement, or project-code execution. Install,
+  doctor, rollback, uninstall, local/offline update, and tests are networkless;
+  remote update alone performs the bounded public release fetch described below.
 - Exact managed markers/prefixed targets and three-way hashes; conflicts fail
   closed rather than overwrite user work.
 - Absolute root containment, segment link/reparse checks, literal paths, bounded
@@ -33,6 +35,17 @@ live files changed after planning, and network content are untrusted.
   Administrators. Parent owner/DACL plus child identity/owner/DACL, manifest,
   and every payload hash are checked again immediately before candidate
   construction.
+- Remote update uses a fixed unsigned GitHub descriptor contract and locally
+  derived version-pinned asset URL. HTTPS scheme/redirect hosts, redirects,
+  connection/request time, compressed/uncompressed bytes, entry count/depth/
+  names, member types, platform-canonical collisions, and exact final inventory
+  are bounded. Curl user configuration is disabled; no GitHub/Codex token or
+  authentication header is used. Native proxy configuration is user-controlled.
+  Archives are frozen in private staging and rehashed; downloaded code is never
+  executed before the current trusted transaction engine installs it. A locked
+  anti-downgrade recheck closes concurrent-acquisition races. Descriptor hashes
+  do not authenticate the publisher, so live apply still needs the unsigned-
+  source acknowledgement and rollback remains the recovery path.
 - Onboarding apply requires explicit acknowledgement when existing AI
   instructions need reconciliation. Unix anchors discovery and mutation to an
   open repository directory; Windows combines native directory identity checks
