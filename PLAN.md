@@ -37,7 +37,7 @@ remain before this change can be released.
 | 1. Evidence and challenged architecture | Complete | Five research records, 20 decisions, two independent critiques and disposition |
 | 2. Portable install and rollback core | Complete | Unix lifecycle suite and native PowerShell 5.1 lifecycle suite |
 | 3. Repository onboarding | Complete | Static untrusted-repo fixture; dry-run/apply/idempotence/link/secret/no-exec checks |
-| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, six classifications and four host-verified behavior cases; repeated real-model probes pending |
+| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, ten classifications and four host-verified behavior cases; repeated real-model probes pending |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
 | 7. Dogfood and completion audit | In progress | Final immutable local revision and detached C0/H0/M0 review attestation are complete; live-model evidence and publisher signing remain |

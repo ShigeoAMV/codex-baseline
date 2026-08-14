@@ -107,6 +107,12 @@ weaken a required safety boundary. Skills contain deeper procedure only for
 onboarding, complex durable work, original-request conformance, and repeated
 failure retrospectives. Routine LEAN/STRICT work uses native behavior.
 
+Routing is based on material scope, ambiguity, and risk rather than file count
+or keywords. Focused read-only work stays LEAN and broad read-only analysis uses
+native STRICT; neither loads deep-work solely because architecture is discussed.
+LEAN adds no unrequested planning, delegation, workflow-skill, or broad-check
+overhead unless repository guidance or risk requires it.
+
 Subagents are justified by independent breadth, isolated implementation, or a
 fresh review. Delegation includes scope, ownership/read-only status, output,
 deadline, and receipt. Writable parallel work requires separate worktrees. The

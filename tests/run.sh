@@ -98,6 +98,18 @@ test_static_quality() {
   [[ $(wc -w <"$TEST_ROOT/baseline/global/AGENTS.block.md") -le 500 ]]
   grep -Fq 'reuse suitable' "$TEST_ROOT/baseline/global/AGENTS.block.md"
   grep -Fq 'never remove required validation' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'Skip plans, delegation, workflow skills, and broad checks' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'File count or keywords alone do not escalate' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'Do not trigger for read-only explanation, diagnosis, or architecture orientation' \
+    "$TEST_ROOT/baseline/skills/codex-baseline-deep-work/SKILL.md"
+  jq -e '
+    (.cases | length) == 10 and
+    ([.cases[].id] | unique | length) == 10 and
+    ([.cases[] | select(.id == "lean-readonly-diagnosis" and .workflow == "LEAN" and .skill == null)] | length) == 1 and
+    ([.cases[] | select(.id == "lean-two-file-fix" and .workflow == "LEAN" and .skill == null)] | length) == 1 and
+    ([.cases[] | select(.id == "strict-readonly-architecture" and .workflow == "STRICT" and .skill == null)] | length) == 1 and
+    ([.cases[] | select(.id == "deep-architecture-implementation" and .workflow == "DEEP" and .skill == "codex-baseline-deep-work")] | length) == 1
+  ' "$TEST_ROOT/tests/routing/cases.json" >/dev/null
   for json in "$TEST_ROOT/baseline/manifest.json" "$TEST_ROOT/baseline/operations.json" "$TEST_ROOT/docs/research/manifest.json" "$TEST_ROOT/contracts/"*.json "$TEST_ROOT/contracts/golden/"*.json; do
     jq -e . "$json" >/dev/null
   done
@@ -1057,7 +1069,7 @@ test_routing_contract() {
     .status == "completed" and .model_invoked and .host_checks_executed and
     .isolation == "os-sandboxed-local-cgroup" and .auth == "dedicated-api-key-stdin-pipe" and .repetitions == 1 and
     .resource_profile == "user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs" and
-    .routing_cases == 6 and .behavior_cases == 4 and
+    .routing_cases == 10 and .behavior_cases == 4 and
     (.source_hash | test("^[0-9a-f]{64}$")) and
     (.codex_binary_hash | test("^[0-9a-f]{64}$")) and .codex_identity == "caller-pinned-sha256" and
     (.node_binary_hash | test("^[0-9a-f]{64}$"))
@@ -1068,11 +1080,11 @@ test_routing_contract() {
   validate_jsonl_schema "$TEST_ROOT/contracts/behavior-result.schema.json" "$output/behavior-results.jsonl"
   jq -e '
     .contract == "codex-baseline-routing-summary/v1" and .repetitions == 1 and
-    .routing.runs == 6 and .routing.passes == 6 and all(.routing.by_case[]; .runs == 1 and .passes == 1) and
+    .routing.runs == 10 and .routing.passes == 10 and all(.routing.by_case[]; .runs == 1 and .passes == 1) and
     .behavior.runs == 4 and .behavior.passes == 4 and all(.behavior.by_case[]; .runs == 1 and .passes == 1)
   ' "$output/summary.json" >/dev/null
   jq -s -e --slurpfile run "$output/run.json" --slurpfile summary "$output/summary.json" '
-    length == 6 and all(.pass) and all(.process_exit == 0) and all(.commands == 0) and all(.file_changes == 0) and
+    length == 10 and all(.pass) and all(.process_exit == 0) and all(.commands == 0) and all(.file_changes == 0) and
     all(.contract == "codex-baseline-routing-result/v1") and
     (map(.source_hash) | unique) == [$run[0].source_hash] and
     $summary[0].source_hash == $run[0].source_hash
@@ -1426,6 +1438,12 @@ test_codex_discovery() {
   done
   pass 'Codex prompt input loads global/root/nested guidance and all skill metadata'
 }
+
+if [[ ${CODEX_BASELINE_TEST_GROUP:-} == routing ]]; then
+  printf '1..1\n'
+  test_routing_contract
+  exit 0
+fi
 
 if [[ ${CODEX_BASELINE_TEST_GROUP:-} == self-update ]]; then
   printf '1..1\n'

@@ -162,12 +162,18 @@ measure its repeated behavior and expose variance:
 | --- | --- | --- |
 | LEAN | Small, clear, reversible, local, low-risk | Inspect -> change -> focused check -> report |
 | STRICT | Meaningful multi-file/API/refactor/moderate-risk work | Criteria -> short plan -> implement -> tests/static checks -> diff review -> conformance |
-| DEEP | Architecture, migration, security-sensitive, ambiguous, multi-hour, large unknown repo | Research/interview -> frozen criteria/spec -> challenge -> task graph -> bounded work -> deterministic gates -> fresh review -> original-request audit |
+| DEEP | Architecture implementation, migration, security-sensitive, materially ambiguous, multi-hour, large unknown repo | Research/interview -> frozen criteria/spec -> challenge -> task graph -> bounded work -> deterministic gates -> fresh review -> original-request audit |
 | HIGH RISK axis | Destructive/production/auth/crypto/secrets/privileged/network/irreversible data | Least privilege, explicit authority, rollback/recovery test, stronger verification, security review |
 
 For STRICT/DEEP, Codex states a one-line receipt such as `Workflow: STRICT -
 multi-file external behavior; verification: unit + integration + diff review`.
 LEAN may state only `Workflow: LEAN` and proceed.
+
+File count and trigger words such as "architecture" do not escalate a task on
+their own. Focused read-only explanation or diagnosis remains LEAN; broad
+read-only analysis uses native STRICT without loading deep-work. LEAN adds no
+unrequested plan, workflow skill, delegation, or broad checks unless repository
+guidance or the independent risk axis requires it.
 
 Explicit user selection wins unless it would weaken a required safety boundary.
 HIGH RISK is independent and always strengthens even a small task. Uncertain
@@ -193,7 +199,9 @@ false de-escalation, and repeated-run stability.
 
 1. `baseline-repo-onboarding` - explicit onboarding/discovery/merge workflow.
 2. `baseline-deep-work` - ambiguity, acceptance contract, durable plan/state,
-   bounded iteration, risk escalation, and checkpoint protocol.
+   bounded iteration, risk escalation, and checkpoint protocol for actual DEEP
+   implementation or an explicitly requested durable plan; read-only
+   explanation, diagnosis, and architecture orientation stay native LEAN/STRICT.
 3. `baseline-conformance-review` - independent artifact/verification/original-
    request verdict with delivered/partial/missing/drifted/unauthorized classes.
 4. `baseline-retrospective` - classify recurring failures and route fixes to

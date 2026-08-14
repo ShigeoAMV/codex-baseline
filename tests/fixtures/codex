@@ -136,7 +136,11 @@ if [[ -n $output_schema ]]; then
   fi
   case $prompt in
     *misspelled*) workflow=LEAN; risk=false; skills='[]' ;;
+    *known\ configuration\ file*) workflow=LEAN; risk=false; skills='[]' ;;
+    *clearly\ localized\ low-risk\ bug*) workflow=LEAN; risk=false; skills='[]' ;;
     *API\ endpoint*) workflow=STRICT; risk=false; skills='[]' ;;
+    *repository-wide\ architecture*) workflow=STRICT; risk=false; skills='[]' ;;
+    *architecture\ across\ several\ subsystems*) workflow=DEEP; risk=false; skills='["codex-baseline-deep-work"]' ;;
     *authentication-token\ storage*) workflow=DEEP; risk=true; skills='["codex-baseline-deep-work"]' ;;
     *unfamiliar\ existing\ repository*) workflow=DEEP; risk=false; skills='["codex-baseline-repo-onboarding"]' ;;
     *original\ master\ request*) workflow=STRICT; risk=false; skills='["codex-baseline-conformance-review"]' ;;

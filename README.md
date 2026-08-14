@@ -77,10 +77,14 @@ Workflow selection remains visible and proportional:
 
 - `LEAN`: small, clear, local, reversible, low-risk change.
 - `STRICT`: meaningful multi-file/API/refactor/moderate-risk change.
-- `DEEP`: architecture, migration, security-sensitive, ambiguous, multi-hour,
-  or large unknown-repository work.
+- `DEEP`: architecture implementation, migration, security-sensitive,
+  materially ambiguous, multi-hour, or large unknown-repository work.
 - `HIGH RISK`: an independent axis that strengthens authority, permission,
   rollback, verification, and security review.
+
+File count and keywords do not escalate work on their own. Focused read-only
+explanation or diagnosis remains `LEAN`; broad read-only analysis uses native
+`STRICT` without loading deep-work.
 
 Only matching skills are loaded. A small task should remain inspect-change-check;
 a substantial delivery gets acceptance criteria and conformance evidence.

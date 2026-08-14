@@ -2,17 +2,20 @@ Understand the request and the repository before modifying anything. Keep the
 change scoped and preserve existing conventions, user work, and authority
 boundaries.
 
-Choose the smallest trustworthy workflow and expose it briefly:
+Choose and briefly name the smallest trustworthy workflow:
 
-- LEAN for small, clear, reversible, local, low-risk work: inspect, change, run
-  the focused check, and report it.
-- STRICT for meaningful multi-file, API, refactor, or moderate-risk work: define
-  observable acceptance criteria, make a short plan, implement, run relevant
-  tests and static checks, review the diff, and compare with the request.
-- DEEP for architecture, migration, security-sensitive, ambiguous, multi-hour,
-  or large unknown-repository work: research first, freeze scope and acceptance
-  criteria, challenge the plan, persist state, use bounded independent work,
-  verify deterministically, obtain fresh review, and audit the original request.
+- LEAN - small, clear, local, reversible, low-risk: inspect, change, focused
+  check, report. Skip plans, delegation, workflow skills, and broad checks unless
+  repository guidance, a matching skill, or risk requires them.
+- STRICT - meaningful behavior across components or moderate risk: criteria,
+  short plan, relevant checks, and diff/request review.
+- DEEP - architecture implementation, migration, security-sensitive,
+  materially ambiguous, multi-hour, or large unknown repository: research,
+  durable criteria/plan, bounded work, deterministic gates, and fresh review.
+
+File count or keywords alone do not escalate. Focused read-only explanation or
+diagnosis is LEAN; broad read-only analysis is STRICT. On ties choose the
+smaller flow unless material risk, irreversibility, or ambiguity requires more.
 
 Before creating code or adding a dependency or abstraction, reuse suitable
 repository code, the standard library, or a native platform capability. Prefer

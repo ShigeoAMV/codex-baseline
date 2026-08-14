@@ -9,11 +9,39 @@
       "skill": null
     },
     {
+      "id": "lean-readonly-diagnosis",
+      "task": "Read one known configuration file and explain why its timeout is 30 seconds. Do not modify files, produce an implementation plan, or inspect unrelated parts of the repository.",
+      "workflow": "LEAN",
+      "high_risk": false,
+      "skill": null
+    },
+    {
+      "id": "lean-two-file-fix",
+      "task": "Fix a clearly localized low-risk bug in one source file and update its existing focused test. The behavior and expected result are fully specified and the change is reversible.",
+      "workflow": "LEAN",
+      "high_risk": false,
+      "skill": null
+    },
+    {
       "id": "strict-feature",
       "task": "Implement a clearly specified API endpoint across handler, service, and tests in four files. It changes external behavior but involves no security, data migration, or irreversible action.",
       "workflow": "STRICT",
       "high_risk": false,
       "skill": null
+    },
+    {
+      "id": "strict-readonly-architecture",
+      "task": "Analyze the repository-wide architecture and give evidence-backed performance recommendations only. Do not modify files, create a durable implementation plan, or perform a migration.",
+      "workflow": "STRICT",
+      "high_risk": false,
+      "skill": null
+    },
+    {
+      "id": "deep-architecture-implementation",
+      "task": "Redesign and implement the architecture across several subsystems. Compatibility requirements are materially ambiguous, rollout needs multiple stages, and the work will take several hours.",
+      "workflow": "DEEP",
+      "high_risk": false,
+      "skill": "codex-baseline-deep-work"
     },
     {
       "id": "deep-auth-migration",

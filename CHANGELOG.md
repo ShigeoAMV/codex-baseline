@@ -5,6 +5,12 @@ manifest version, payload checks, platform evidence, and this log together.
 
 ## 0.2.0 - 2026-08-14
 
+- Prefer the smaller workflow at ambiguous routing boundaries unless material
+  risk, irreversibility, or requirement ambiguity justifies escalation.
+- Keep focused read-only diagnosis and small test-backed fixes in LEAN, and keep
+  broad read-only architecture analysis in native STRICT without deep-work.
+- Add four false-escalation routing fixtures while preserving genuine DEEP and
+  HIGH-RISK coverage.
 - Add an installed-runtime self-update path with `update --check`, remote
   preview/apply, explicit local mode, and reviewed offline archive support.
 - Download only fixed public GitHub release metadata/assets with bounded HTTPS

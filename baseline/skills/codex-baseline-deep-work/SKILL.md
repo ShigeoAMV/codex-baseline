@@ -1,6 +1,6 @@
 ---
 name: codex-baseline-deep-work
-description: Run a bounded evidence-driven workflow for architecture, migrations, security-sensitive changes, multi-hour autonomous work, large unknown repositories, major refactors, or requests with material ambiguity and multiple acceptance criteria. Use for DEEP work or when explicitly asked for a rigorous spec-to-verification process. Do not trigger for small clear fixes, routine documentation, simple configuration, or a task that a focused inspect-change-check loop can safely complete.
+description: Run a bounded evidence-driven workflow for architecture implementation, migrations, security-sensitive changes, multi-hour autonomous work, large unknown repositories, major refactors, or requests with material ambiguity and multiple acceptance criteria. Use for DEEP work or when explicitly asked for a rigorous spec-to-verification process. Do not trigger for read-only explanation, diagnosis, or architecture orientation without a requested durable plan; also exclude small clear fixes, routine documentation, simple configuration, and tasks a focused inspect-change-check loop can safely complete.
 ---
 
 # Codex Baseline Deep Work
