@@ -1,0 +1,24 @@
+Codex Baseline release attestation v1
+
+timestamp_utc: 2026-08-14T09:04:48Z
+
+commit: 3f3e16c3513f2b5a33f6a6098f31d302ae34f520
+tree: 7c0e4022e4fde5c815e74174f0dc7d8843f1baaf
+payload: 0aeca7d204f1007e5490540261ee33e9d76874999a995215f9183bfdff81e7d4
+source_state: clean
+
+closed finding: extensions.worktreeConfig/config.worktree executable-config bypass identified independently by security, architecture, and conformance review of parent 0fd0ca8. The candidate rejects extensions.worktreeConfig fail-closed before provenance Git use and proves a config.worktree process-filter marker is not executed.
+
+postcommit_unix_command: ./tests/run.sh
+postcommit_unix_exit: 0
+postcommit_unix_result: 12/12
+postcommit_unix_log_sha256: 4151e215b10eab65d9f54d4f5ce8e3aec3416d5cbbc9d95521698ca73d4dd151
+
+postcommit_windows_command: ./tests/run-powershell.sh
+postcommit_windows_exit: 0
+postcommit_windows_result: lifecycle 95; onboarding/benchmark 69; PowerShell 5.1.26100.8875
+postcommit_windows_log_sha256: 062fbe61776a8b6e9f8bfa37efb2b507291a7349506a65d8bc66a7f809b16a57
+
+postconditions: HEAD unchanged; worktree clean; manifest payload regenerated and exact; git diff HEAD empty. Final independent delta reviews pending.
+
+remaining_external_gates: three real-model checkout evaluations with one short-lived dedicated API key; direct skill-activation telemetry or explicit acceptance of its probabilistic limitation; owner-controlled publisher signing identity and explicit license for public release.
