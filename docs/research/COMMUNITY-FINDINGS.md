@@ -1,6 +1,6 @@
 # Community and research findings
 
-Research date: 2026-08-13
+Research date: 2026-08-14
 
 Community posts and issue reports locate failure surfaces. They do not establish
 prevalence or effectiveness. Papers are labelled by strength and scope; very
@@ -25,6 +25,9 @@ recent 2026 preprints need replication.
    Reversible discovery can proceed; risky or irreversible ambiguity needs a
    real clarification/authority gate.
 8. Hooks are useful policy/telemetry aids but not a complete security boundary.
+9. Output reduction is not task-cost reduction. Evaluate the provider bill,
+   turns, latency, retries, and correctness on paired tasks rather than trusting
+   a tool's byte counter or one model/provider result.
 
 ## Primary research
 
@@ -120,6 +123,35 @@ narrower than autonomous issue solving, so this is directional evidence, not a
 complete harness benchmark.
 
 ## Community and upstream failure surfaces
+
+### Token and context optimizers
+
+A July 2026 JetBrains paired-evaluation series provides the strongest
+independent comparison found, while remaining Claude-specific:
+
+- a forcibly activated Caveman skill reduced output tokens by 8.5%, not the
+  advertised 65%, because code and tool calls dominated agent work;
+- RTK v0.43.0 produced real per-command compression but increased median
+  low-effort task cost by 7.6% and was neutral at high effort; its internal
+  counter substantially overstated the provider counterfactual;
+- Ponytail v4.8.4 reduced median task cost by 10.3%, time by 11%, and written
+  code by 15% without a detected task-score difference. Its own OpenAI
+  reproduction nevertheless measured GPT-5.5 at 38.7% higher cost and slightly
+  slower, demonstrating that prompt-level optimization is model-specific.
+
+The newer CtxWire, Caveman 2 input proxy, Headroom releases, and JetBrains
+Context have useful mechanisms but no independent current Codex-on-Windows
+full-task result. CtxWire adds command hooks/approval behavior; Caveman 2 and
+Headroom interpose on provider traffic; JetBrains Context requires a service
+subscription and targets large-repository retrieval rather than general output
+compression.
+
+Design response: install none by default. Extract only a compact invariant that
+checks existing repository code, the standard library, and native platform
+capabilities before adding dependencies or abstractions, with validation,
+security, accessibility, compatibility, tests, and requested behavior outside
+the simplification budget. Keep external tools isolated until paired results on
+the current Codex/GPT stack show a net benefit.
 
 ### Subagent lifecycle
 

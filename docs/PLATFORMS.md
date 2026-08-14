@@ -3,7 +3,7 @@
 Status vocabulary is fixed: `tested`, `partially tested`, `statically validated`,
 `unsupported`, or `not verified`.
 
-| Surface | Status for 0.1.0 | Evidence / boundary |
+| Surface | Status for 0.1.1 | Evidence / boundary |
 | --- | --- | --- |
 | WSL2 Ubuntu 26.04 lifecycle | tested | 12/12 Unix end-to-end groups, including real SIGKILL recovery, provenance, symlink/race boundaries, onboarding, benchmark/routing mechanics, worktree isolation, and discovery |
 | Linux CLI implementation | partially tested | Executed under WSL2 Linux kernel/filesystem; shell/static behavior covered, separate bare-metal distro run absent |

@@ -39,7 +39,7 @@ CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
 Execute the script paths directly; do not prefix them with an ambient `bash`.
 `--expected-codex-sha256 HASH` is equivalent to the hash environment variable.
 
-All three live commands are Linux/WSL-only in v0.1.0. `--tasks` and
+All three live commands are Linux/WSL-only in v0.1.1. `--tasks` and
 `--repetitions` apply to paired mode, not Canary mode; mode flags are mutually
 exclusive. Per-invocation timeout is bounded to 1-1,800 seconds; its transient
 service gets a slightly longer hard runtime and whole-control-group kill.
@@ -129,7 +129,7 @@ A strong release experiment therefore uses rotated private holdouts or an
 external container/VM/service whose worker cannot mount this checkout or
 verifier. Windows PowerShell currently validates the manifest/contracts and
 labels Bash verifier execution `not-executed-native-static`; live paired
-evaluation is Linux/WSL-only in v0.1.0.
+evaluation is Linux/WSL-only in v0.1.1.
 
 Behavior probes use `codex debug prompt-input` for deterministic proof that the
 global block, skill metadata, root project guidance, and nested refinement are

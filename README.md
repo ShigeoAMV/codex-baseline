@@ -5,7 +5,7 @@ Windows. It adds universal engineering invariants, four progressively disclosed
 skills, safe repository onboarding, health/lifecycle operations, and a paired
 evaluation harness without installing an external orchestration framework.
 
-> **Status:** v0.1.0 is an Apache-2.0-licensed public source preview. The
+> **Status:** v0.1.1 is an Apache-2.0-licensed public source preview. The
 > deterministic Linux/WSL and native PowerShell evidence is recorded, while
 > repeated real-model routing and paired A/B evaluation remains explicitly
 > pending. Release provenance is currently unsigned, so installation retains
@@ -41,7 +41,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-baseline
 & "$HOME\.local\bin\codex-baseline.ps1" doctor
 ```
 
-The v0.1.0 checkout is an unsigned local source. Both installers verify every
+The v0.1.1 checkout is an unsigned local source. Both installers verify every
 installable file against the versioned path/byte/SHA-256 manifest, print source
 origin, revision/dirty state when available, trust label, and aggregate payload
 hash, then require explicit acknowledgement before mutation. That proves the
@@ -120,7 +120,7 @@ CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
   scripts/benchmark.sh --canary
 ```
 
-These live commands are Linux/WSL-only in v0.1.0, consume account quota, and
+These live commands are Linux/WSL-only in v0.1.1, consume account quota, and
 never mount or copy normal Codex auth/session files. The routing command also
 runs read-only, host-verified DEEP/high-risk planning, ambiguity, onboarding,
 and conformance cases. Each Codex arm runs in a fresh Bubblewrap filesystem with

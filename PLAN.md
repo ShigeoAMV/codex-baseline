@@ -33,7 +33,7 @@ complete.
 
 | Milestone | State | Exit evidence |
 | --- | --- | --- |
-| 1. Evidence and challenged architecture | Complete | Five research records, 19 decisions, two independent critiques and disposition |
+| 1. Evidence and challenged architecture | Complete | Five research records, 20 decisions, two independent critiques and disposition |
 | 2. Portable install and rollback core | Complete | Unix lifecycle suite and native PowerShell 5.1 lifecycle suite |
 | 3. Repository onboarding | Complete | Static untrusted-repo fixture; dry-run/apply/idempotence/link/secret/no-exec checks |
 | 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, six classifications and four host-verified behavior cases; repeated real-model probes pending |

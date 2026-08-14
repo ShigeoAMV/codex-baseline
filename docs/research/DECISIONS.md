@@ -1,6 +1,6 @@
 # Evidence-driven architecture decisions
 
-Research date: 2026-08-13
+Research date: 2026-08-14
 
 Status: **accepted with reconciled changes**. A fresh-context review returned
 `accept-with-changes`; the finding disposition is recorded in
@@ -134,6 +134,8 @@ The block contains only:
 
 - understand before modifying and keep scope bounded;
 - choose and briefly expose LEAN/STRICT/DEEP plus a risk axis;
+- reuse suitable repository, standard-library, and native platform mechanisms
+  before adding dependencies or abstractions, without cutting required guards;
 - research discoverable facts before questions;
 - use deterministic checks and never claim an unrun check;
 - protect original acceptance criteria and authority boundaries;
@@ -463,6 +465,29 @@ license observation. It validates the contract and reports staleness offline;
 normal health checks need no `jq`. The documented networked refresh workflow
 starts from the pinned primary URLs, produces a reviewable diff, and never
 auto-edits guidance, code, or decisions.
+
+## D020 - Extract native minimalism; do not stack token-saving middleware
+
+**Decision:** Before adding code, dependencies, abstractions, or custom tooling,
+check for suitable repository code, the standard library, and native platform
+capabilities. Prefer the smallest correct implementation, while keeping
+required validation, error handling, security, accessibility, compatibility,
+tests, and requested behavior outside the simplification budget.
+
+**Why:** Independent full-task evidence does not support universal output
+compression. RTK compressed selected commands but did not reduce complete
+Claude agent cost; Caveman's terse-output gain was modest; CtxWire and Caveman 2
+lack independent current Codex/Windows evidence; and Headroom expands the
+provider/config/runtime boundary. Ponytail's implementation ladder produced the
+only clear independent Claude saving, but its own GPT-5.5 result reversed to
+higher cost and latency. The reusable value is the small decision ladder, not
+the plugin, always-on Node hooks, or model-specific personality layer.
+
+**Guardrail:** The invariant remains inside D004's fixed context budget. No
+token-saving hook, proxy, provider rewrite, shim set, plugin, MCP server, or
+telemetry is installed. Any future optimizer must run in an isolated profile
+and prove lower paired provider cost/latency without worse correctness, safety,
+scope, or recovery on the then-current Codex and target platform.
 
 ## Expected daily experience
 

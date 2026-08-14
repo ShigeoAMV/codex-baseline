@@ -1,6 +1,6 @@
 # Candidate evaluation
 
-Research date: 2026-08-13
+Research date: 2026-08-14
 
 Decision vocabulary:
 
@@ -119,7 +119,7 @@ Each entry explicitly answers the mission policy in order: **C** capability,
   Proof Loop Windows evidence weak; D clean standalone removal; E narrow paired
   verifier comparison before adding either dependency.
 
-No external framework is adopted in v0.1.0, so the policy's adoption benchmark
+No external framework is adopted in v0.1.1, so the policy's adoption benchmark
 condition is not triggered. Extracted mechanisms are independently tested by
 the baseline routing, lifecycle, conformance, and evaluation contracts.
 
@@ -138,6 +138,22 @@ the baseline routing, lifecycle, conformance, and evaluation contracts.
 | Doubt-driven development | Current [skill](https://github.com/addyosmani/agent-skills/blob/main/skills/doubt-driven-development/SKILL.md); no independent outcome evidence | Fresh critic over contract plus artifact, bounded to three rounds. Useful only when criticism yields new evidence. | **Extract as DEEP/risk option**, measure actionable yield and false positives |
 | TDD-oriented workflow | TDD-Bench and related research support executable fail-to-pass tests, but visible tests remain incomplete and gameable | Strong verification mechanism when behavior is testable; should not force low-value tests for docs/config or replace integration/security criteria | **Adopt proportionally**, require fail-before where feasible and wider checks by risk |
 | Context-engineering approaches | Repository-completion research consistently favors targeted structure/dependency retrieval over broad dumps | Task retrieval generalizes imperfectly to autonomous work but aligns with native progressive disclosure and indexed discovery | **Adopt mechanism**, not a new framework |
+
+## Token and context optimizers
+
+Headline percentages below are not treated as savings unless a paired full-task
+measurement supports them. Command-output bytes, provider input tokens, model
+output tokens, cached input, task cost, latency, and correctness are different
+metrics.
+
+| Candidate | Current upstream and platform evidence | End-to-end evidence and risk | Decision |
+| --- | --- | --- | --- |
+| [RTK](https://github.com/rtk-ai/rtk), [v0.45.0](https://github.com/rtk-ai/rtk/releases/tag/v0.45.0) | Apache-2.0, active, native Windows binary and WSL support. Current Codex setup installs `AGENTS.md` plus `RTK.md` instructions rather than a transparent Codex hook. | Individual filters materially reduce some verbose command outputs. A pinned independent Claude Code evaluation measured 7.6% higher median task cost at low effort and no difference at high effort; most session bytes never crossed the Bash hook. Tool-owned `gain` estimates are not equivalent to provider billing. | **Reject default installation**; direct, pinned command-level comparator only if a repository proves a noisy-output bottleneck |
+| [CtxWire](https://github.com/pivanov/ctx-wire), [0.1.65](https://github.com/pivanov/ctx-wire/releases/tag/0.1.65) | MIT, created June 2026, native Windows installer, secret scrubbing, recoverable local logs, and current Codex PreToolUse integration. | No independent full-session Codex/Windows benchmark. Codex wiring adds a hook and modifies user config; wrapped commands are auto-approved by default unless its safer mode is selected. The young project has a much smaller operational history than RTK. | **Experimental only** in a separate Codex home, with safe mode, no broad shims/MCP wrapping, and paired bill/correctness measurement |
+| [Caveman](https://github.com/JuliusBrussee/caveman), [v2.0.0](https://github.com/JuliusBrussee/caveman/releases/tag/v2.0.0) | The terse-output skill is MIT and Windows-compatible; the new input-compression proxy/runtime is BSL-1.1 and changes the provider boundary. | An independent forced-skill Claude benchmark measured 8.5% fewer output tokens, far below the historical 65% claim. Caveman 2 reports 33.2% fewer provider input tokens in its own pinned Claude benchmark, but was released three days before this review and has no independent Codex/Windows result. | **Reject core and proxy**; concise final responses remain a native style choice |
+| [Ponytail](https://github.com/DietrichGebert/ponytail), [v4.9.0](https://github.com/DietrichGebert/ponytail/releases/tag/v4.9.0) | MIT Codex plugin with Node lifecycle hooks. It promotes reuse, standard-library/native capabilities, and minimal correct implementations. | The strongest independent result among the group measured 10.3% lower median cost, 11% lower time, and 15% less written code on Claude. Ponytail's own OpenAI benchmark measured GPT-5.5 at 38.7% higher cost and slightly slower; results are model-specific, and the safety evaluation was not a security proof. | **Extract** the small implementation ladder with explicit correctness/safety exclusions; **reject plugin/hooks by default** until current Codex/GPT paired evidence is positive |
+| [Headroom](https://github.com/headroomlabs-ai/headroom), [v0.35.0](https://github.com/headroomlabs-ai/headroom/releases/tag/v0.35.0) | Apache-2.0 Python proxy/MCP/library with broad Codex support and substantial active development. | Much larger provider/config/runtime surface than command filters. An open Windows report reproduces large-JSON MCP/direct hangs and observed only about 1% Codex proxy compression on that workload; newer releases do not yet close the published issue. | **Reject core**; specialized isolated evaluation only after the Windows issue and provider-compatibility surface are proven |
+| [JetBrains Context](https://github.com/JetBrains/context), [v0.9.8](https://github.com/JetBrains/context/releases/tag/v0.9.8) | Early-access semantic repository index for Codex CLI and other agents; requires a JetBrains AI subscription and a separately distributed runtime. | Vendor evaluations across open-source and production tasks report up to 68% fewer turns, 59% lower latency, and 48% lower cost on large repositories. No independent Codex/Windows reproduction was found, and small repositories have less retrieval upside. | **Experimental** for large/multi-repository discovery bottlenecks; not a universal token saver or core dependency |
 
 ## Cross-candidate conclusion
 

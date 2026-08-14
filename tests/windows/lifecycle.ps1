@@ -280,10 +280,10 @@ exit 1
     Assert-True ([System.Linq.Enumerable]::SequenceEqual($originalBytes, [System.IO.File]::ReadAllBytes($agentsFile))) 'dry-run must preserve AGENTS bytes'
 
     $installOutput = Invoke-Baseline @('install')
-    Assert-True ($installOutput -match 'installed codex-baseline 0\.1\.0') 'clean install must report version'
+    Assert-True ($installOutput -match 'installed codex-baseline 0\.1\.1') 'clean install must report version'
     $agentsText = [System.IO.File]::ReadAllText($agentsFile, $script:Utf8NoBom)
     Assert-True ($agentsText.StartsWith($originalText, [System.StringComparison]::Ordinal)) 'install must preserve existing guidance prefix'
-    Assert-True ($agentsText -match '<!-- codex-baseline:begin version=0\.1\.0 -->') 'managed block must be installed'
+    Assert-True ($agentsText -match '<!-- codex-baseline:begin version=0\.1\.1 -->') 'managed block must be installed'
     Assert-True ((Get-ChildItem -LiteralPath (Join-Path $env:AGENTS_HOME 'skills') -Directory).Count -eq 4) 'exactly four baseline skills must be installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'agents\codex-baseline-reviewer.toml') -PathType Leaf) 'reviewer must be installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline\runtime\scripts\codex-baseline.ps1') -PathType Leaf) 'Windows runtime entry point must be installed'
@@ -332,7 +332,7 @@ exit 1
     $doctorGolden = [System.IO.File]::ReadAllText((Join-Path $script:RepositoryRoot 'contracts\golden\doctor-windows.json'), $script:Utf8NoBom) | ConvertFrom-Json
     Assert-True ($doctorJson.platform -eq 'native-windows') 'doctor must label native Windows explicitly'
     Assert-True ($doctorJson.contract -eq 'codex-baseline-doctor/v1') 'doctor must emit the shared v1 report contract'
-    Assert-True ($doctorJson.baseline_version -eq '0.1.0') 'doctor must report the installed baseline version'
+    Assert-True ($doctorJson.baseline_version -eq '0.1.1') 'doctor must report the installed baseline version'
     Assert-True ($doctorJson.source_provenance.scope -eq 'local-source' -and $doctorJson.source_provenance.trust -eq 'unsigned-local-source') 'source invocation must report explicit local-source trust provenance'
     Assert-True ($doctorJson.codex_verification -eq 'unverified-native-codex-not-installed') 'missing native Codex must be labelled unverified'
     Assert-True ($doctorJson.managed_objects.ok -eq 8 -and $doctorJson.managed_objects.total -eq 8) 'doctor must report all managed objects through the shared shape'
