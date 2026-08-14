@@ -73,7 +73,7 @@ refresh_test_source_manifest() {
 
 test_static_quality() {
   local schema_fixture="$TEST_TMP/schema-fixture.json" source_tree="$TEST_TMP/source-hash" snapshot="$TEST_TMP/source-snapshot"
-  local hash_before hash_after scan_tree="$TEST_TMP/evaluation-scan-state" git_guard="$TEST_TMP/evaluation-git-guard"
+  local hash_before hash_after git_status scan_tree="$TEST_TMP/evaluation-scan-state" git_guard="$TEST_TMP/evaluation-git-guard"
   bash -n "$TEST_ROOT/scripts/"*.sh "$TEST_ROOT/scripts/lib/"*.sh "$TEST_ROOT/benchmarks/verifiers/"*.sh \
     "$TEST_ROOT/tests/behavior/"*.sh "$TEST_ROOT/tests/behavior/verifiers/"*.sh
   shellcheck "$TEST_ROOT/scripts/lib/common.sh" "$TEST_ROOT/scripts/lib/evaluation.sh" "$TEST_ROOT/scripts/codex-baseline.sh" \
@@ -86,6 +86,9 @@ test_static_quality() {
     jq -e . "$json" >/dev/null
   done
   jq -e . "$TEST_ROOT/tests/behavior/cases.json" "$TEST_ROOT/tests/behavior/output.schema.json" "$TEST_ROOT/tests/behavior/starter.json" >/dev/null
+  jq -e --slurpfile output "$TEST_ROOT/tests/behavior/output.schema.json" \
+    '.["$defs"].behavior_output == ($output[0] | del(."$schema"))' \
+    "$TEST_ROOT/contracts/behavior-result.schema.json" >/dev/null
   jq -e '
     .contract == "codex-baseline-operations/v1" and
     .transaction_states == ["planned","prepared","committing","recovering","committed","rolled-back"] and
@@ -182,7 +185,7 @@ test_static_quality() {
     [[ $- == *e* && $(set -o | awk '\''$1 == "pipefail" { print $2 }'\'') == on ]]
   ' _ "$TEST_ROOT" "$scan_tree"
 
-  mkdir -p -- "$git_guard/repo" "$git_guard/home"
+  mkdir -p -- "$git_guard/repo"
   printf 'tracked\n' >"$git_guard/repo/tracked.txt"
   printf '#!/bin/sh\n: >%q\nprintf "%%s\\n" "2 0000000000000000000000000000000000000000"\n' \
     "$git_guard/fsmonitor-invoked" >"$git_guard/fsmonitor"
@@ -190,13 +193,49 @@ test_static_quality() {
   git -C "$git_guard/repo" init -q
   git -C "$git_guard/repo" -c user.name=codex-baseline -c user.email=baseline.invalid add tracked.txt
   git -C "$git_guard/repo" -c user.name=codex-baseline -c user.email=baseline.invalid commit -qm starter
-  git -C "$git_guard/repo" config core.fsmonitor "$git_guard/fsmonitor"
-  /bin/bash -c '
+  git_status=$(/bin/bash -c '
     source "$1/scripts/lib/common.sh"
     source "$1/scripts/lib/evaluation.sh"
-    eval_git "$2/repo" "$2/home" diff --quiet --no-ext-diff --no-textconv HEAD --
-  ' _ "$TEST_ROOT" "$git_guard"
+    eval_validate_system_boundary
+    eval_require_cgroup_boundary
+    eval_source_git "$2/repo" "$2/home-clean" --status
+  ' _ "$TEST_ROOT" "$git_guard")
+  [[ $git_status == "$(git -C "$git_guard/repo" rev-parse HEAD)"$'\t'false ]]
+  git -C "$git_guard/repo" config core.fsmonitor "$git_guard/fsmonitor"
+  if /bin/bash -c '
+    source "$1/scripts/lib/common.sh"
+    source "$1/scripts/lib/evaluation.sh"
+    eval_validate_system_boundary
+    eval_require_cgroup_boundary
+    eval_source_git "$2/repo" "$2/home-fsmonitor" diff --quiet --no-ext-diff --no-textconv HEAD --
+  ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
   test ! -e "$git_guard/fsmonitor-invoked"
+  git -C "$git_guard/repo" config --unset core.fsmonitor
+  printf '#!/bin/sh\n: >%q\nexit 97\n' "$git_guard/filter-invoked" >"$git_guard/filter"
+  chmod 0755 -- "$git_guard/filter"
+  git -C "$git_guard/repo" config filter.evil.process "$git_guard/filter"
+  printf 'tracked.txt filter=evil\n' >"$git_guard/repo/.git/info/attributes"
+  if /bin/bash -c '
+    source "$1/scripts/lib/common.sh"
+    source "$1/scripts/lib/evaluation.sh"
+    eval_validate_system_boundary
+    eval_require_cgroup_boundary
+    eval_source_git "$2/repo" "$2/home-filter" diff --quiet --no-ext-diff --no-textconv HEAD --
+  ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
+  test ! -e "$git_guard/filter-invoked"
+  git -C "$git_guard/repo" config --unset filter.evil.process
+  printf '#!/bin/sh\n: >%q\nexit 97\n' "$git_guard/textconv-invoked" >"$git_guard/textconv"
+  chmod 0755 -- "$git_guard/textconv"
+  git -C "$git_guard/repo" config diff.evil.textconv "$git_guard/textconv"
+  printf 'tracked.txt diff=evil\n' >"$git_guard/repo/.git/info/attributes"
+  if /bin/bash -c '
+    source "$1/scripts/lib/common.sh"
+    source "$1/scripts/lib/evaluation.sh"
+    eval_validate_system_boundary
+    eval_require_cgroup_boundary
+    eval_source_git "$2/repo" "$2/home-textconv" diff --quiet --no-ext-diff --no-textconv HEAD --
+  ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
+  test ! -e "$git_guard/textconv-invoked"
 
   mkdir -p -- "$source_tree/excluded" "$source_tree/benchmark-results" "$source_tree/behavior-results" "$source_tree/.codebase-memory" "$snapshot"
   printf 'source\n' >"$source_tree/tracked.txt"
@@ -643,7 +682,8 @@ test_benchmark_contract() {
       --ro-bind "$TEST_ROOT/scripts/lib/common.sh" /eval-lib/common.sh \
       --ro-bind "$TEST_ROOT/scripts/lib/evaluation.sh" /eval-lib/evaluation.sh \
       --setenv CODEX_BASELINE_EVAL_PID_NAMESPACE 1 --setenv HOME /tmp --setenv PATH /usr/bin:/bin \
-      /usr/bin/bash -c 'source /eval-lib/common.sh; source /eval-lib/evaluation.sh; /usr/bin/sleep 30 & eval_quiesce_worker_processes; printf "%s\n" worker-quiescence-pass'
+      /usr/bin/bash -c 'source /eval-lib/common.sh; source /eval-lib/evaluation.sh; [[ $1 == '\''${CODEX_BASELINE_UNSET_LITERAL}'\'' ]]; /usr/bin/sleep 30 & eval_quiesce_worker_processes; printf "%s\n" worker-quiescence-pass' \
+      _ '${CODEX_BASELINE_UNSET_LITERAL}'
   ) >"$quiescence_log" 2>&1
   grep -q '^worker-quiescence-pass$' "$quiescence_log"
   set +e
@@ -907,6 +947,7 @@ test_benchmark_contract() {
   installed_result=$(sed -n 's/^containment canary passed: //p' "$installed_root/wrapper-canary.log")
   [[ $installed_result == "$installed_root/home/.local/state/codex-baseline/behavior-results/"* ]]
   test -f "$installed_result/canary.json"
+  jq -e '.source_revision == "unversioned" and .source_dirty == null' "$installed_result/run.json" >/dev/null
   baseline "$installed_root" doctor >/dev/null
   installed_bad="$installed_root/home/.codex/codex-baseline/runtime/behavior-results/forbidden"
   set +e

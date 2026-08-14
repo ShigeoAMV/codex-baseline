@@ -165,8 +165,110 @@ eval_git() {
     -c core.fsmonitor=false -c commit.gpgsign=false -c tag.gpgsign=false "$@"
 }
 
+eval_source_is_installed_runtime() {
+  local source_root=$1 code_home runtime
+  code_home=${CODEX_HOME:-"$HOME/.codex"}
+  [[ $code_home == /* ]] || return 1
+  runtime=$($EVAL_REALPATH -ms -- "$code_home/codex-baseline/runtime") || return 1
+  [[ $source_root == "$runtime" && -f $source_root/baseline/manifest.json &&
+      ! -L $source_root/baseline/manifest.json ]]
+}
+
+# Source provenance must not execute repository-local Git helpers on the host.
+# Freeze ordinary Git metadata before use, reject every configuration key that
+# can launch a hook/filter/diff helper, and run the remaining read-only command
+# in the same networkless cgroup/Bubblewrap class as other host verifiers.
+eval_source_git() {
+  local repository=$1 isolated_home=$2 live_git_dir snapshot_git_dir expected_file
+  local before after snapshot_hash expected unsafe_config status=0
+  local unsafe_pattern='^(include|includeif)\.|^filter\..*\.(clean|smudge|process|required)$|^diff\..*\.(command|textconv)$|^core\.(fsmonitor|hookspath)$'
+  local -a scoped_command
+  shift 2
+  [[ $repository == /* && -d $repository && ! -L $repository && -d $repository/.git && ! -L $repository/.git ]] ||
+    cb_die 'live evaluation source must use an ordinary non-linked .git directory'
+  live_git_dir=$($EVAL_REALPATH -e -- "$repository/.git") || cb_die 'cannot resolve source Git metadata'
+  [[ $live_git_dir == "$repository/.git" ]] || cb_die 'source Git metadata resolves outside the source root'
+  mkdir -p -- "$isolated_home"
+  snapshot_git_dir="$isolated_home/git-metadata"
+  expected_file="$isolated_home/git-metadata.sha256"
+  if [[ ! -e $snapshot_git_dir && ! -e $expected_file ]]; then
+    before=$(cb_tree_hash "$live_git_dir")
+    mkdir -- "$snapshot_git_dir"
+    cb_copy_source_tree "$live_git_dir" "$snapshot_git_dir"
+    after=$(cb_tree_hash "$live_git_dir")
+    snapshot_hash=$(cb_tree_hash "$snapshot_git_dir")
+    [[ $before == "$after" && $before == "$snapshot_hash" ]] ||
+      cb_die 'source Git metadata changed while creating its private snapshot'
+    printf '%s\n' "$snapshot_hash" >"$expected_file"
+  fi
+  [[ -d $snapshot_git_dir && ! -L $snapshot_git_dir && -f $expected_file && ! -L $expected_file ]] ||
+    cb_die 'incomplete private source Git metadata snapshot'
+  IFS= read -r expected <"$expected_file" || cb_die 'cannot read private source Git metadata hash'
+  [[ $expected =~ ^[0-9a-f]{64}$ && $(cb_tree_hash "$live_git_dir") == "$expected" &&
+      $(cb_tree_hash "$snapshot_git_dir") == "$expected" ]] ||
+    cb_die 'source Git metadata changed after it was frozen'
+  if unsafe_config=$($EVAL_ENV -i HOME=/home PATH=/usr/bin:/bin LC_ALL=C GIT_CONFIG_NOSYSTEM=1 \
+      GIT_CONFIG_GLOBAL=/dev/null /usr/bin/git --git-dir="$snapshot_git_dir" \
+      config --local --no-includes --name-only --get-regexp "$unsafe_pattern" 2>/dev/null); then
+    cb_die "source Git metadata enables executable configuration: ${unsafe_config%%$'\n'*}"
+  else
+    status=$?
+    [[ $status -eq 1 ]] || cb_die 'cannot validate source Git configuration'
+  fi
+  if [[ $# -eq 1 && $1 == --status ]]; then
+    # The script is intentionally expanded only inside the isolated Bash.
+    # shellcheck disable=SC2016
+    scoped_command=(/bin/bash -c '
+      set -Eeuo pipefail
+      git_command=(/usr/bin/git --git-dir=/git-metadata --work-tree=/source
+        -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat
+        -c commit.gpgsign=false -c tag.gpgsign=false)
+      revision=$("${git_command[@]}" rev-parse HEAD)
+      dirty=false
+      set +e
+      "${git_command[@]}" diff --quiet --no-ext-diff --no-textconv --ignore-submodules HEAD --
+      diff_status=$?
+      set -e
+      case $diff_status in 0) ;; 1) dirty=true ;; *) exit "$diff_status" ;; esac
+      untracked=$("${git_command[@]}" ls-files --others --exclude-standard --directory)
+      [[ -z $untracked ]] || dirty=true
+      printf "%s\t%s\n" "$revision" "$dirty"
+    ')
+  else
+    scoped_command=(/usr/bin/git --git-dir=/git-metadata --work-tree=/source -c core.hooksPath=/dev/null
+      -c core.fsmonitor=false -c core.pager=cat -c commit.gpgsign=false -c tag.gpgsign=false "$@")
+  fi
+  status=0
+  eval_run_scoped_command 20 \
+    "$EVAL_ENV" -i HOME=/home PATH=/usr/bin:/bin LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_OPTIONAL_LOCKS=0 GIT_PAGER=cat \
+    "$EVAL_BWRAP" --unshare-all --unshare-user --disable-userns --die-with-parent --new-session --clearenv --cap-drop ALL \
+    --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+    --proc /proc --dev /dev --size 16777216 --tmpfs /tmp --dir /home \
+    --ro-bind "$repository" /source --ro-bind "$snapshot_git_dir" /git-metadata \
+    --setenv HOME /home --setenv PATH /usr/bin:/bin --setenv LC_ALL C --setenv GIT_CONFIG_NOSYSTEM 1 \
+    --setenv GIT_CONFIG_GLOBAL /dev/null --setenv GIT_OPTIONAL_LOCKS 0 --setenv GIT_PAGER cat \
+    "${scoped_command[@]}" || status=$?
+  [[ $(cb_tree_hash "$live_git_dir") == "$expected" && $(cb_tree_hash "$snapshot_git_dir") == "$expected" ]] ||
+    cb_die 'source Git metadata changed during a provenance command'
+  return "$status"
+}
+
+# Installed wrappers intentionally bind receipts to the reduced runtime tree,
+# not a Git checkout. They remain useful operational checks but are never the
+# final release-evidence path. Every other live source must provide the frozen,
+# isolated ordinary-Git provenance above.
+eval_source_provenance() {
+  local repository=$1 isolated_home=$2
+  if eval_source_is_installed_runtime "$repository"; then
+    printf '%s\t%s\n' unversioned null
+    return
+  fi
+  eval_source_git "$repository" "$isolated_home" --status
+}
+
 eval_require_cgroup_boundary() {
-  $EVAL_SYSTEMD_RUN --user --quiet --wait --collect --pipe --service-type=exec \
+  $EVAL_SYSTEMD_RUN --user --quiet --wait --collect --pipe --service-type=exec --expand-environment=no \
     -p MemoryMax=67108864 -p MemorySwapMax=0 -p TasksMax=16 -p CPUQuota=100% -p RuntimeMaxSec=10 \
     -p KillMode=control-group -p LimitCORE=0 -p LimitFSIZE=16777216 "$EVAL_BASH" -c 'exit 0' </dev/null >/dev/null 2>&1 ||
     cb_die 'live evaluation requires an operational systemd user cgroup boundary'
@@ -181,7 +283,7 @@ eval_run_scoped_worker() {
   shift
   printf '%s\n%s\n' "$EVAL_SECRET_ONE" "$EVAL_SECRET_TWO" |
     $EVAL_PRLIMIT --core=0 --fsize=16777216 -- \
-      $EVAL_SYSTEMD_RUN --user --quiet --wait --collect --pipe --service-type=exec \
+      $EVAL_SYSTEMD_RUN --user --quiet --wait --collect --pipe --service-type=exec --expand-environment=no \
         -p MemoryMax=2147483648 -p MemorySwapMax=0 -p TasksMax=128 -p CPUQuota=200% \
         -p "RuntimeMaxSec=$runtime_seconds" -p KillMode=control-group -p LimitCORE=0 -p LimitFSIZE=16777216 \
         "$@"
@@ -242,7 +344,7 @@ eval_run_scoped_command() {
   local runtime_seconds=$1
   shift
   $EVAL_PRLIMIT --core=0 --fsize=16777216 -- \
-    $EVAL_SYSTEMD_RUN --user --quiet --wait --collect --pipe --service-type=exec \
+    $EVAL_SYSTEMD_RUN --user --quiet --wait --collect --pipe --service-type=exec --expand-environment=no \
       -p MemoryMax=2147483648 -p MemorySwapMax=0 -p TasksMax=128 -p CPUQuota=200% \
       -p "RuntimeMaxSec=$runtime_seconds" -p KillMode=control-group -p LimitCORE=0 -p LimitFSIZE=16777216 \
       "$@" </dev/null
@@ -251,7 +353,7 @@ eval_run_scoped_command() {
 eval_start_scoped_service() {
   local unit=$1 runtime_seconds=$2
   shift 2
-  $EVAL_SYSTEMD_RUN --user --quiet --collect --service-type=exec --unit "$unit" \
+  $EVAL_SYSTEMD_RUN --user --quiet --collect --service-type=exec --expand-environment=no --unit "$unit" \
     -p MemoryMax=67108864 -p MemorySwapMax=0 -p TasksMax=8 -p CPUQuota=50% \
     -p "RuntimeMaxSec=$runtime_seconds" -p KillMode=control-group -p LimitCORE=0 -p LimitFSIZE=16777216 \
     "$@"

@@ -32,5 +32,8 @@ manifest version, payload checks, platform evidence, and this log together.
   credentials; require a caller-pinned Codex binary hash in real-model receipts.
 - Keep task Git metadata read-only and outside worker exports, and run changed-
   path inspection in a separate networkless cgroup/Bubblewrap sandbox.
+- Freeze source Git metadata, reject executable local Git configuration, and
+  run provenance commands read-only in a networkless cgroup/Bubblewrap sandbox;
+  disable transient-service environment expansion for literal command arguments.
 - Make successful result tuples schema-enforced and preserve caller shell-option
   state across bounded artifact enumeration.

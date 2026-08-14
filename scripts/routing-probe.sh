@@ -127,6 +127,10 @@ routing_git() {
   eval_git "$@"
 }
 
+routing_source_git() {
+  eval_source_provenance "$@"
+}
+
 routing_exec_clean_environment() {
   eval_exec_clean_environment "$@"
 }
@@ -199,7 +203,7 @@ routing_freeze_source_and_tools() {
 }
 
 routing_prepare() {
-  local platform=linux source_revision=unversioned source_dirty=null untracked_source=''
+  local platform=linux source_revision=unversioned source_dirty=null source_git_status
   local codex_path=$1 source_git_home routing_cases behavior_cases version_home codex_version
   eval_validate_key "$ROUTING_INPUT_KEY"
   ROUTING_OUTPUT=$(eval_prepare_output "$CB_SOURCE_ROOT" behavior-results "$ROUTING_OUTPUT" "routing-$(date -u '+%Y%m%dT%H%M%SZ')")
@@ -212,13 +216,11 @@ routing_prepare() {
   codex_version=$(routing_exec_clean_environment /usr/bin/env -i HOME="$version_home" CODEX_HOME="$version_home/.codex" \
     AGENTS_HOME="$version_home/.agents" PATH=/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 "$codex_path" --version)
   source_git_home="$ROUTING_TEMP/source-git-home"
-  if routing_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD >/dev/null 2>&1; then
-    source_revision=$(routing_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD)
-    source_dirty=false
-    routing_git "$CB_SOURCE_ROOT" "$source_git_home" diff --quiet --no-ext-diff --no-textconv --ignore-submodules HEAD -- || source_dirty=true
-    untracked_source=$(routing_git "$CB_SOURCE_ROOT" "$source_git_home" ls-files --others --exclude-standard --directory)
-    [[ -z $untracked_source ]] || source_dirty=true
-  fi
+  mkdir -- "$source_git_home"
+  source_git_status="$source_git_home/status"
+  routing_source_git "$CB_SOURCE_ROOT" "$source_git_home" --status >"$source_git_status" ||
+    cb_die 'cannot determine source Git provenance'
+  IFS=$'\t' read -r source_revision source_dirty <"$source_git_status" || cb_die 'cannot read source Git provenance'
   if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then platform=wsl2; fi
   routing_cases=$(jq '.cases | length' "$ROUTING_EVAL_ROOT/tests/routing/cases.json")
   behavior_cases=$(jq '.cases | length' "$ROUTING_EVAL_ROOT/tests/behavior/cases.json")

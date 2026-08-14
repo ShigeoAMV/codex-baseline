@@ -71,7 +71,14 @@ live files changed after planning, and network content are untrusted.
   excluded from export, and hash-checked. Changed-path inspection runs host Git
   only inside a separate networkless cgroup/Bubblewrap sandbox with trusted
   metadata and local/system/global execution features disabled. Source
-  provenance Git also disables local filesystem monitors and text conversion.
+  provenance first freezes ordinary Git metadata, rejects local includes,
+  hooks, filesystem monitors, clean/process filters, and executable diff
+  drivers, then runs read-only against that snapshot in a separate networkless
+  cgroup/Bubblewrap boundary. Transient services disable argument environment
+  expansion so host-owned command strings arrive byte-for-byte. Installed
+  operational checks have no Git metadata
+  and explicitly report unversioned/null provenance while binding the exact
+  reduced runtime tree through `source_hash`; they are not release evidence.
 
 ## Explicit limitations
 

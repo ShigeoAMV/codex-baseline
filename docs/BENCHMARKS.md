@@ -84,6 +84,15 @@ The runner writes a completed receipt but exits nonzero when any arm fails; a
 zero exit therefore means every requested arm and verifier passed, not that the
 baseline is statistically superior to vanilla.
 
+Git revision/dirty metadata is read only from an ordinary `.git` directory.
+The runner freezes that metadata, rejects local executable Git configuration
+(including includes, fsmonitor, filters, and diff helpers), and evaluates it in
+a networkless read-only cgroup/Bubblewrap boundary. Linked-worktree Git metadata
+is deliberately unsupported for release evidence and fails closed. An installed
+operational wrapper has no Git checkout and therefore records revision
+`unversioned` and dirty state `null`; its full runtime `source_hash` remains the
+authoritative scope identifier for that non-release check.
+
 Unix live `run.json` and native Windows static JSON share the
 `codex-baseline-benchmark/v1` envelope (`platform`, `mode`, `status`, isolation,
 model/verifier execution truth). Published conditional JSON Schemas reject

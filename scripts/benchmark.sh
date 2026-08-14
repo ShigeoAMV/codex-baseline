@@ -354,6 +354,10 @@ bench_git() {
   eval_git "$@"
 }
 
+bench_source_git() {
+  eval_source_provenance "$@"
+}
+
 bench_artifacts_are_clean() {
   local file
   EVAL_SECRET_ONE=$BENCH_INPUT_KEY
@@ -597,7 +601,7 @@ bench_canary_event_pass() {
 
 bench_canary() {
   local run_root workspace workspace_seed home events stderr_log last port_file hit_file port prompt process_exit node_path
-  local source_revision=unversioned source_dirty=null source_git_home untracked_source='' platform=linux pass=false
+  local source_revision=unversioned source_dirty=null source_git_home source_git_status platform=linux pass=false
   local events_pass=false environment_pass=false proc_pass=false network_event_pass=false network_pass=false artifact_pass=true
   local source_pass=false workspace_pass=false no_tool_hit=false postflight_pass=false
   cb_require_command jq
@@ -613,13 +617,10 @@ bench_canary() {
   if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then platform=wsl2; fi
   source_git_home=$(mktemp -d "${TMPDIR:-/tmp}/codex-baseline-bench.XXXXXX")
   BENCH_TEMPS+=("$source_git_home")
-  if bench_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD >/dev/null 2>&1; then
-    source_revision=$(bench_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD)
-    source_dirty=false
-    bench_git "$CB_SOURCE_ROOT" "$source_git_home" diff --quiet --no-ext-diff --no-textconv --ignore-submodules HEAD -- || source_dirty=true
-    untracked_source=$(bench_git "$CB_SOURCE_ROOT" "$source_git_home" ls-files --others --exclude-standard --directory)
-    [[ -z $untracked_source ]] || source_dirty=true
-  fi
+  source_git_status="$source_git_home/status"
+  bench_source_git "$CB_SOURCE_ROOT" "$source_git_home" --status >"$source_git_status" ||
+    cb_die 'cannot determine source Git provenance'
+  IFS=$'\t' read -r source_revision source_dirty <"$source_git_status" || cb_die 'cannot read source Git provenance'
   jq -nc --arg created "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg codex "$(bench_codex_version "$source_git_home/codex-version")" --arg model "${BENCH_MODEL:-account-default}" --arg platform "$platform" \
     --arg revision "$source_revision" --argjson dirty "$source_dirty" --arg source_hash "$BENCH_FROZEN_SOURCE_HASH" \
     --arg codex_binary_hash "$BENCH_CODEX_HASH" --arg node_binary_hash "$BENCH_NODE_HASH" \
@@ -826,7 +827,7 @@ bench_order() {
 }
 
 bench_live() {
-  local task repetition arm source_revision=unversioned source_dirty=null source_git_home untracked_source='' platform=linux failed_runs
+  local task repetition arm source_revision=unversioned source_dirty=null source_git_home source_git_status platform=linux failed_runs
   cb_require_command jq
   cb_require_command git
   cb_require_command timeout
@@ -840,13 +841,10 @@ bench_live() {
   if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then platform=wsl2; fi
   source_git_home=$(mktemp -d "${TMPDIR:-/tmp}/codex-baseline-bench.XXXXXX")
   BENCH_TEMPS+=("$source_git_home")
-  if bench_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD >/dev/null 2>&1; then
-    source_revision=$(bench_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD)
-    source_dirty=false
-    bench_git "$CB_SOURCE_ROOT" "$source_git_home" diff --quiet --no-ext-diff --no-textconv --ignore-submodules HEAD -- || source_dirty=true
-    untracked_source=$(bench_git "$CB_SOURCE_ROOT" "$source_git_home" ls-files --others --exclude-standard --directory)
-    [[ -z $untracked_source ]] || source_dirty=true
-  fi
+  source_git_status="$source_git_home/status"
+  bench_source_git "$CB_SOURCE_ROOT" "$source_git_home" --status >"$source_git_status" ||
+    cb_die 'cannot determine source Git provenance'
+  IFS=$'\t' read -r source_revision source_dirty <"$source_git_status" || cb_die 'cannot read source Git provenance'
   jq -nc --arg created "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg codex "$(bench_codex_version "$source_git_home/codex-version")" --arg model "${BENCH_MODEL:-account-default}" --arg platform "$platform" \
     --arg revision "$source_revision" --argjson dirty "$source_dirty" --arg manifest_hash "$(cb_sha256_file "$BENCH_EVAL_ROOT/benchmarks/manifest.json")" \
     --arg source_hash "$BENCH_FROZEN_SOURCE_HASH" --arg codex_binary_hash "$BENCH_CODEX_HASH" --arg node_binary_hash "$BENCH_NODE_HASH" \

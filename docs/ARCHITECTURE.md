@@ -123,7 +123,8 @@ residual worker processes are quiesced inside the private PID namespace before
 artifact scan/export, and hashes are checked again before a receipt can complete.
 Task Git metadata remains outside worker-writable storage, is mounted read-only,
 and changed-path inspection runs in another networkless sandbox. Source
-provenance disables repository-local filesystem monitors and text conversion.
+provenance freezes ordinary Git metadata, rejects repository-local executable
+Git configuration, and runs read-only in its own networkless sandbox.
 Routing behavior gets repository evidence only from one host-owned read-only
 inspector invocation.
 Canary independently checks environment, every readable key-carrier `/proc`

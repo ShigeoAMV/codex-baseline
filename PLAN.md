@@ -64,10 +64,23 @@ independent audits.
   again passed 12/12 plus 95 and 69 from a clean tree. Final delta review found
   two remaining host-code paths: PATH-selected dispatcher `dirname` before
   trusted sourcing and repository-local `core.fsmonitor` during source
-  provenance. The current fix worktree closes both, removes contradictory
-  duplicate Codex-hash receipt fields, strengthens successful routing/behavior
-  schema semantics, and passes 12/12 Unix/WSL plus 95 and 69 native Windows
-  assertions before commit.
+  provenance.
+- Candidate `ef480aab632881f617566f507e0143b4ef0e1602` closed those paths, removed
+  contradictory Codex-hash receipt fields, strengthened successful
+  routing/behavior schema semantics, and passed 12/12 Unix/WSL plus 95 and 69
+  native Windows assertions before and after commit. Conformance and
+  architecture reviewers signed it off; security review then demonstrated the
+  broader repository-local clean/process-filter execution class during source
+  Git provenance.
+- The current fix worktree freezes ordinary source Git metadata, rejects local
+  executable Git configuration, runs provenance read-only in a networkless
+  cgroup/Bubblewrap boundary, and disables `systemd-run` argument expansion.
+  Checkout evidence fails closed without that boundary; installed operational
+  checks honestly report unversioned/null Git state and bind their reduced
+  runtime through the full source hash. Targeted status/filter/argument,
+  installed-wrapper, and 6-routing/4-behavior tests pass. The final code and
+  payload worktree passed 12/12 Unix/WSL groups plus 95 and 69 native Windows
+  assertions; this status-only PLAN update is the sole subsequent source edit.
 
 ## Open decisions
 
@@ -87,10 +100,10 @@ independent audits.
 
 ## Next action
 
-Commit the final reviewed fix worktree, rerun both complete platform suites
-from the unchanged clean commit, bind the exact results through
-`release-attestations`, and obtain short final read-only delta reviews. When the dedicated credential is available, run preliminary
-evaluation, finalize and commit tracked reports, then rerun all three live
-checkout commands on that unchanged commit. Bind their safe receipt hashes
-through a detached attestation and close traceability only against the
-real-model evidence.
+Commit the final worktree, repeat both complete platform suites from the
+unchanged clean commit, bind the exact results through
+`release-attestations`, and obtain short final read-only delta reviews. When
+the dedicated credential is available, run preliminary evaluation, finalize
+and commit tracked reports, then rerun all three live checkout commands on that
+unchanged commit. Bind their safe receipt hashes through a detached attestation
+and close traceability only against the real-model evidence.
