@@ -1,0 +1,19 @@
+Codex Baseline release attestation v1
+
+timestamp_utc: 2026-08-14T09:11:59Z
+
+commit: a11ed2aa3b0bd04453824f17191d10c6101fc984
+tree: 6aec0795296453f2d6a4c67e559369af4b53c53b
+parent: 3f3e16c3513f2b5a33f6a6098f31d302ae34f520
+payload: 0aeca7d204f1007e5490540261ee33e9d76874999a995215f9183bfdff81e7d4
+source_state: clean
+
+scope: test-only causal-oracle hardening plus truthful PLAN history. Production payload is byte-identical to parent 3f3e16c.
+
+parent postcommit evidence for this exact payload: ./tests/run.sh exit 0, 12/12, log sha256 4151e215b10eab65d9f54d4f5ce8e3aec3416d5cbbc9d95521698ca73d4dd151; ./tests/run-powershell.sh exit 0, lifecycle 95 and onboarding/benchmark 69 on PowerShell 5.1.26100.8875, log sha256 062fbe61776a8b6e9f8bfa37efb2b507291a7349506a65d8bc66a7f809b16a57.
+
+final-commit targeted evidence: bash -n tests/run.sh; shellcheck -S warning tests/run.sh; git diff --check; scripts/check-docs.sh; release-payload hash equality; reachable /source config.worktree process helper rejected with exact extensions.worktreeconfig precheck and no sentinel; in-memory guard-removal mutation exits 128 and emits the helper sentinel. All passed.
+
+review state: parent production fix received architecture and conformance sign-off; final Security delta review of the causal test is pending.
+
+remaining_external_gates: three real-model checkout evaluations with one short-lived dedicated API key; direct skill-activation telemetry or explicit acceptance of its probabilistic limitation; owner-controlled publisher signing identity and explicit license for public release.
