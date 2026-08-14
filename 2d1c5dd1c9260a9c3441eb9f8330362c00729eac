@@ -1,0 +1,11 @@
+Codex Baseline public source preview attestation v1
+
+timestamp_utc: 2026-08-14T10:16:07Z
+
+commit: 2d1c5dd1c9260a9c3441eb9f8330362c00729eac\ntree: 71fd7d8335fb5933ae200d8cb9e850f714cf1621\nparent: a11ed2aa3b0bd04453824f17191d10c6101fc984\npayload: null\nsource_state: clean
+
+scope: Apache-2.0 license, public-preview status, private vulnerability policy, and reconciled final-review documentation. Installable production payload remains unchanged from parent a11ed2a.
+
+targeted checks: git diff --check; exact Apache-2.0 reference comparison; scripts/check-docs.sh; release-payload manifest equality; common credential/private-key signature scan across all refs. All passed; the signature scan returned no matches.
+
+trust: unsigned public source preview. No local GPG or SSH signing private key was available; no publisher-authenticated release is claimed.
