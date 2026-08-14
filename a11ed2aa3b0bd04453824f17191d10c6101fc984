@@ -19,3 +19,5 @@ review state: parent production fix received architecture and conformance sign-o
 remaining_external_gates: three real-model checkout evaluations with one short-lived dedicated API key; direct skill-activation telemetry or explicit acceptance of its probabilistic limitation; owner-controlled publisher signing identity and explicit license for public release.
 
 final independent read-only delta reviews for a11ed2a: Security C0/H0/M0, local unsigned sign-off yes; Architecture C0/H0/M0, sign-off yes; Maintainability C0/H0/M0, sign-off yes; Original-mission Conformance C0/H0/M0, local unsigned sign-off yes. Reviewers made no edits and did not rerun the already-bound suites.
+
+final review state: complete; this supersedes the earlier pending-review status line.
