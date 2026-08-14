@@ -36,7 +36,7 @@ the installer: acquire -> inspect -> preview -> apply.
 An update is another parent-linked transaction. Schema migrations must be added
 to both platform implementations and the shared `baseline/operations.json`
 contract, then exercised against the previous release before changing `schema`.
-v0.1.0 supports schema 1 only and fails closed on a different source schema.
+v0.1.1 supports schema 1 only and fails closed on a different source schema.
 
 ## Rollback and uninstall
 

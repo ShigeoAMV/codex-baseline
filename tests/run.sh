@@ -83,6 +83,8 @@ test_static_quality() {
   PYTHONDONTWRITEBYTECODE=1 python3 -c 'import jsonschema'
   [[ $(wc -c <"$TEST_ROOT/baseline/global/AGENTS.block.md") -le 3500 ]]
   [[ $(wc -w <"$TEST_ROOT/baseline/global/AGENTS.block.md") -le 500 ]]
+  grep -Fq 'reuse suitable' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'never remove required validation' "$TEST_ROOT/baseline/global/AGENTS.block.md"
   for json in "$TEST_ROOT/baseline/manifest.json" "$TEST_ROOT/baseline/operations.json" "$TEST_ROOT/docs/research/manifest.json" "$TEST_ROOT/contracts/"*.json "$TEST_ROOT/contracts/golden/"*.json; do
     jq -e . "$json" >/dev/null
   done
@@ -352,8 +354,8 @@ test_dry_run_and_lifecycle() {
   cmp "$root/installed-before" "$root/installed-after"
   baseline "$root" doctor --json | jq -e --arg payload "$(jq -r .payload_hash "$TEST_ROOT/baseline/manifest.json")" '
     .contract == "codex-baseline-doctor/v1" and .failure_count == 0 and
-    .baseline_version == "0.1.0" and
-    .source_provenance == {scope:"installed-runtime",version:"0.1.0",trust:"unsigned-local-source",payload_sha256:$payload} and
+    .baseline_version == "0.1.1" and
+    .source_provenance == {scope:"installed-runtime",version:"0.1.1",trust:"unsigned-local-source",payload_sha256:$payload} and
     .managed_objects == {ok:8,total:8} and .skills == {ok:4,total:4} and
     .runtime_dependencies.status == "verified" and (.runtime_dependencies.missing | length) == 0 and
     .active_config.status == "accepted-by-strict-config" and

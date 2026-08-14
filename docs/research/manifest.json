@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "contract": "codex-baseline-research/v1",
-  "checked": "2026-08-13",
-  "review_by": "2026-11-11",
+  "checked": "2026-08-14",
+  "review_by": "2026-11-12",
   "codex": {
     "stable_version": "0.147.0",
     "commit": "be6e8eac029b183056b7e4402879f15d2c85f61b",
@@ -17,7 +17,16 @@
     {"id": "open-gsd", "tier": 2, "url": "https://github.com/open-gsd/gsd-core/releases/tag/v1.10.0", "observed": "2026-08-13", "version": "1.10.0", "license": "MIT"},
     {"id": "bmad", "tier": 2, "url": "https://github.com/bmad-code-org/BMAD-METHOD/releases/tag/v6.11.0", "observed": "2026-08-13", "version": "6.11.0", "license": "MIT-plus-trademark-terms"},
     {"id": "pilot-shell", "tier": 2, "url": "https://github.com/maxritter/pilot-shell/releases/tag/v10.2.2", "observed": "2026-08-13", "version": "10.2.2", "license": "proprietary"},
+    {"id": "rtk", "tier": 2, "url": "https://github.com/rtk-ai/rtk/releases/tag/v0.45.0", "observed": "2026-08-14", "version": "0.45.0", "license": "Apache-2.0"},
+    {"id": "ctx-wire", "tier": 2, "url": "https://github.com/pivanov/ctx-wire/releases/tag/0.1.65", "observed": "2026-08-14", "version": "0.1.65", "license": "MIT"},
+    {"id": "caveman", "tier": 2, "url": "https://github.com/JuliusBrussee/caveman/releases/tag/v2.0.0", "observed": "2026-08-14", "version": "2.0.0", "license": "MIT-and-BSL-1.1"},
+    {"id": "ponytail", "tier": 2, "url": "https://github.com/DietrichGebert/ponytail/releases/tag/v4.9.0", "observed": "2026-08-14", "version": "4.9.0", "license": "MIT"},
+    {"id": "headroom", "tier": 2, "url": "https://github.com/headroomlabs-ai/headroom/releases/tag/v0.35.0", "observed": "2026-08-14", "version": "0.35.0", "license": "Apache-2.0"},
+    {"id": "jetbrains-context", "tier": 2, "url": "https://github.com/JetBrains/context/releases/tag/v0.9.8", "observed": "2026-08-14", "version": "0.9.8", "license": "unresolved-binary-service"},
     {"id": "hn-framework-friction", "tier": 3, "url": "https://news.ycombinator.com/item?id=45547344", "observed": "2026-08-13", "version": "discussion", "license": null},
+    {"id": "jetbrains-caveman-eval", "tier": 3, "url": "https://blog.jetbrains.com/ai/2026/07/speak-to-ai-agents-like-cavemen-tosave-tokens/", "observed": "2026-08-14", "version": "2026-07", "license": null},
+    {"id": "jetbrains-rtk-eval", "tier": 3, "url": "https://blog.jetbrains.com/ai/2026/07/rtk-claude-code-token-savings/", "observed": "2026-08-14", "version": "2026-07", "license": null},
+    {"id": "jetbrains-ponytail-eval", "tier": 3, "url": "https://blog.jetbrains.com/ai/2026/07/ponytail-skill-claude-tested/", "observed": "2026-08-14", "version": "2026-07", "license": null},
     {"id": "swe-skills-bench", "tier": 4, "url": "https://arxiv.org/abs/2606.20936", "observed": "2026-08-13", "version": "2026-06-24", "license": null},
     {"id": "agents-md-impact", "tier": 4, "url": "https://arxiv.org/abs/2601.20404", "observed": "2026-08-13", "version": "2026-03-30", "license": null},
     {"id": "e2edevbench", "tier": 4, "url": "https://arxiv.org/abs/2511.04064", "observed": "2026-08-13", "version": "2025-11-06", "license": null}

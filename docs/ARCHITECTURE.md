@@ -97,7 +97,7 @@ failure retrospectives. Routine LEAN/STRICT work uses native behavior.
 Subagents are justified by independent breadth, isolated implementation, or a
 fresh review. Delegation includes scope, ownership/read-only status, output,
 deadline, and receipt. Writable parallel work requires separate worktrees. The
-reviewer TOML is advisory. v0.1.0 ships no automated isolated review runner;
+reviewer TOML is advisory. v0.1.1 ships no automated isolated review runner;
 fresh review artifacts must record the actual external sandbox and otherwise
 use the label `advisory review`.
 

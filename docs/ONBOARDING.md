@@ -46,7 +46,7 @@ roots, architecture evidence, generated-file signals, and risk-sensitive paths.
 Unsafe path names remain visible in structured JSON but never become model
 instructions. Inferred commands remain explicitly unexecuted.
 
-Executed probes are intentionally outside v0.1.0 onboarding. Run a reviewed
+Executed probes are intentionally outside v0.1.1 onboarding. Run a reviewed
 command later in a disposable copy with least privilege, no credentials, and
 network disabled unless genuinely required; record command, sandbox, exit, and
 changed paths as evidence.

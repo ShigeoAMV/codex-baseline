@@ -6,7 +6,7 @@ Use a reviewed, immutable release or trusted checkout. The installer validates
 the exact installable path inventory, byte lengths, per-file SHA-256 values,
 aggregate payload hash, operations contract, and version. It prints the local
 origin, Git revision/dirty state when safely available, and the
-`unsigned-local-source` trust label. v0.1.0 does not authenticate a publisher or
+`unsigned-local-source` trust label. v0.1.1 does not authenticate a publisher or
 verify a release signature, so mutation requires an explicit acknowledgement.
 Installation never performs `git pull`, package installation, or any network
 request.

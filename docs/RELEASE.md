@@ -2,7 +2,7 @@
 
 ## Current status
 
-Version 0.1.0 is an Apache-2.0-licensed public source preview. The installable
+Version 0.1.1 is an Apache-2.0-licensed public source preview. The installable
 payload is pinned by path, byte length, per-file SHA-256, and aggregate digest,
 and both installers freeze a reverified private snapshot before use. This
 proves internal integrity relative to the checked-out manifest. It does not

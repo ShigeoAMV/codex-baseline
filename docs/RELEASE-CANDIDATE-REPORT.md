@@ -2,7 +2,7 @@
 
 ## Verdict
 
-Version 0.1.0 is an evidence-backed, Apache-2.0-licensed **unsigned public source
+Version 0.1.1 is an evidence-backed, Apache-2.0-licensed **unsigned public source
 preview**, not a mission-complete or publisher-authenticated release.
 Deterministic lifecycle, onboarding, recovery, prompt-input discovery, and
 evaluation-runner mechanics are implemented. Mandatory real-model
@@ -34,6 +34,9 @@ skill discovery, project guidance, and app worktrees.
   and failure routing to the lowest reliable control layer.
 - Native Goal continuation with durable repository state, plus explicit
   worktree isolation only for conflicting writable workers.
+- A compact implementation ladder that prefers suitable existing code,
+  standard-library functions, and native platform capabilities without
+  weakening correctness, security, compatibility, tests, or requested behavior.
 
 ## Rejected or deferred mechanisms
 
@@ -45,6 +48,11 @@ cost without measured benefit. Hooks are deferred because current coverage,
 trust, transcript, and subagent-payload behavior are not strong enough for a
 core safety boundary. Ralph/Gauntlet ideas were reduced to bounded native Goal,
 state, acceptance, verifier, and stop contracts.
+RTK, CtxWire, Caveman, Ponytail, Headroom, and JetBrains Context were also kept
+out of the default stack: independent evidence does not show a portable net
+benefit on current Codex/GPT, while hooks, shims, proxies, and provider rewrites
+add permanent context or trust boundaries. Only Ponytail's small implementation
+ladder was extracted, with explicit safety exclusions.
 The candidate-by-candidate record and strongest reasons are linked in
 [`REJECTED-IDEAS.md`](research/REJECTED-IDEAS.md); this grouping is only the
 release summary, not a substitute for the evidence matrix.
@@ -58,8 +66,12 @@ self-review is weak, visible tests invite gaming, and ambiguous requirements are
 a dominant end-to-end failure source. Those findings produced the small global
 layer, only four narrow skills, selective delegation, host-side verifiers,
 explicit ambiguity handling, no core hooks, and honest holdout limitations.
+Recent full-task evaluations also showed that command-output compression and
+tool-owned savings counters do not imply a lower provider bill, while
+prompt-level minimalism can reverse across model families. That produced the
+native-minimalism invariant without adopting its source plugin or hooks.
 Authoritative/upstream facts, community reports, and research strength remain
-separated in the five dated research records and 12-source manifest.
+separated in the five dated research records and 21-source manifest.
 
 ## Verification performed
 
@@ -74,12 +86,15 @@ separated in the five dated research records and 12-source manifest.
   install/update/doctor/rollback/uninstall, exact recovery, DACL/owner/Junction/
   path attacks, post-verification source mutation, conflict-safe onboarding,
   lazy traversal limits, and static benchmark contracts.
-- Research: offline contract reports 12 pinned sources, current through the
+- Research: offline contract reports 21 pinned sources, current through the
   recorded review date, with no network during validation.
 - Independent review: security, architecture/maintainability, and original-
-  mission conformance findings are recorded under `docs/reviews/`; the detached
+  mission conformance findings are recorded under `docs/reviews/`. The detached
   `release-attestations` note on `a11ed2a` records final C0/H0/M0 sign-offs for
-  the unchanged production payload.
+  the 0.1.0 production payload. The 0.1.1 minimalism delta passed the current
+  12/12 WSL2/Linux suite plus 95 and 69 native PowerShell assertions; it does
+  not inherit that older detached attestation and awaits any renewed external
+  release sign-off.
 
 Exact final-revision command counts and commit/payload binding belong in the
 platform receipt after the last evidence commit and an external attestation;

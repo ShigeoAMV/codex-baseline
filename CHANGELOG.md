@@ -3,6 +3,17 @@
 This project follows Semantic Versioning. Releases update `VERSION`, the source
 manifest version, payload checks, platform evidence, and this log together.
 
+## 0.1.1 - 2026-08-14
+
+- Add a compact native-minimalism invariant: reuse suitable repository code,
+  standard-library functions, and native platform capabilities before adding
+  dependencies or abstractions.
+- Keep correctness, validation, error handling, security, accessibility,
+  compatibility, tests, and requested behavior outside the simplification
+  budget.
+- Record the current RTK, CtxWire, Caveman, Ponytail, Headroom, and JetBrains
+  Context evidence and retain the no-default-token-saver/no-core-hook decision.
+
 ## 0.1.0 - 2026-08-14
 
 - Add a marker-owned universal guidance block and four focused Agent Skills.

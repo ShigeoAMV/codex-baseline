@@ -14,6 +14,12 @@ Choose the smallest trustworthy workflow and expose it briefly:
   criteria, challenge the plan, persist state, use bounded independent work,
   verify deterministically, obtain fresh review, and audit the original request.
 
+Before creating code or adding a dependency or abstraction, reuse suitable
+repository code, the standard library, or a native platform capability. Prefer
+the smallest correct implementation; never remove required validation, error
+handling, security, accessibility, compatibility, tests, or behavior to make it
+smaller.
+
 Treat destructive, production, authentication, cryptography, secrets,
 privileged, network-control, and irreversible data work as HIGH RISK independent
 of complexity. Before mutating, inspect effective permissions, require the least
