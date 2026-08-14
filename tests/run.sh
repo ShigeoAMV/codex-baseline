@@ -236,6 +236,21 @@ test_static_quality() {
     eval_source_git "$2/repo" "$2/home-textconv" diff --quiet --no-ext-diff --no-textconv HEAD --
   ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
   test ! -e "$git_guard/textconv-invoked"
+  git -C "$git_guard/repo" config --unset diff.evil.textconv
+  printf '#!/bin/sh\n: >%q\nexit 97\n' "$git_guard/worktree-filter-invoked" >"$git_guard/worktree-filter"
+  chmod 0755 -- "$git_guard/worktree-filter"
+  git -C "$git_guard/repo" config extensions.worktreeConfig true
+  git -C "$git_guard/repo" config --worktree filter.evil.process "$git_guard/worktree-filter"
+  printf 'tracked.txt filter=evil\n' >"$git_guard/repo/.git/info/attributes"
+  test -f "$git_guard/repo/.git/config.worktree"
+  if /bin/bash -c '
+    source "$1/scripts/lib/common.sh"
+    source "$1/scripts/lib/evaluation.sh"
+    eval_validate_system_boundary
+    eval_require_cgroup_boundary
+    eval_source_git "$2/repo" "$2/home-worktree-config" --status
+  ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
+  test ! -e "$git_guard/worktree-filter-invoked"
 
   mkdir -p -- "$source_tree/excluded" "$source_tree/benchmark-results" "$source_tree/behavior-results" "$source_tree/.codebase-memory" "$snapshot"
   printf 'source\n' >"$source_tree/tracked.txt"

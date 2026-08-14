@@ -181,7 +181,7 @@ eval_source_is_installed_runtime() {
 eval_source_git() {
   local repository=$1 isolated_home=$2 live_git_dir snapshot_git_dir expected_file
   local before after snapshot_hash expected unsafe_config status=0
-  local unsafe_pattern='^(include|includeif)\.|^filter\..*\.(clean|smudge|process|required)$|^diff\..*\.(command|textconv)$|^core\.(fsmonitor|hookspath)$'
+  local unsafe_pattern='^(include|includeif)\.|^filter\..*\.(clean|smudge|process|required)$|^diff\..*\.(command|textconv)$|^core\.(fsmonitor|hookspath)$|^extensions\.worktreeconfig$'
   local -a scoped_command
   shift 2
   [[ $repository == /* && -d $repository && ! -L $repository && -d $repository/.git && ! -L $repository/.git ]] ||

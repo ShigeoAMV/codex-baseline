@@ -9,7 +9,7 @@
   "line_endings": "lf",
   "global_block": "baseline/global/AGENTS.block.md",
   "source_trust": "unsigned-local-source",
-  "payload_hash": "3f57118ffe0a3f86326c0cb519b69a57af1174b916ad99a4d596d33a4fa9df6f",
+  "payload_hash": "0aeca7d204f1007e5490540261ee33e9d76874999a995215f9183bfdff81e7d4",
   "payload": [
     {"path": "VERSION", "bytes": 6, "sha256": "e9dd8507f4bf0c6f42458e41aea833ad0bd3f6127272335eee9bf4d58541ed67"},
     {"path": "baseline/agents/codex-baseline-reviewer.toml", "bytes": 681, "sha256": "a57f9fb2d3989820f743020564da329445ad5362386bb8eb40a7332678d82d65"},
@@ -70,7 +70,7 @@
     {"path": "scripts/codex-baseline.ps1", "bytes": 110208, "sha256": "dc0caf284f15c3ea4ea83d477606fb87176fd32979a3bbc26f5a0e1cf569c7ac"},
     {"path": "scripts/codex-baseline.sh", "bytes": 68288, "sha256": "a5fc6c130cc9c5997e30983efd45cd27c7ff05fc818ed42cd5fa1ce3cd8e4545"},
     {"path": "scripts/lib/common.sh", "bytes": 22831, "sha256": "e49e1f32b5bb0c035085b23c359df8f6e74e4ec9ae305cf55032eae73edbac81"},
-    {"path": "scripts/lib/evaluation.sh", "bytes": 21770, "sha256": "a7639605f30b032b2b87813f9b7ced19565a36be90ac05bb88192068f4f3a0ff"},
+    {"path": "scripts/lib/evaluation.sh", "bytes": 21799, "sha256": "929e8f7255932cf97d1735053809bf66ab2c29353b1a5546395db082a8646cc4"},
     {"path": "scripts/onboard.ps1", "bytes": 37442, "sha256": "7342f53c7119bbd93f088c6e1a6d7f63d84a790c463d6cd777ff9d9303d78ee8"},
     {"path": "scripts/onboard.sh", "bytes": 23148, "sha256": "77d5c9a817c2560893b0b70da350b77540a71c7816d7476bb11ba435e4b8f51e"}
   ]
