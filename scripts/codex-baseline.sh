@@ -31,7 +31,7 @@ CB_DISPATCH_BENCHMARK_KEY=${CODEX_BASELINE_BENCHMARK_API_KEY-}
 export -n CB_DISPATCH_BENCHMARK_KEY 2>/dev/null || true
 unset CODEX_BASELINE_BENCHMARK_API_KEY OPENAI_API_KEY CODEX_API_KEY
 
-CB_SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+CB_SCRIPT_DIR=$(cd -- "$(/usr/bin/dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 CB_SOURCE_ROOT=$(cd -- "$CB_SCRIPT_DIR/.." && pwd -P)
 # shellcheck source=scripts/lib/common.sh
 source "$CB_SCRIPT_DIR/lib/common.sh"

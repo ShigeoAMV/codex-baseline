@@ -50,7 +50,8 @@ live files changed after planning, and network content are untrusted.
   use fixed root-owned paths; mutable user Codex/Node executables are copied
   without reflinks, hashed before/after, and only the private frozen copies run.
   Live release evidence additionally requires the caller-pinned Codex SHA-256
-  to match; both expected and observed hashes are recorded.
+  to match; the verified pinned hash is recorded without a contradictory second
+  hash field.
   Tool shells exclude key variables and deny `/proc`/network. Workers and
   verifiers run in separate Bubblewrap namespaces under aggregate user-cgroup
   memory/swap/process/CPU/runtime limits; byte-bounded tmpfs mounts constrain
@@ -69,7 +70,8 @@ live files changed after planning, and network content are untrusted.
 - Paired task Git metadata is constructed outside the worker, mounted read-only,
   excluded from export, and hash-checked. Changed-path inspection runs host Git
   only inside a separate networkless cgroup/Bubblewrap sandbox with trusted
-  metadata and local/system/global execution features disabled.
+  metadata and local/system/global execution features disabled. Source
+  provenance Git also disables local filesystem monitors and text conversion.
 
 ## Explicit limitations
 

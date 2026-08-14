@@ -215,7 +215,7 @@ routing_prepare() {
   if routing_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD >/dev/null 2>&1; then
     source_revision=$(routing_git "$CB_SOURCE_ROOT" "$source_git_home" rev-parse HEAD)
     source_dirty=false
-    routing_git "$CB_SOURCE_ROOT" "$source_git_home" diff --quiet --no-ext-diff --ignore-submodules HEAD -- || source_dirty=true
+    routing_git "$CB_SOURCE_ROOT" "$source_git_home" diff --quiet --no-ext-diff --no-textconv --ignore-submodules HEAD -- || source_dirty=true
     untracked_source=$(routing_git "$CB_SOURCE_ROOT" "$source_git_home" ls-files --others --exclude-standard --directory)
     [[ -z $untracked_source ]] || source_dirty=true
   fi
@@ -225,9 +225,9 @@ routing_prepare() {
   jq -nc --arg created "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" --arg codex "$codex_version" \
     --arg model "${ROUTING_MODEL:-account-default}" --arg platform "$platform" --arg revision "$source_revision" \
     --argjson dirty "$source_dirty" --arg source_hash "$ROUTING_FROZEN_SOURCE_HASH" \
-    --arg codex_binary_hash "$ROUTING_CODEX_HASH" --arg expected_codex_binary_hash "$ROUTING_EXPECTED_CODEX_HASH" --arg node_binary_hash "$ROUTING_NODE_HASH" \
+    --arg codex_binary_hash "$ROUTING_CODEX_HASH" --arg node_binary_hash "$ROUTING_NODE_HASH" \
     --argjson repetitions "$ROUTING_REPETITIONS" --argjson routing_cases "$routing_cases" --argjson behavior_cases "$behavior_cases" \
-    '{schema:1,contract:"codex-baseline-routing-run/v1",platform:$platform,mode:"live-routing-and-behavior",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,host_checks_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,expected_codex_binary_hash:$expected_codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,repetitions:$repetitions,routing_cases:$routing_cases,behavior_cases:$behavior_cases,auth:"dedicated-api-key-stdin-pipe",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
+    '{schema:1,contract:"codex-baseline-routing-run/v1",platform:$platform,mode:"live-routing-and-behavior",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,host_checks_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,repetitions:$repetitions,routing_cases:$routing_cases,behavior_cases:$behavior_cases,auth:"dedicated-api-key-stdin-pipe",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
     >"$ROUTING_OUTPUT/run.json"
   : >"$ROUTING_OUTPUT/results.jsonl"
   : >"$ROUTING_OUTPUT/behavior-results.jsonl"

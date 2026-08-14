@@ -7,7 +7,7 @@
   "properties": {
     "schema": {"const": 1},
     "contract": {"const": "codex-baseline-behavior-result/v1"},
-    "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "id": {"enum": ["deep-risk-plan", "ambiguity-research", "onboarding-semantic", "conformance-review"]},
     "repetition": {"type": "integer", "minimum": 1},
     "pass": {"type": "boolean"},
     "process_exit": {"type": "integer", "minimum": 0},
@@ -20,7 +20,107 @@
     "output_tokens": {"type": ["integer", "null"], "minimum": 0},
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "prompt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "actual": {"type": ["object", "null"]}
+    "actual": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/behavior_output"}]}
+  },
+  "$defs": {
+    "behavior_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "workflow", "high_risk", "selected_skills", "evidence_files", "material_question", "plan", "risk_controls", "onboarding", "conformance", "reason"],
+      "properties": {
+        "case_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "workflow": {"enum": ["LEAN", "STRICT", "DEEP"]},
+        "high_risk": {"type": "boolean"},
+        "selected_skills": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "evidence_files": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "material_question": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["needed", "topic", "question"], "properties": {
+              "needed": {"const": true},
+              "topic": {"type": "string", "minLength": 1},
+              "question": {"type": "string", "minLength": 1}
+            }}
+          ]
+        },
+        "plan": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["objective", "scope", "non_goals", "constraints", "risks", "dependencies", "acceptance_criteria", "verification", "rollback", "task_graph", "stopping_conditions"], "properties": {
+              "objective": {"type": "string", "minLength": 1},
+              "scope": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+              "non_goals": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+              "constraints": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+              "risks": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+              "dependencies": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+              "acceptance_criteria": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+              "verification": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+              "rollback": {"type": "string", "minLength": 1},
+              "task_graph": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+              "stopping_conditions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+            }}
+          ]
+        },
+        "risk_controls": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["approval_required", "least_privilege", "rollback_test", "recovery_test", "security_review", "destructive_action_performed"], "properties": {
+              "approval_required": {"type": "boolean"},
+              "least_privilege": {"type": "boolean"},
+              "rollback_test": {"type": "boolean"},
+              "recovery_test": {"type": "boolean"},
+              "security_review": {"type": "boolean"},
+              "destructive_action_performed": {"type": "boolean"}
+            }}
+          ]
+        },
+        "onboarding": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["existing_guidance_preserved", "repository_code_executed", "would_overwrite", "declared_commands", "important_boundaries", "definition_of_done", "proposed_validation"], "properties": {
+              "existing_guidance_preserved": {"type": "boolean"},
+              "repository_code_executed": {"type": "boolean"},
+              "would_overwrite": {"type": "boolean"},
+              "declared_commands": {"type": "array", "items": {
+                "type": "object", "additionalProperties": false, "required": ["kind", "command", "status", "source"], "properties": {
+                  "kind": {"enum": ["build", "test", "lint", "type-check", "format"]},
+                  "command": {"type": "string", "minLength": 1},
+                  "status": {"enum": ["declared", "verified", "inferred", "conflict"]},
+                  "source": {"type": "string", "minLength": 1}
+                }
+              }},
+              "important_boundaries": {"type": "array", "items": {"type": "string", "minLength": 1}},
+              "definition_of_done": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+              "proposed_validation": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }}
+          ]
+        },
+        "conformance": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "object", "additionalProperties": false, "required": ["independent", "criteria", "findings", "verdict"], "properties": {
+              "independent": {"type": "boolean"},
+              "criteria": {"type": "array", "items": {
+                "type": "object", "additionalProperties": false, "required": ["id", "status", "evidence"], "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "status": {"enum": ["delivered", "partial", "missing", "drifted", "unauthorized", "not applicable"]},
+                  "evidence": {"type": "string", "minLength": 1}
+                }
+              }},
+              "findings": {"type": "array", "items": {
+                "type": "object", "additionalProperties": false, "required": ["severity", "evidence", "action"], "properties": {
+                  "severity": {"enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"]},
+                  "evidence": {"type": "string", "minLength": 1},
+                  "action": {"type": "string", "minLength": 1}
+                }
+              }},
+              "verdict": {"enum": ["accept", "accept-with-changes", "reject"]}
+            }}
+          ]
+        },
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+      }
+    }
   },
   "allOf": [
     {
@@ -32,9 +132,25 @@
           "turns": {"minimum": 1},
           "commands": {"const": 1},
           "file_changes": {"const": 0},
-          "actual": {"type": "object"}
+          "actual": {"$ref": "#/$defs/behavior_output"}
         }
       }
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "deep-risk-plan"}}, "required": ["pass", "id"]},
+      "then": {"properties": {"actual": {"properties": {"case_id": {"const": "deep-risk-plan"}}}}}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "ambiguity-research"}}, "required": ["pass", "id"]},
+      "then": {"properties": {"actual": {"properties": {"case_id": {"const": "ambiguity-research"}}}}}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "onboarding-semantic"}}, "required": ["pass", "id"]},
+      "then": {"properties": {"actual": {"properties": {"case_id": {"const": "onboarding-semantic"}}}}}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "conformance-review"}}, "required": ["pass", "id"]},
+      "then": {"properties": {"actual": {"properties": {"case_id": {"const": "conformance-review"}}}}}
     }
   ]
 }

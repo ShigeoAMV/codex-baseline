@@ -38,7 +38,7 @@ independent audits.
 | 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, six classifications and four host-verified behavior cases; repeated real-model probes pending |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
-| 7. Dogfood and completion audit | In progress | `594c535` platform reruns and three fresh audits completed; Git/credential boundary findings are being reconciled before the final immutable revision |
+| 7. Dogfood and completion audit | In progress | Two review/fix cycles and complete pre-commit platform reruns are complete; final immutable revision, detached attestation, and live-model evidence remain |
 
 ## Current evidence
 
@@ -60,6 +60,14 @@ independent audits.
   fresh reviews found a worker-Git/host boundary Critical, credential-startup
   High, and shell-state Medium; these are not treated as signed off until the
   current fix delta, new full reruns, and final delta reviews pass.
+- Candidate `cec60fd54603205609dff66364c6b9593339d7ef` closed those findings and
+  again passed 12/12 plus 95 and 69 from a clean tree. Final delta review found
+  two remaining host-code paths: PATH-selected dispatcher `dirname` before
+  trusted sourcing and repository-local `core.fsmonitor` during source
+  provenance. The current fix worktree closes both, removes contradictory
+  duplicate Codex-hash receipt fields, strengthens successful routing/behavior
+  schema semantics, and passes 12/12 Unix/WSL plus 95 and 69 native Windows
+  assertions before commit.
 
 ## Open decisions
 
@@ -79,12 +87,9 @@ independent audits.
 
 ## Next action
 
-Finish the accepted security fix delta: isolate worker Git metadata, sandbox
-scope inspection, harden credential entrypoints, pin Codex binary identity,
-strengthen schemas, and fix review-noted state/documentation drift. Regenerate
-the payload manifest, rerun both complete platform suites, commit the clean
-revision, rerun from it, bind the exact results through `release-attestations`,
-and obtain short final read-only delta reviews. When the dedicated credential is available, run preliminary
+Commit the final reviewed fix worktree, rerun both complete platform suites
+from the unchanged clean commit, bind the exact results through
+`release-attestations`, and obtain short final read-only delta reviews. When the dedicated credential is available, run preliminary
 evaluation, finalize and commit tracked reports, then rerun all three live
 checkout commands on that unchanged commit. Bind their safe receipt hashes
 through a detached attestation and close traceability only against the

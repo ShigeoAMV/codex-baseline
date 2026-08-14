@@ -72,8 +72,8 @@ subagent events, installed baseline-layer bytes, and tokens where emitted by
 JSONL. Retry count and review findings are explicit `null` because stable JSONL
 does not expose a reliable retry concept and these tasks have no separate
 reviewer. Run metadata contains Codex/model, source revision/dirty state, full
-evaluated-source hash, manifest hash, caller-pinned and observed Codex binary
-hashes, auth handling, and isolation label. Every
+evaluated-source hash, manifest hash, the verified caller-pinned Codex binary
+hash, auth handling, and isolation label. Every
 arm rechecks the frozen source hash; changing code, docs, fixtures, or verifiers
 mid-run invalidates the experiment. An interrupted run retains `status: running`
 plus `INVALID.md`. `summary.json` retains every paired per-task delta, aggregate

@@ -7,7 +7,7 @@
   "properties": {
     "schema": {"const": 1},
     "contract": {"const": "codex-baseline-routing-result/v1"},
-    "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "id": {"enum": ["lean-typo", "strict-feature", "deep-auth-migration", "onboarding", "conformance", "retrospective"]},
     "repetition": {"type": "integer", "minimum": 1},
     "pass": {"type": "boolean"},
     "process_exit": {"type": "integer", "minimum": 0},
@@ -58,6 +58,48 @@
           "actual": {"type": "object"}
         }
       }
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "lean-typo"}}, "required": ["pass", "id"]},
+      "then": {"properties": {
+        "expected": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
+        "actual": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
+      }}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "strict-feature"}}, "required": ["pass", "id"]},
+      "then": {"properties": {
+        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
+        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
+      }}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "deep-auth-migration"}}, "required": ["pass", "id"]},
+      "then": {"properties": {
+        "expected": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": true}, "skill": {"const": "codex-baseline-deep-work"}}},
+        "actual": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": true}, "selected_skills": {"contains": {"const": "codex-baseline-deep-work"}}}}
+      }}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "onboarding"}}, "required": ["pass", "id"]},
+      "then": {"properties": {
+        "expected": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-repo-onboarding"}}},
+        "actual": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-repo-onboarding"}}}}
+      }}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "conformance"}}, "required": ["pass", "id"]},
+      "then": {"properties": {
+        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-conformance-review"}}},
+        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-conformance-review"}}}}
+      }}
+    },
+    {
+      "if": {"properties": {"pass": {"const": true}, "id": {"const": "retrospective"}}, "required": ["pass", "id"]},
+      "then": {"properties": {
+        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-retrospective"}}},
+        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-retrospective"}}}}
+      }}
     }
   ]
 }

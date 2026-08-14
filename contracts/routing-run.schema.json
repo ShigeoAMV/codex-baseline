@@ -3,7 +3,7 @@
   "$id": "https://codex-baseline.invalid/contracts/routing-run-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "contract", "platform", "mode", "status", "isolation", "model_invoked", "host_checks_executed", "created", "codex", "model", "source_revision", "source_dirty", "source_hash", "codex_binary_hash", "expected_codex_binary_hash", "codex_identity", "node_binary_hash", "repetitions", "routing_cases", "behavior_cases", "auth", "resource_profile"],
+  "required": ["schema", "contract", "platform", "mode", "status", "isolation", "model_invoked", "host_checks_executed", "created", "codex", "model", "source_revision", "source_dirty", "source_hash", "codex_binary_hash", "codex_identity", "node_binary_hash", "repetitions", "routing_cases", "behavior_cases", "auth", "resource_profile"],
   "properties": {
     "schema": {"const": 1},
     "contract": {"const": "codex-baseline-routing-run/v1"},
@@ -20,7 +20,6 @@
     "source_dirty": {"type": ["boolean", "null"]},
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "codex_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "expected_codex_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "codex_identity": {"const": "caller-pinned-sha256"},
     "node_binary_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "repetitions": {"type": "integer", "minimum": 1},

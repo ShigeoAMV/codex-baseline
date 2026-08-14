@@ -160,9 +160,9 @@ eval_git() {
   shift 2
   mkdir -p -- "$isolated_home" "$isolated_home/empty-template"
   $EVAL_ENV -i HOME="$isolated_home" XDG_CONFIG_HOME="$isolated_home/config" PATH=/usr/bin:/bin LC_ALL=C \
-    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_PAGER=cat \
     /usr/bin/git -C "$repository" -c core.hooksPath=/dev/null -c init.templateDir="$isolated_home/empty-template" \
-    -c commit.gpgsign=false -c tag.gpgsign=false "$@"
+    -c core.fsmonitor=false -c commit.gpgsign=false -c tag.gpgsign=false "$@"
 }
 
 eval_require_cgroup_boundary() {
