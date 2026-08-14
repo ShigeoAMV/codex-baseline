@@ -144,6 +144,7 @@ installed runtime instead.
 
 ## Documentation
 
+- [Maintainer start-here guide](DEVELOPER-README.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Installation and platforms](docs/INSTALL.md)
 - [Operations, upgrades, and recovery](docs/OPERATIONS.md)
