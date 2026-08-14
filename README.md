@@ -5,6 +5,12 @@ Windows. It adds universal engineering invariants, four progressively disclosed
 skills, safe repository onboarding, health/lifecycle operations, and a paired
 evaluation harness without installing an external orchestration framework.
 
+> **Status:** v0.1.0 is an Apache-2.0-licensed public source preview. The
+> deterministic Linux/WSL and native PowerShell evidence is recorded, while
+> repeated real-model routing and paired A/B evaluation remains explicitly
+> pending. Release provenance is currently unsigned, so installation retains
+> the `unsigned-local-source` acknowledgement.
+
 The baseline deliberately owns **zero `config.toml` keys and zero hooks**. It
 preserves the user's models, providers, permissions, MCP servers, hooks, rules,
 auth, and unrelated skills. Codex supplies native Plan, Goal, Review, Subagents,
@@ -13,6 +19,11 @@ sandboxing, config precedence, and app worktrees.
 ## Install
 
 Review the local checkout first. Installation never fetches from the network.
+
+```bash
+git clone https://github.com/ShigeoAMV/codex-baseline.git
+cd codex-baseline
+```
 
 Linux or WSL2:
 
@@ -159,7 +170,7 @@ complete cross-client execution test. See [platform status](docs/PLATFORMS.md).
 
 ## License
 
-No external framework code is bundled. This is a local release candidate, not a
-publisher-authenticated public release. Before public redistribution, add an
-explicit license and a publisher-controlled signing trust root; until then, no
-permission beyond applicable law is implied.
+Licensed under the [Apache License 2.0](LICENSE). No external orchestration
+framework code is bundled. The public source preview is not yet a
+publisher-authenticated release; a publisher-controlled signing trust root is
+still required before that stronger provenance claim can be made.

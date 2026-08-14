@@ -1,12 +1,13 @@
-# Release candidate report - 2026-08-13
+# Release candidate report - 2026-08-14
 
 ## Verdict
 
-Version 0.1.0 is an evidence-backed **unsigned local release candidate**, not a
-mission-complete or publisher-authenticated release. Deterministic lifecycle,
-onboarding, recovery, prompt-input discovery, and evaluation-runner mechanics
-are implemented. Mandatory real-model paired/routing evaluation is still
-missing because no dedicated short-lived benchmark key was available.
+Version 0.1.0 is an evidence-backed, Apache-2.0-licensed **unsigned public source
+preview**, not a mission-complete or publisher-authenticated release.
+Deterministic lifecycle, onboarding, recovery, prompt-input discovery, and
+evaluation-runner mechanics are implemented. Mandatory real-model
+paired/routing evaluation is still missing because no dedicated short-lived
+benchmark key was available.
 
 ## Architecture
 
@@ -76,7 +77,9 @@ separated in the five dated research records and 12-source manifest.
 - Research: offline contract reports 12 pinned sources, current through the
   recorded review date, with no network during validation.
 - Independent review: security, architecture/maintainability, and original-
-  mission conformance findings are recorded under `docs/reviews/`.
+  mission conformance findings are recorded under `docs/reviews/`; the detached
+  `release-attestations` note on `a11ed2a` records final C0/H0/M0 sign-offs for
+  the unchanged production payload.
 
 Exact final-revision command counts and commit/payload binding belong in the
 platform receipt after the last evidence commit and an external attestation;
@@ -127,7 +130,7 @@ repetitions, `scripts/routing-probe.sh --repetitions 3`, and
 Codex binary SHA-256, then preserve only safe receipts and report
 inconclusive results honestly. Native Windows Codex, separate bare-metal Linux
 distributions, and a full App/IDE matrix remain explicitly unverified/partial.
-Public redistribution
-additionally needs an owner-selected license and independently distributed
-publisher signing root; that public-release decision is separate from the
+Public redistribution is permitted under Apache-2.0. A
+publisher-authenticated release additionally needs an independently
+distributed signing root; that stronger provenance claim is separate from the
 original mission's mandatory live benchmark.

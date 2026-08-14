@@ -14,8 +14,9 @@ The full acceptance contract is the original mission supplied for this project.
 
 ## Current milestone
 
-Milestones 4-6 - integration, behavior evaluation, documentation, and final
-independent audits.
+Milestones 4, 6, and 7 - external real-model evaluation and authenticated
+release provenance. The deterministic implementation and final local audits are
+complete.
 
 ### Acceptance criteria
 
@@ -38,7 +39,7 @@ independent audits.
 | 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, six classifications and four host-verified behavior cases; repeated real-model probes pending |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
-| 7. Dogfood and completion audit | In progress | Two review/fix cycles and complete pre-commit platform reruns are complete; final immutable revision, detached attestation, and live-model evidence remain |
+| 7. Dogfood and completion audit | In progress | Final immutable local revision and detached C0/H0/M0 review attestation are complete; live-model evidence and publisher signing remain |
 
 ## Current evidence
 
@@ -83,12 +84,16 @@ independent audits.
   fail-closed and adds a non-execution regression test.
 - Candidate `3f3e16c3513f2b5a33f6a6098f31d302ae34f520` passed its clean
   post-commit matrix with 12/12 Unix/WSL groups plus 95 and 69 native Windows
-  assertions. Architecture and conformance reviewers signed off. Security
-  confirmed the production fix but found that the first regression helper was
-  outside the sandbox and could therefore fail for the wrong reason. The
-  current test-only delta makes the helper reachable at `/source`, requires
-  the exact `extensions.worktreeconfig` guard diagnostic, and rejects its
-  execution sentinel. The production payload remains byte-identical.
+  assertions. Final commit `a11ed2aa3b0bd04453824f17191d10c6101fc984`
+  makes the last test-only regression oracle causal while preserving the exact
+  production payload. Its detached `release-attestations` note binds the tree,
+  payload, platform receipts, targeted final checks, and fresh Security,
+  Architecture, Maintainability, and Original-mission Conformance C0/H0/M0
+  sign-offs.
+- Public source distribution is Apache-2.0 licensed and carries an explicit
+  private vulnerability-reporting policy. It remains an unsigned public preview
+  until an owner-controlled signing identity and independently distributed
+  trust root exist.
 
 ## Open decisions
 
@@ -102,18 +107,18 @@ independent audits.
 
 - A real paired/routing run requires a dedicated short-lived benchmark API key;
   normal Codex auth/session files are intentionally unsupported.
-- A publisher-authenticated public release requires an owner-controlled signing
-  identity/trust root and an explicit license. The local release candidate stays
-  labelled `unsigned-local-source` until then.
+- A publisher-authenticated release requires an owner-controlled signing
+  identity and independently distributed trust root. No such private signing
+  key is available locally; the public source preview therefore stays labelled
+  `unsigned-local-source` despite its Apache-2.0 license.
 
 ## Next action
 
-Resolve every Critical/High/Medium finding from the final read-only reviews,
-then commit and repeat both complete platform suites from the unchanged clean
-commit. The authoritative candidate, exact result hashes, and final review
-verdicts belong in the detached `release-attestations` note so tracked source
-does not create a self-referential evidence cycle. When the dedicated
-credential is available, run preliminary evaluation, finalize and commit
-tracked reports, then rerun all three live checkout commands on that unchanged
-commit. Bind their safe receipt hashes through a detached attestation and close
-traceability only against the real-model evidence.
+When the dedicated credential is available, run preliminary evaluation,
+finalize and commit tracked reports, then rerun all three live checkout commands
+on that unchanged commit. Bind their safe receipt hashes through a detached
+attestation and close only the real-model-dependent traceability rows. Separately,
+the owner may establish an offline-controlled signing identity, publish its
+trust root independently, and replace the unsigned preview with a
+publisher-authenticated release; never generate or commit that private key as
+part of an automated repository workflow.

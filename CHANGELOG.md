@@ -3,7 +3,7 @@
 This project follows Semantic Versioning. Releases update `VERSION`, the source
 manifest version, payload checks, platform evidence, and this log together.
 
-## 0.1.0 - 2026-08-13
+## 0.1.0 - 2026-08-14
 
 - Add a marker-owned universal guidance block and four focused Agent Skills.
 - Add an advisory reviewer role plus explicit external-isolation labelling rules.
@@ -37,3 +37,5 @@ manifest version, payload checks, platform evidence, and this log together.
   disable transient-service environment expansion for literal command arguments.
 - Make successful result tuples schema-enforced and preserve caller shell-option
   state across bounded artifact enumeration.
+- Publish the source under Apache-2.0 with an explicit unsigned-preview status,
+  private vulnerability reporting policy, and reconciled final review evidence.

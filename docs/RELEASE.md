@@ -2,12 +2,12 @@
 
 ## Current status
 
-Version 0.1.0 is a local release candidate. The installable payload is pinned by
-path, byte length, per-file SHA-256, and aggregate digest, and both installers
-freeze a reverified private snapshot before use. This proves internal integrity
-relative to the checked-out manifest. It does not authenticate a publisher.
-The consolidated current evidence and explicit missing gates are in the
-[release candidate report](RELEASE-CANDIDATE-REPORT.md).
+Version 0.1.0 is an Apache-2.0-licensed public source preview. The installable
+payload is pinned by path, byte length, per-file SHA-256, and aggregate digest,
+and both installers freeze a reverified private snapshot before use. This
+proves internal integrity relative to the checked-out manifest. It does not
+authenticate a publisher. The consolidated current evidence and explicit
+missing gates are in the [release candidate report](RELEASE-CANDIDATE-REPORT.md).
 
 No public verified release is claimed until all of these are true:
 
@@ -18,15 +18,17 @@ No public verified release is claimed until all of these are true:
 4. final security, architecture/maintainability, and original-request reviews
    are recorded and all critical findings are resolved;
 5. the traceability ledger and final report point to the exact receipts;
-6. the publisher chooses an explicit license and an offline-controlled signing
-   identity whose public trust root is distributed independently of the release;
+6. the publisher supplies an offline-controlled signing identity whose public
+   trust root is distributed independently of the release;
 7. an immutable source archive, manifest, and checksum are signed, and clean
    install/rollback is reproduced from that archive before publication.
 
 Do not generate and commit a signing private key, and do not treat a public key
-shipped only inside the same unsigned archive as a trust root. Until an owner
-supplies that external publisher identity, install requires explicit
-`unsigned-local-source` acknowledgement and release notes retain that label.
+shipped only inside the same unsigned archive as a trust root. The Apache-2.0
+license permits public use and contribution, but it does not solve publisher
+authentication. Until an owner supplies that external publisher identity,
+install requires explicit `unsigned-local-source` acknowledgement and release
+notes retain that label.
 
 ## Maintainer checklist
 
