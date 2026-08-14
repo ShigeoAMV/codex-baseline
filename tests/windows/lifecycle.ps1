@@ -8,7 +8,7 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
 $script:RepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $script:BaselineScript = Join-Path $script:RepositoryRoot 'scripts\codex-baseline.ps1'
 $script:PowerShell = Join-Path $PSHOME 'powershell.exe'
-$script:PrivateTestBase = Join-Path $env:LOCALAPPDATA 'cbt'
+$script:PrivateTestBase = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($env:SystemRoot))
 $script:TestRoot = Join-Path $script:PrivateTestBase ('cbw-{0}' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 $script:Assertions = 0
 
@@ -44,6 +44,20 @@ function Invoke-Baseline {
         throw "Expected exit $ExpectedExit, got $actualExit for '$($Arguments -join ' ')':`n$output"
     }
     return $output
+}
+
+function Invoke-PowerShellScriptCapture {
+    param([string]$Path, [string[]]$Arguments)
+    $savedPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1 | Out-String).Trim()
+        $actualExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $savedPreference
+    }
+    return [pscustomobject]@{ Output = $output; ExitCode = $actualExit }
 }
 
 function Test-NoBom {
@@ -100,7 +114,36 @@ function Remove-TestRoot {
     }
 }
 
-[System.IO.Directory]::CreateDirectory($script:TestRoot) | Out-Null
+function New-PrivateTestRoot {
+    param([string]$Path)
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $trustedSids = @(
+        $currentSid,
+        (New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)),
+        (New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null))
+    )
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner($currentSid)
+    foreach ($sid in $trustedSids) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sid,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $security.AddAccessRule($rule) | Out-Null
+    }
+    [System.IO.Directory]::CreateDirectory($Path, $security) | Out-Null
+    $effective = Get-Acl -LiteralPath $Path
+    if (-not $effective.AreAccessRulesProtected -or
+        $effective.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) {
+        throw "Failed to create a private native test root: $Path"
+    }
+}
+
+New-PrivateTestRoot $script:TestRoot
 try {
     $testHome = Set-TestEnvironment (Join-Path $script:TestRoot 'main')
     $originalText = "user guidance`r`n"
@@ -316,7 +359,7 @@ exit 1
     [System.IO.Directory]::CreateDirectory($updateArtifacts) | Out-Null
     [System.IO.Directory]::CreateDirectory($futureArtifacts) | Out-Null
     [System.IO.Directory]::CreateDirectory($newerArtifacts) | Out-Null
-    $python = Get-Command python.exe -CommandType Application -ErrorAction Stop
+    $python = @(Get-Command python.exe -CommandType Application -ErrorAction Stop)[0]
     $artifactOutput = (& $python.Path (Join-Path $script:RepositoryRoot 'scripts\release-update.py') '--output' $updateArtifacts 2>&1 | Out-String).Trim()
     Assert-True ($LASTEXITCODE -eq 0 -and $artifactOutput -match 'codex-baseline-update-v1\.txt') ("release artifact builder must succeed: {0}" -f $artifactOutput)
     $currentArchive = Join-Path $updateArtifacts ("codex-baseline-{0}.zip" -f ([System.IO.File]::ReadAllText((Join-Path $script:RepositoryRoot 'VERSION'), $script:Utf8NoBom).Trim()))
@@ -349,30 +392,34 @@ exit 1
         $growingArchive = Join-Path $script:TestRoot 'growing-offline.zip'
         [System.IO.File]::Copy($currentArchive, $growingArchive)
         $env:CODEX_BASELINE_TEST_GROW_UPDATE_INPUT = '1'
-        $growingUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline $growingArchive -DryRun 2>&1 | Out-String).Trim()
+        $growingResult = Invoke-PowerShellScriptCapture $wrapper @('update', '-Offline', $growingArchive, '-DryRun')
+        $growingUpdate = $growingResult.Output
         Remove-Item Env:\CODEX_BASELINE_TEST_GROW_UPDATE_INPUT
-        Assert-True ($LASTEXITCODE -ne 0 -and $growingUpdate -match 'exceeded its byte limit while it was frozen') ("growing offline archive must fail at the bounded copy: {0}" -f $growingUpdate)
+        Assert-True ($growingResult.ExitCode -ne 0 -and $growingUpdate -match 'exceeded its byte limit while it was frozen') ("growing offline archive must fail at the bounded copy: {0}" -f $growingUpdate)
         Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'growing offline archive rejection must preserve current transaction'
 
         $substitutedArchive = Join-Path $script:TestRoot 'substituted-offline.zip'
         [System.IO.File]::Copy($currentArchive, $substitutedArchive)
         $env:CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT = '1'
-        $substitutedUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline $substitutedArchive -DryRun 2>&1 | Out-String).Trim()
+        $substitutedResult = Invoke-PowerShellScriptCapture $wrapper @('update', '-Offline', $substitutedArchive, '-DryRun')
+        $substitutedUpdate = $substitutedResult.Output
         Remove-Item Env:\CODEX_BASELINE_TEST_SUBSTITUTE_UPDATE_INPUT
-        Assert-True ($LASTEXITCODE -ne 0 -and $substitutedUpdate -match 'replacement was blocked while the source handle was frozen') ("offline archive substitution must be blocked by the frozen handle: {0}" -f $substitutedUpdate)
+        Assert-True ($substitutedResult.ExitCode -ne 0 -and $substitutedUpdate -match 'replacement was blocked while the source handle was frozen') ("offline archive substitution must be blocked by the frozen handle: {0}" -f $substitutedUpdate)
         Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'offline substitution rejection must preserve current transaction'
 
         $corruptDescriptor = Join-Path $script:TestRoot 'corrupt-update.txt'
         $corruptText = [System.IO.File]::ReadAllText($updateDescriptor, $script:Utf8NoBom) -replace '(?m)^zip_sha256=.*$', ('zip_sha256=' + ('0' * 64))
         [System.IO.File]::WriteAllText($corruptDescriptor, $corruptText, $script:Utf8NoBom)
         $env:CODEX_BASELINE_TEST_UPDATE_METADATA_PATH = $corruptDescriptor
-        $corruptUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -DryRun 2>&1 | Out-String).Trim()
-        Assert-True ($LASTEXITCODE -ne 0 -and $corruptUpdate -match 'archive SHA-256 mismatch') ("remote update must reject descriptor/archive hash mismatch: {0}" -f $corruptUpdate)
+        $corruptResult = Invoke-PowerShellScriptCapture $wrapper @('update', '-DryRun')
+        $corruptUpdate = $corruptResult.Output
+        Assert-True ($corruptResult.ExitCode -ne 0 -and $corruptUpdate -match 'archive SHA-256 mismatch') ("remote update must reject descriptor/archive hash mismatch: {0}" -f $corruptUpdate)
         Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'failed remote update must preserve current transaction'
 
         foreach ($adversary in @('traversal.zip', 'symlink.zip', 'case-collision.zip', 'forged-length.zip')) {
-            $adversarialUpdate = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Offline (Join-Path $adversarialArtifacts $adversary) -DryRun 2>&1 | Out-String).Trim()
-            Assert-True ($LASTEXITCODE -ne 0 -and $adversarialUpdate -match 'Unsafe update archive path|Linked or special update archive member|Duplicate or case-colliding|declared or total content limit|length mismatch') ("adversarial archive must fail before mutation ({0}): {1}" -f $adversary, $adversarialUpdate)
+            $adversarialResult = Invoke-PowerShellScriptCapture $wrapper @('update', '-Offline', (Join-Path $adversarialArtifacts $adversary), '-DryRun')
+            $adversarialUpdate = $adversarialResult.Output
+            Assert-True ($adversarialResult.ExitCode -ne 0 -and $adversarialUpdate -match 'Unsafe update archive path|Linked or special update archive member|Duplicate or case-colliding|declared or total content limit|length mismatch') ("adversarial archive must fail before mutation ({0}): {1}" -f $adversary, $adversarialUpdate)
             Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'adversarial archive rejection must preserve current transaction'
         }
 
@@ -460,14 +507,21 @@ exit 1
     Assert-True ($doctorJson.contract -eq 'codex-baseline-doctor/v1') 'doctor must emit the shared v1 report contract'
     Assert-True ($doctorJson.baseline_version -eq '0.2.0') 'doctor must report the installed baseline version'
     Assert-True ($doctorJson.source_provenance.scope -eq 'local-source' -and $doctorJson.source_provenance.trust -eq 'unsigned-local-source') 'source invocation must report explicit local-source trust provenance'
-    Assert-True ($doctorJson.codex_verification -eq 'unverified-native-codex-not-installed') 'missing native Codex must be labelled unverified'
+    if ($doctorJson.codex_verification -eq 'executed-native-windows') {
+        Assert-True ($doctorJson.native_capabilities -eq 'verified') 'available native Codex must have its required stable capabilities verified'
+        Assert-True ($doctorJson.active_config.status -eq 'accepted-by-strict-config') 'available native Codex must execute strict-config validation'
+    }
+    else {
+        Assert-True ($doctorJson.codex_verification -eq 'unverified-native-codex-not-installed') 'missing native Codex must be labelled unverified'
+        Assert-True ($doctorJson.active_config.status -eq 'unverified-native-codex-not-installed') 'missing native Codex must keep config verification explicitly unverified'
+    }
     Assert-True ($doctorJson.managed_objects.ok -eq 8 -and $doctorJson.managed_objects.total -eq 8) 'doctor must report all managed objects through the shared shape'
     Assert-True ($doctorJson.skills.ok -eq 4 -and $doctorJson.skills.total -eq 4) 'doctor must report all skills through the shared shape'
     Assert-True ($doctorJson.runtime_dependencies.status -eq 'verified' -and @($doctorJson.runtime_dependencies.missing).Count -eq 0) 'doctor must report native runtime dependency health'
-    Assert-True ($doctorJson.active_config.status -eq 'unverified-native-codex-not-installed' -and $doctorJson.hook_state.baseline_owned -eq 0) 'doctor must distinguish unavailable native config verification from zero baseline-owned hooks'
+    Assert-True ($doctorJson.hook_state.baseline_owned -eq 0) 'doctor must report zero baseline-owned hooks independently of native Codex availability'
     Assert-True ($doctorJson.paths.codex_home -eq $env:CODEX_HOME -and $doctorJson.paths.agents_home -eq $env:AGENTS_HOME) 'doctor must report effective native managed paths'
     Assert-True (((@($doctorJson.PSObject.Properties.Name) | Sort-Object) -join ',') -eq ((@($doctorGolden.PSObject.Properties.Name) | Sort-Object) -join ',')) 'native doctor keys must match the cross-platform golden contract'
-    Assert-True (@($doctorJson.failures).Count -eq 0) 'missing native Codex is a platform limitation, not installation corruption'
+    Assert-True (@($doctorJson.failures).Count -eq 0) 'native Codex availability must not create an installation-corruption failure'
 
     $skillFile = Join-Path $env:AGENTS_HOME 'skills\codex-baseline-deep-work\SKILL.md'
     $skillBytes = [System.IO.File]::ReadAllBytes($skillFile)

@@ -197,7 +197,9 @@ cb_semver_valid() {
 
 cb_semver_compare() {
   local left=$1 right=$2 left_major left_minor left_patch right_major right_minor right_patch
-  cb_semver_valid "$left" && cb_semver_valid "$right" || cb_die 'version comparison requires stable MAJOR.MINOR.PATCH values'
+  if ! cb_semver_valid "$left" || ! cb_semver_valid "$right"; then
+    cb_die 'version comparison requires stable MAJOR.MINOR.PATCH values'
+  fi
   IFS=. read -r left_major left_minor left_patch <<<"$left"
   IFS=. read -r right_major right_minor right_patch <<<"$right"
   if (( 10#$left_major != 10#$right_major )); then
@@ -359,7 +361,9 @@ cb_validate_update_path() {
 
 cb_validate_raw_tar_headers() {
   local raw=$1 raw_bytes offset=0 type size_field size advance headers=0
-  command -v dd >/dev/null 2>&1 && command -v od >/dev/null 2>&1 || cb_die 'tar.gz update requires coreutils dd and od'
+  if ! command -v dd >/dev/null 2>&1 || ! command -v od >/dev/null 2>&1; then
+    cb_die 'tar.gz update requires coreutils dd and od'
+  fi
   raw_bytes=$(stat -c '%s' -- "$raw")
   (( raw_bytes > 0 && raw_bytes <= CB_UPDATE_MAX_RAW_TAR_BYTES && raw_bytes % 512 == 0 )) || cb_die 'update archive raw tar size is invalid'
   while (( offset + 512 <= raw_bytes )); do

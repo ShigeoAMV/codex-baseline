@@ -8,7 +8,7 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
 $script:RepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $script:BaselineScript = Join-Path $script:RepositoryRoot 'scripts\codex-baseline.ps1'
 $script:PowerShell = Join-Path $PSHOME 'powershell.exe'
-$script:PrivateTestBase = Join-Path $env:LOCALAPPDATA 'codex-baseline-tests'
+$script:PrivateTestBase = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($env:SystemRoot))
 $script:TestRoot = Join-Path $script:PrivateTestBase ('cbw-ob-{0}' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 $script:Assertions = 0
 
@@ -49,7 +49,36 @@ function Remove-TestRoot {
     if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
 }
 
-[System.IO.Directory]::CreateDirectory($script:TestRoot) | Out-Null
+function New-PrivateTestRoot {
+    param([string]$Path)
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $trustedSids = @(
+        $currentSid,
+        (New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null)),
+        (New-Object System.Security.Principal.SecurityIdentifier([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null))
+    )
+    $security = New-Object System.Security.AccessControl.DirectorySecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $security.SetOwner($currentSid)
+    foreach ($sid in $trustedSids) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sid,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $security.AddAccessRule($rule) | Out-Null
+    }
+    [System.IO.Directory]::CreateDirectory($Path, $security) | Out-Null
+    $effective = Get-Acl -LiteralPath $Path
+    if (-not $effective.AreAccessRulesProtected -or
+        $effective.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $currentSid.Value) {
+        throw "Failed to create a private native test root: $Path"
+    }
+}
+
+New-PrivateTestRoot $script:TestRoot
 $junction = $null
 try {
     $testHome = Join-Path $script:TestRoot 'home'

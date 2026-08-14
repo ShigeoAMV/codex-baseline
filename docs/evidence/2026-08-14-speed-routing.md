@@ -50,7 +50,7 @@ release or measured performance claim.
 The reviewed self-update work was frozen as commit `3fd9ce7`, then the routing
 candidate was integrated semantically rather than by choosing whole conflicting
 files. The combined canonical installable payload SHA-256 is
-`efc4c600599b3c6eb41e5b7002151cf4e15c5a8493ad3a6179dfbab47d1fd6fb`;
+`d4dc8bf6a71a944fdd27ed94c210e6ec2e20107a6e5b8e3a111576d000b1c291`;
 all 62 payload entries match the regenerated manifest.
 
 - `CODEX_BASELINE_TEST_GROUP=routing ./tests/run.sh` passed from an isolated
@@ -62,6 +62,11 @@ all 62 payload entries match the regenerated manifest.
 - Bash and PowerShell syntax, Python compilation, all repository JSON,
   documentation links, research freshness, payload inventory/hash comparison,
   and `git diff --check` passed.
-- The full Unix suite still stops at the missing ShellCheck prerequisite. The
-  native Windows lifecycle suite still stops when the host cannot load
-  `Microsoft.PowerShell.Security` for `Get-Acl`; neither blocker was bypassed.
+- The full Unix suite passes all 13 groups from a private WSL filesystem copy
+  with pinned ShellCheck 0.9.0 and Codex 0.147.0 test tools. This includes the
+  deterministic paired/Canary mechanics and real prompt-input discovery, but
+  not a real-model paired performance run.
+- The native Windows suites pass 134 lifecycle and 69 onboarding/benchmark
+  assertions under Windows PowerShell 5.1.26100.8875. The bridge now supplies
+  native module paths explicitly, and each suite atomically creates a protected
+  system-drive test root; production ACL validation was not weakened.

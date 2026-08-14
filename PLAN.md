@@ -14,10 +14,10 @@ The full acceptance contract is the original mission supplied for this project.
 
 ## Current milestone
 
-Milestone 8 - remote self-update v0.2.0 final audit, alongside the existing
-Milestones 4, 6, and 7 external-evidence work. The bounded update implementation
-and Unix adversarial fixture pass; a clean full-matrix rerun and fresh review
-remain before this change can be released.
+Milestone 8 - remote self-update v0.2.0 publication, alongside the existing
+Milestones 4, 6, and 7 external-evidence work. The bounded update implementation,
+both complete platform matrices, and deterministic release builds pass. A clean
+post-commit rerun and unsigned preview publication remain.
 
 ### Acceptance criteria
 
@@ -41,7 +41,7 @@ remain before this change can be released.
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
 | 7. Dogfood and completion audit | In progress | Final immutable local revision and detached C0/H0/M0 review attestation are complete; live-model evidence and publisher signing remain |
-| 8. Explicit remote self-update | In progress | Deterministic v1 release assets, Unix installed-wrapper/adversarial tests, and fresh security review pass; native Windows/full regression reruns remain |
+| 8. Explicit remote self-update | In progress | Deterministic v1 release assets plus 13/13 Unix and 134/69 native Windows regression receipts pass; clean post-commit rerun and unsigned preview publication remain |
 
 ## Current evidence
 
@@ -49,8 +49,9 @@ remain before this change can be released.
 - Environment: Ubuntu 26.04 under WSL2, Linux kernel 6.18.33.2.
 - Codex CLI: 0.147.0, reported current by `codex doctor` on 2026-08-13.
 - Codex health: 17 checks OK, one idle app server, zero warnings/failures.
-- Native Windows PowerShell 5.1 is reachable from WSL; 95 lifecycle and 69
-  onboarding/benchmark assertions pass. Native Windows Codex is not installed.
+- Native Windows PowerShell 5.1 is reachable from WSL; the current v0.2.0 tree
+  passes 134 lifecycle and 69 onboarding/benchmark assertions. Native Windows
+  Codex 0.147.0 is installed and its stable capabilities/config are exercised.
 - Node.js 24.18.0 is available in WSL. It is not yet accepted as a universal
   runtime dependency.
 - The active global Codex configuration is customized and therefore provides a
@@ -100,12 +101,12 @@ remain before this change can be released.
   The focused Unix group passes deterministic build, check/dry-run/apply,
   downloaded-code canary, hostile archives, concurrent anti-downgrade,
   rollback, and exact-state restoration.
-- The current WSL regression environment lacks ShellCheck and has Codex CLI
-  0.145.0 below the required 0.147.0, so the unchanged full Unix matrix cannot
-  currently produce a clean receipt. Native Windows correctly refuses its test
-  staging tree because `%LOCALAPPDATA%` inherits FullControl for foreign SID
-  `S-1-5-21-2363829159-3772595814-2973517376-1002`; this security check is not
-  weakened to make the suite run.
+- The current v0.2.0 working tree passes all 13 Unix groups from a private WSL
+  filesystem copy using pinned ShellCheck 0.9.0 and Codex 0.147.0 test tools.
+  It also passes both native Windows PowerShell 5.1 suites with 134 and 69
+  assertions. Windows tests now atomically create a protected system-drive test
+  root instead of relying on the foreign-writable `%LOCALAPPDATA%` ancestry;
+  production path validation remains unchanged and fail-closed.
 
 ## Open decisions
 
@@ -126,11 +127,10 @@ remain before this change can be released.
 
 ## Next action
 
-First rerun the v0.2.0 full Unix and native Windows matrices in compliant test
-environments (ShellCheck and Codex >= 0.147.0 on Unix; a private Windows staging
-ancestor without foreign write ACLs), then bind the fresh review and release
-asset hashes. Publishing the GitHub v0.2.0 release remains an explicit owner
-action. When the dedicated benchmark credential is available, continue the
-existing live-evaluation work. Separately, the owner may establish an
+Commit the reconciled v0.2.0 tree, rerun both complete platform matrices from
+that clean immutable revision, build the release assets twice, and publish the
+explicitly unsigned GitHub preview with its hashes and limitations. Real-model
+evaluation remains deferred by owner choice until a dedicated benchmark
+credential is supplied. Separately, the owner may establish an
 offline-controlled signing identity and independently distributed trust root;
 never generate or commit that private key through this workflow.

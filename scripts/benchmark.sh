@@ -273,10 +273,34 @@ bench_run_verifier() {
     "$EVAL_BWRAP" --unshare-all --unshare-user --disable-userns --die-with-parent --new-session --clearenv --cap-drop ALL \
     --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
     --proc /proc --dev /dev --size 134217728 --tmpfs /tmp --dir /home --dir /opt --dir /opt/node \
-    --ro-bind "$node_path" /opt/node/node --overlay-src "$workspace" --tmp-overlay /workspace \
+    --ro-bind "$node_path" /opt/node/node --ro-bind "$workspace" /workspace \
     --ro-bind "$verifier" /verifier --setenv HOME /tmp/verifier-home \
     --setenv PATH /opt/node:/usr/bin:/bin --setenv LANG C.UTF-8 --chdir /workspace \
     /usr/bin/bash /verifier /workspace >"$output" 2>&1
+}
+
+bench_validate_verifier_isolation() {
+  local workspace verifier verifier_log
+  workspace=$(mktemp -d "${TMPDIR:-/tmp}/codex-baseline-bench.probe.XXXXXX")
+  verifier=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-bench.probe-verifier.XXXXXX")
+  verifier_log=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-bench.probe-log.XXXXXX")
+  BENCH_TEMPS+=("$workspace" "$verifier" "$verifier_log")
+  printf '%s\n' probe >"$workspace/probe"
+  cat >"$verifier" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+workspace=${1:?workspace required}
+test "$(cat "$workspace/probe")" = probe
+if touch "$workspace/forbidden-write" >/dev/null 2>&1; then exit 91; fi
+node -e 'process.exit(process.versions.node ? 0 : 1)'
+tmp=$(mktemp)
+printf '%s\n' writable-tmp >"$tmp"
+test "$(cat "$tmp")" = writable-tmp
+EOF
+  chmod 0700 -- "$verifier"
+  if ! bench_run_verifier "$verifier" "$workspace" "$verifier_log"; then
+    cb_die 'verifier isolation probe failed'
+  fi
 }
 
 bench_validate_task() {
@@ -302,6 +326,7 @@ bench_static() {
   cb_require_command prlimit
   cb_require_command timeout
   bench_prepare_tools false
+  bench_validate_verifier_isolation
   [[ -f $BENCH_EVAL_ROOT/benchmarks/manifest.json ]] || cb_die 'benchmark manifest missing'
   while IFS= read -r task; do
     [[ -n $task ]] || continue

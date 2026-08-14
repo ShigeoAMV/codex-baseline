@@ -5,18 +5,17 @@
 Version 0.2.0 is an evidence-backed, Apache-2.0-licensed **unsigned public source
 preview**, not a mission-complete or publisher-authenticated release.
 Deterministic lifecycle, onboarding, recovery, prompt-input discovery, and
-evaluation-runner mechanics are implemented. Mandatory real-model
-paired/routing evaluation is still missing because no dedicated short-lived
-benchmark key was available.
+evaluation-runner mechanics are implemented. Real-model paired/routing
+evaluation remains deliberately deferred for this preview; no benchmark key or
+normal Codex authentication/session files were used.
 
-The focused v0.2.0 Unix self-update group passes, including deterministic
-release assets, hostile archives, downloaded-code canary, concurrent
-anti-downgrade, apply, Doctor, rollback, and exact restoration. The inherited
-v0.1.1 full-platform receipts remain useful regression evidence but do not bind
-the current change: this host lacks ShellCheck and has Codex 0.145.0 below the
-required 0.147.0, while native Windows fails closed on a foreign-writable
-`%LOCALAPPDATA%` ancestor. Accordingly v0.2.0 remains partially tested, not a
-verified release candidate.
+The current v0.2.0 tree passes all 13 Unix groups and both native Windows
+PowerShell 5.1 suites with 134 lifecycle and 69 onboarding/benchmark assertions.
+This includes deterministic release assets, hostile archives, downloaded-code
+canaries, concurrent anti-downgrade, apply, Doctor, rollback, and exact
+restoration. The remaining release limits are external: the real-model/API
+evaluation was deliberately deferred, the public update endpoint is not yet
+published, and no publisher signing identity exists.
 
 ## Architecture
 
@@ -95,6 +94,14 @@ separated in the five dated research records and 21-source manifest.
   install/update/doctor/rollback/uninstall, exact recovery, DACL/owner/Junction/
   path attacks, post-verification source mutation, conflict-safe onboarding,
   lazy traversal limits, and static benchmark contracts.
+- Current v0.2.0 WSL2 receipt: `./tests/run.sh` passes 13/13 groups from a
+  private WSL filesystem copy with pinned ShellCheck 0.9.0 and Codex 0.147.0
+  tools. The Verifier boundary uses a read-only workspace mount and an explicit
+  isolation preflight compatible with Bubblewrap 0.9.0.
+- Current v0.2.0 native Windows receipt: lifecycle passes 134 assertions and
+  onboarding/benchmark passes 69 assertions under Windows PowerShell
+  5.1.26100.8875. Native module paths are isolated from PowerShell 7 paths and
+  test state is created atomically under a protected system-drive root.
 - Research: offline contract reports 21 pinned sources, current through the
   recorded review date, with no network during validation.
 - Independent review: security, architecture/maintainability, and original-
@@ -114,11 +121,11 @@ untested commit.
 
 | Surface | Status | Boundary |
 | --- | --- | --- |
-| WSL2 Ubuntu implementation | partially tested | v0.2.0 focused self-update passes; the current full rerun lacks ShellCheck and a supported host Codex, while 12/12 belongs to inherited v0.1.1 evidence |
+| WSL2 Ubuntu implementation | tested | Current v0.2.0 passes all 13 Unix groups using pinned ShellCheck 0.9.0 and Codex 0.147.0 test tools |
 | Bare-metal Linux implementation | partially tested | Same Bash/Linux path plus static and isolated mechanics execute under WSL2; no separate distro/kernel matrix |
-| Native Windows PowerShell 5.1 | partially tested | v0.2.0 parses and has native fixtures, but the current suite fails closed on a foreign-writable staging ancestor; 95/69 assertions belong to inherited v0.1.1 evidence |
+| Native Windows PowerShell 5.1 | tested | Current v0.2.0 passes 134 lifecycle and 69 onboarding/benchmark assertions from a protected native test root |
 | Codex CLI 0.147 prompt discovery | tested | Global/root/nested guidance and all skill metadata rendered |
-| Real-model Linux/WSL paired, routing/behavior, and Canary runs | not verified | Dedicated evaluation key absent |
+| Real-model Linux/WSL paired, routing/behavior, and Canary runs | not verified | Dedicated evaluation key deliberately not supplied for this preview |
 | Codex App/IDE | partially tested | Official contracts plus CLI discovery; no complete local cross-client run |
 
 ## Benchmark
