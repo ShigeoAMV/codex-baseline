@@ -1,0 +1,39 @@
+codex-baseline release attestation v1
+recorded_utc: 2026-08-14T05:56:51Z
+commit: 0fd0ca8d8f1362c972efefe9d5b043eeec31665a
+tree: f8808a984b7ebc9d3fa492bacc29adfc0d4e9ae8
+payload_sha256: 3f57118ffe0a3f86326c0cb519b69a57af1174b916ad99a4d596d33a4fa9df6f
+source_trust: unsigned-local-source
+
+post_commit_verification:
+- command: ./tests/run.sh
+  exit: 0
+  result: 12/12 Unix/WSL groups passed
+  log_sha256: edf45d6bbbbf841654662ec151cbe9b6c6de6a1e62da5a5b890fd7a9d544cac2
+- command: ./tests/run-powershell.sh
+  exit: 0
+  result: native Windows PowerShell 5.1.26100.8875; lifecycle 95 assertions and onboarding/benchmark 69 assertions passed
+  log_sha256: 062fbe61776a8b6e9f8bfa37efb2b507291a7349506a65d8bc66a7f809b16a57
+
+pre_commit_verification:
+- final code and payload worktree: 12/12 Unix/WSL groups passed
+- final code and payload worktree: native Windows 95 plus 69 assertions passed
+- sole later edit before commit: PLAN.md progress truth; documentation-link check passed
+
+targeted_security_regressions:
+- ordinary source Git status executes read-only in networkless cgroup/Bubblewrap against frozen metadata
+- local fsmonitor, clean/process filter, and textconv configuration fail closed without executing attacker helpers
+- systemd-run literal command arguments are not environment-expanded
+- installed operational Canary records unversioned/null Git provenance and binds the reduced runtime source hash
+- routing/behavior targeted receipt completed with 6/6 routing and 4/4 behavior passes
+
+post_conditions:
+- tracked and index worktrees clean
+- no real Codex auth/session file was read, copied, mounted, or used
+- no network fetch occurred in install, lifecycle, or tests; loopback-only containment probes remained local
+
+remaining_external_gates:
+- dedicated short-lived API key plus caller-pinned Codex binary hash for real paired, routing/behavior, and containment-Canary runs
+- direct skill-activation telemetry or explicit acceptance of the documented probabilistic selected_skills limitation
+- owner-controlled signing identity/trust root and explicit license for a publisher-authenticated public release
+- final independent delta reviews are pending at the time of this note
