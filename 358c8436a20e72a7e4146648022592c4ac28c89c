@@ -1,0 +1,13 @@
+v0.2.0 unsigned public source preview attestation
+revision=358c8436a20e72a7e4146648022592c4ac28c89c
+payload_sha256=d4dc8bf6a71a944fdd27ed94c210e6ec2e20107a6e5b8e3a111576d000b1c291
+unix_wsl=PASS 13/13 (private WSL filesystem copy; ShellCheck 0.9.0; Codex 0.147.0)
+windows_lifecycle=PASS 134 assertions (Windows PowerShell 5.1.26100.8875)
+windows_onboarding_benchmark=PASS 69 assertions (Windows PowerShell 5.1.26100.8875)
+tar_gz_sha256=526e32fa57486c53693c71d18116e881000b65913b8b45535ecccc6eb0947651
+zip_sha256=136c843f55405f015f5658112cf5f4dbd3516beef526962405332f2c19238def
+descriptor_sha256=18d3282b864b5b128f1cba62d2abe7ffc8df90ab004d1d0813e6050278e053cd
+release_builds=byte-identical duplicate builds
+conformance=advisory root audit C0/H0/M0; no isolated independent final reviewer
+real_model_api=deliberately skipped
+publisher_authentication=unsigned; explicit acknowledgement required
