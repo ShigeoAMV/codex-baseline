@@ -81,6 +81,14 @@ independent audits.
   the same remaining gap: enabled `extensions.worktreeConfig` can expose an
   unchecked `config.worktree` scope. The current fix rejects that extension
   fail-closed and adds a non-execution regression test.
+- Candidate `3f3e16c3513f2b5a33f6a6098f31d302ae34f520` passed its clean
+  post-commit matrix with 12/12 Unix/WSL groups plus 95 and 69 native Windows
+  assertions. Architecture and conformance reviewers signed off. Security
+  confirmed the production fix but found that the first regression helper was
+  outside the sandbox and could therefore fail for the wrong reason. The
+  current test-only delta makes the helper reachable at `/source`, requires
+  the exact `extensions.worktreeconfig` guard diagnostic, and rejects its
+  execution sentinel. The production payload remains byte-identical.
 
 ## Open decisions
 

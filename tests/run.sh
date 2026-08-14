@@ -74,6 +74,7 @@ refresh_test_source_manifest() {
 test_static_quality() {
   local schema_fixture="$TEST_TMP/schema-fixture.json" source_tree="$TEST_TMP/source-hash" snapshot="$TEST_TMP/source-snapshot"
   local hash_before hash_after git_status scan_tree="$TEST_TMP/evaluation-scan-state" git_guard="$TEST_TMP/evaluation-git-guard"
+  local worktree_output worktree_status
   bash -n "$TEST_ROOT/scripts/"*.sh "$TEST_ROOT/scripts/lib/"*.sh "$TEST_ROOT/benchmarks/verifiers/"*.sh \
     "$TEST_ROOT/tests/behavior/"*.sh "$TEST_ROOT/tests/behavior/verifiers/"*.sh
   shellcheck "$TEST_ROOT/scripts/lib/common.sh" "$TEST_ROOT/scripts/lib/evaluation.sh" "$TEST_ROOT/scripts/codex-baseline.sh" \
@@ -237,20 +238,26 @@ test_static_quality() {
   ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
   test ! -e "$git_guard/textconv-invoked"
   git -C "$git_guard/repo" config --unset diff.evil.textconv
-  printf '#!/bin/sh\n: >%q\nexit 97\n' "$git_guard/worktree-filter-invoked" >"$git_guard/worktree-filter"
-  chmod 0755 -- "$git_guard/worktree-filter"
+  printf '#!/bin/sh\nprintf "%%s\\n" "worktree-filter-executed" >&2\nexit 97\n' >"$git_guard/repo/worktree-filter"
+  chmod 0755 -- "$git_guard/repo/worktree-filter"
   git -C "$git_guard/repo" config extensions.worktreeConfig true
-  git -C "$git_guard/repo" config --worktree filter.evil.process "$git_guard/worktree-filter"
+  git -C "$git_guard/repo" config --worktree filter.evil.process /source/worktree-filter
   printf 'tracked.txt filter=evil\n' >"$git_guard/repo/.git/info/attributes"
+  printf 'modified\n' >"$git_guard/repo/tracked.txt"
   test -f "$git_guard/repo/.git/config.worktree"
-  if /bin/bash -c '
+  set +e
+  worktree_output=$(/bin/bash -c '
     source "$1/scripts/lib/common.sh"
     source "$1/scripts/lib/evaluation.sh"
     eval_validate_system_boundary
     eval_require_cgroup_boundary
     eval_source_git "$2/repo" "$2/home-worktree-config" --status
-  ' _ "$TEST_ROOT" "$git_guard" >/dev/null 2>&1; then return 1; fi
-  test ! -e "$git_guard/worktree-filter-invoked"
+  ' _ "$TEST_ROOT" "$git_guard" 2>&1)
+  worktree_status=$?
+  set -e
+  [[ $worktree_status -ne 0 ]]
+  grep -Fxq 'codex-baseline: source Git metadata enables executable configuration: extensions.worktreeconfig' <<<"$worktree_output"
+  if grep -Fq 'worktree-filter-executed' <<<"$worktree_output"; then return 1; fi
 
   mkdir -p -- "$source_tree/excluded" "$source_tree/benchmark-results" "$source_tree/behavior-results" "$source_tree/.codebase-memory" "$snapshot"
   printf 'source\n' >"$source_tree/tracked.txt"
