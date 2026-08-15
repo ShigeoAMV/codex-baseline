@@ -10,7 +10,8 @@ evaluation remains deliberately deferred for this preview; no benchmark key or
 normal Codex authentication/session files were used.
 
 The current v0.2.0 tree passes all 13 Unix groups and both native Windows
-PowerShell 5.1 suites with 134 lifecycle and 69 onboarding/benchmark assertions.
+PowerShell 5.1 suites with 141 lifecycle and 69 onboarding/benchmark assertions;
+the lifecycle suite also exercises focused PowerShell 7 update/ACL compatibility.
 This includes deterministic release assets, hostile archives, downloaded-code
 canaries, concurrent anti-downgrade, apply, Doctor, rollback, and exact
 restoration. The remaining release limits are external: the real-model/API
@@ -98,7 +99,7 @@ separated in the five dated research records and 21-source manifest.
   private WSL filesystem copy with pinned ShellCheck 0.9.0 and Codex 0.147.0
   tools. The Verifier boundary uses a read-only workspace mount and an explicit
   isolation preflight compatible with Bubblewrap 0.9.0.
-- Current v0.2.0 native Windows receipt: lifecycle passes 134 assertions and
+- Current v0.2.0 native Windows receipt: lifecycle passes 141 assertions and
   onboarding/benchmark passes 69 assertions under Windows PowerShell
   5.1.26100.8875. Native module paths are isolated from PowerShell 7 paths and
   test state is created atomically under a protected system-drive root.
@@ -123,7 +124,7 @@ untested commit.
 | --- | --- | --- |
 | WSL2 Ubuntu implementation | tested | Current v0.2.0 passes all 13 Unix groups using pinned ShellCheck 0.9.0 and Codex 0.147.0 test tools |
 | Bare-metal Linux implementation | partially tested | Same Bash/Linux path plus static and isolated mechanics execute under WSL2; no separate distro/kernel matrix |
-| Native Windows PowerShell 5.1 | tested | Current v0.2.0 passes 134 lifecycle and 69 onboarding/benchmark assertions from a protected native test root |
+| Native Windows PowerShell 5.1 | tested | Current v0.2.0 passes 141 lifecycle and 69 onboarding/benchmark assertions from a protected native test root; focused PowerShell 7 update/ACL checks also pass |
 | Codex CLI 0.147 prompt discovery | tested | Global/root/nested guidance and all skill metadata rendered |
 | Real-model Linux/WSL paired, routing/behavior, and Canary runs | not verified | Dedicated evaluation key deliberately not supplied for this preview |
 | Codex App/IDE | partially tested | Official contracts plus CLI discovery; no complete local cross-client run |

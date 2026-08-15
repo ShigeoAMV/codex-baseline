@@ -7,7 +7,8 @@ Status vocabulary is fixed: `tested`, `partially tested`, `statically validated`
 | --- | --- | --- |
 | WSL2 Ubuntu 26.04 lifecycle | tested | The current v0.2.0 tree passes all 13 Unix groups from a private WSL filesystem copy with pinned ShellCheck 0.9.0 and Codex 0.147.0 test tools |
 | Linux CLI implementation | partially tested | Executed under WSL2 Linux kernel/filesystem; shell/static behavior covered, separate bare-metal distro run absent |
-| Native Windows PowerShell 5.1 lifecycle | tested | The current v0.2.0 tree passes 134 assertions under Windows PowerShell 5.1.26100.8875 from an atomically protected system-drive test root; production ancestor checks remain unchanged |
+| Native Windows PowerShell 5.1 lifecycle | tested | The current v0.2.0 tree passes 141 assertions under Windows PowerShell 5.1.26100.8875 from an atomically protected system-drive test root; production ancestor checks remain unchanged |
+| Native Windows PowerShell 7 compatibility | tested | PowerShell 7.6.3 runs installed-wrapper update staging and rejects adversarial untrusted ACL mutation rights through the same native security checks; PowerShell 5.1 remains the minimum runtime |
 | Native Windows onboarding/benchmark contract | tested | The current v0.2.0 tree passes all 69 native assertions under Windows PowerShell 5.1.26100.8875 |
 | Native Windows Codex CLI | tested | Native Codex 0.147.0 is discovered; Doctor exercises stable capabilities and strict-config validation without reading authentication/session files |
 | Codex CLI 0.147 prompt discovery | tested | `codex debug prompt-input` proved global, root, nested guidance and skill metadata |

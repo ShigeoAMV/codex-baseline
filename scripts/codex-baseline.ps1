@@ -1231,6 +1231,14 @@ function New-CbPrivateDirectorySecurity {
     return $security
 }
 
+function New-CbPrivateDirectory {
+    param([string]$Path, [System.Security.AccessControl.DirectorySecurity]$Security)
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        return [System.IO.FileSystemAclExtensions]::CreateDirectory($Security, $Path)
+    }
+    return [System.IO.Directory]::CreateDirectory($Path, $Security)
+}
+
 function Get-CbAclRuleSid {
     param($Rule)
     try {
@@ -1242,6 +1250,16 @@ function Get-CbAclRuleSid {
     catch {
         throw "Cannot resolve an ACL identity for a private temporary path: $($Rule.IdentityReference)"
     }
+}
+
+function Get-CbDirectorySecurity {
+    param([System.IO.DirectoryInfo]$Directory)
+    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor
+        [System.Security.AccessControl.AccessControlSections]::Owner
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        return [System.IO.FileSystemAclExtensions]::GetAccessControl($Directory, $sections)
+    }
+    return $Directory.GetAccessControl($sections)
 }
 
 function Assert-CbPrivatePathComponent {
@@ -1257,7 +1275,7 @@ function Assert-CbPrivatePathComponent {
     $item = Get-CbItem $Path
     if ($null -eq $item) { throw "Private temporary path is missing: $Path" }
     Assert-CbOrdinaryItem $item 'tree'
-    $acl = Get-Acl -LiteralPath $item.FullName -ErrorAction Stop
+    $acl = Get-CbDirectorySecurity ([System.IO.DirectoryInfo]$item)
     $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
     if ($ownerSid -notin $TrustedOwnerSids) {
         throw "Private temporary path has an untrusted owner: $($item.FullName) ($ownerSid)"
@@ -1270,7 +1288,8 @@ function Assert-CbPrivatePathComponent {
         throw "Private temporary directory inherits access rules: $($item.FullName)"
     }
     $currentHasFullControl = $false
-    foreach ($rule in @($acl.Access)) {
+    $accessRules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+    foreach ($rule in @($accessRules)) {
         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
         if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
         $sid = Get-CbAclRuleSid $rule
@@ -1338,7 +1357,7 @@ function New-CbTemporaryDirectory {
     Assert-CbOrdinaryItem $temporaryRootItem 'tree'
     Assert-CbPrivateTemporaryRoot $temporaryRoot
     $path = Join-Path $temporaryRoot ('codex-baseline-{0}' -f [guid]::NewGuid().ToString('N'))
-    [System.IO.Directory]::CreateDirectory($path, (New-CbPrivateDirectorySecurity)) | Out-Null
+    New-CbPrivateDirectory $path (New-CbPrivateDirectorySecurity) | Out-Null
     Assert-CbPrivateDirectory $path
     return $path
 }
@@ -1406,7 +1425,6 @@ function Receive-CbUpdateUrl {
             $request = [System.Net.HttpWebRequest]::CreateHttp($current)
             $request.Method = 'GET'
             $request.AllowAutoRedirect = $false
-            $request.MaximumAutomaticRedirections = 0
             $request.Timeout = 10000
             $request.ReadWriteTimeout = 60000
             $request.UserAgent = 'codex-baseline-update/1'

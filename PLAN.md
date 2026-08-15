@@ -41,7 +41,7 @@ post-commit rerun and unsigned preview publication remain.
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
 | 7. Dogfood and completion audit | In progress | Final immutable local revision and detached C0/H0/M0 review attestation are complete; live-model evidence and publisher signing remain |
-| 8. Explicit remote self-update | In progress | Deterministic v1 release assets plus 13/13 Unix and 134/69 native Windows regression receipts pass; clean post-commit rerun and unsigned preview publication remain |
+| 8. Explicit remote self-update | In progress | Deterministic v1 release assets plus 13/13 Unix and 141/69 native Windows regression receipts pass; clean post-commit rerun and unsigned preview publication remain |
 
 ## Current evidence
 
@@ -50,8 +50,10 @@ post-commit rerun and unsigned preview publication remain.
 - Codex CLI: 0.147.0, reported current by `codex doctor` on 2026-08-13.
 - Codex health: 17 checks OK, one idle app server, zero warnings/failures.
 - Native Windows PowerShell 5.1 is reachable from WSL; the current v0.2.0 tree
-  passes 134 lifecycle and 69 onboarding/benchmark assertions. Native Windows
-  Codex 0.147.0 is installed and its stable capabilities/config are exercised.
+  passes 141 lifecycle and 69 onboarding/benchmark assertions. PowerShell
+  7.6.3 additionally passes installed-update staging and adversarial ACL
+  compatibility checks. Native Windows Codex 0.147.0 is installed and its
+  stable capabilities/config are exercised.
 - Node.js 24.18.0 is available in WSL. It is not yet accepted as a universal
   runtime dependency.
 - The active global Codex configuration is customized and therefore provides a
@@ -103,10 +105,11 @@ post-commit rerun and unsigned preview publication remain.
   rollback, and exact-state restoration.
 - The current v0.2.0 working tree passes all 13 Unix groups from a private WSL
   filesystem copy using pinned ShellCheck 0.9.0 and Codex 0.147.0 test tools.
-  It also passes both native Windows PowerShell 5.1 suites with 134 and 69
-  assertions. Windows tests now atomically create a protected system-drive test
-  root instead of relying on the foreign-writable `%LOCALAPPDATA%` ancestry;
-  production path validation remains unchanged and fail-closed.
+  It also passes both native Windows PowerShell suites with 141 and 69
+  assertions, including focused PowerShell 7.6.3 update/ACL compatibility.
+  Windows tests atomically create a protected system-drive test root instead of
+  relying on the foreign-writable `%LOCALAPPDATA%` ancestry; production path
+  validation remains unchanged and fail-closed.
 
 ## Open decisions
 

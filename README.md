@@ -174,13 +174,14 @@ installed runtime instead.
 
 ## Support truth
 
-The release candidate is executed on WSL2/Linux (12 end-to-end test groups) and
-in native Windows PowerShell 5.1 through WSL interoperability (95 lifecycle and
-69 onboarding/benchmark assertions). A native-Codex test double proves Windows
-Doctor version/capability logic; the real native Windows Codex binary is not
-installed and remains `not verified`. Codex App behavior is
-based on current official product contracts plus CLI prompt-input probes, not a
-complete cross-client execution test. See [platform status](docs/PLATFORMS.md).
+The release candidate is executed on WSL2/Linux (13 end-to-end test groups) and
+in native Windows PowerShell 5.1 through WSL interoperability (141 lifecycle
+and 69 onboarding/benchmark assertions). The lifecycle suite also exercises
+PowerShell 7 update staging and adversarial ACL rejection when `pwsh` is
+available. Native Codex 0.147.0 Doctor capability/config checks execute without
+reading authentication/session files. Codex App behavior is based on current
+official product contracts plus CLI prompt-input probes, not a complete
+cross-client execution test. See [platform status](docs/PLATFORMS.md).
 
 ## License
 
