@@ -23,6 +23,11 @@ manifest version, payload checks, platform evidence, and this log together.
   transaction engine perform apply and locked anti-downgrade checks.
 - Exercise the installed Bash and PowerShell wrappers for remote/offline check,
   dry-run, integrity failure, transaction preservation, and rollback behavior.
+- Fix native Windows remote update request setup by retaining manual redirect
+  handling without assigning the invalid zero automatic-redirect limit.
+- Use runtime-native ACL retrieval and protected-directory creation under both
+  Windows PowerShell 5.1 and PowerShell 7 without relying on `Get-Acl` module
+  autoloading; keep explicit SID-based owner/access validation fail-closed.
 
 ## 0.1.1 - 2026-08-14
 

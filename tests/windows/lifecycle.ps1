@@ -8,6 +8,8 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
 $script:RepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $script:BaselineScript = Join-Path $script:RepositoryRoot 'scripts\codex-baseline.ps1'
 $script:PowerShell = Join-Path $PSHOME 'powershell.exe'
+$powerShellCoreCommands = @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+$script:PowerShellCore = if ($powerShellCoreCommands.Count -eq 1) { $powerShellCoreCommands[0].Path } else { $null }
 $script:PrivateTestBase = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($env:SystemRoot))
 $script:TestRoot = Join-Path $script:PrivateTestBase ('cbw-{0}' -f [guid]::NewGuid().ToString('N').Substring(0, 8))
 $script:Assertions = 0
@@ -143,6 +145,13 @@ function New-PrivateTestRoot {
     }
 }
 
+$productionScript = [System.IO.File]::ReadAllText($script:BaselineScript, $script:Utf8NoBom)
+Assert-True ($productionScript -match '\$request\.AllowAutoRedirect\s*=\s*\$false') 'remote update must disable automatic redirects'
+Assert-True ($productionScript -notmatch '\$request\.MaximumAutomaticRedirections\s*=\s*0') 'remote update must not assign the invalid zero automatic-redirect limit'
+Assert-True ($productionScript -notmatch '(?i)\bGet-Acl\b') 'production ACL validation must not depend on Get-Acl module autoloading'
+Assert-True ($productionScript -match 'FileSystemAclExtensions\]::GetAccessControl' -and
+    $productionScript -match '\.GetAccessRules\(\$true,\s*\$true,\s*\[System\.Security\.Principal\.SecurityIdentifier\]\)') 'production ACL validation must use native runtime ACL APIs and explicit SID rules'
+
 New-PrivateTestRoot $script:TestRoot
 try {
     $testHome = Set-TestEnvironment (Join-Path $script:TestRoot 'main')
@@ -238,6 +247,16 @@ try {
     $sharedStagingOutput = Invoke-Baseline @('install') 1
     Assert-True ($sharedStagingOutput -match 'mutation rights\s+to an untrusted SID') ("installer must reject an ACL-escalatable private staging parent before snapshot creation; output: {0}" -f $sharedStagingOutput)
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'shared staging-parent rejection must precede managed-home mutation'
+    if ($null -ne $script:PowerShellCore) {
+        $savedPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $coreSharedStagingOutput = (& $script:PowerShellCore -NoProfile -ExecutionPolicy Bypass -File $script:BaselineScript install -DryRun -AcknowledgeUnverifiedSource 2>&1 | Out-String).Trim()
+            $coreSharedStagingExit = $LASTEXITCODE
+        }
+        finally { $ErrorActionPreference = $savedPreference }
+        Assert-True ($coreSharedStagingExit -eq 1 -and $coreSharedStagingOutput -match 'mutation rights\s+to an untrusted SID') ("PowerShell 7 must reject an ACL-escalatable private staging parent: {0}" -f $coreSharedStagingOutput)
+    }
 
     $deleteChildStagingHome = Set-TestEnvironment (Join-Path $script:TestRoot 'delete-child-staging-root')
     $deleteChildStagingDirectory = New-Object System.IO.DirectoryInfo($deleteChildStagingHome)
@@ -383,6 +402,17 @@ exit 1
         $wrapperCheck = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Check 2>&1 | Out-String).Trim()
         Assert-True ($LASTEXITCODE -eq 0 -and $wrapperCheck -match 'update available: 0\.2\.0 -> 0\.2\.1') ("installed wrapper update check must succeed: {0}" -f $wrapperCheck)
         Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'update check must preserve current transaction'
+        if ($null -ne $script:PowerShellCore) {
+            $savedPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $coreCheck = (& $script:PowerShellCore -NoProfile -ExecutionPolicy Bypass -File $wrapper update -Check 2>&1 | Out-String).Trim()
+                $coreCheckExit = $LASTEXITCODE
+            }
+            finally { $ErrorActionPreference = $savedPreference }
+            Assert-True ($coreCheckExit -eq 0 -and $coreCheck -match 'update available: 0\.2\.0 -> 0\.2\.1') ("PowerShell 7 installed wrapper update check must succeed: {0}" -f $coreCheck)
+            Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'PowerShell 7 update check must preserve current transaction'
+        }
         $wrapperDry = (& $script:PowerShell -NoProfile -ExecutionPolicy Bypass -File $wrapper update -DryRun 2>&1 | Out-String).Trim()
         Assert-True ($LASTEXITCODE -eq 0 -and $wrapperDry -match 'dry-run: no files changed') ("installed wrapper remote update dry-run must succeed: {0}" -f $wrapperDry)
         Assert-True ([System.IO.File]::ReadAllText($currentPath, $script:Utf8NoBom).Trim() -eq $firstTransaction) 'remote update dry-run must preserve current transaction'
