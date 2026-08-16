@@ -14,11 +14,24 @@
     "sha256": "358511cdb2018098f2c513c666520cd9c588362c4dc8ff825aad66ffea21974b"
   },
   "runtime_telemetry_adapter": null,
+  "app_server_telemetry": {
+    "contract": "codex-app-server-telemetry/v1",
+    "checked_codex_cli": "0.147.0",
+    "runner": {
+      "path": "benchmarks/runtime/app-server-runner.mjs",
+      "sha256": "e1cbe3b216b9a48161ee96e7fc2dd59049e79e32b082be804e28650a67cf83e5"
+    },
+    "reducer": {
+      "path": "benchmarks/runtime/app-server-telemetry.mjs",
+      "sha256": "42fa63d3808d42aa94784f763f564059275789ebc241d9b02b85c07e08521a3f"
+    },
+    "live_probe": "protocol-verified-with-empty-auth; model-and-subagent-live-run-unverified-without-dedicated-key"
+  },
   "runtime_telemetry_capability": {
     "status": "unavailable",
     "checked_at": "2026-08-16",
     "checked_codex_cli": "0.147.0",
-    "blocker": "codex exec --json does not expose authoritative child lane, child model/effort, depth, wave, concurrency, or parent-setting telemetry"
+    "blocker": "App Server telemetry now provides bounded orchestration and aggregate token evidence, but stable promotion still lacks independently verified write/test isolation, monetary cost, and runner attestation"
   },
   "profiles": {
     "vanilla": {"guidance":"absent","agents_enabled":null,"agent_cap":null,"auto_overlay":false,"child_model_policy":"account-default"},

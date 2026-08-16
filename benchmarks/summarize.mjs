@@ -58,6 +58,17 @@ if (manifest.runtime_telemetry_adapter !== null &&
      !isHash(manifest.runtime_telemetry_adapter.sha256))) {
   throw new Error('benchmark runtime telemetry adapter contract is invalid');
 }
+const appServerTelemetry = manifest.app_server_telemetry;
+if (!appServerTelemetry || typeof appServerTelemetry !== 'object' || Array.isArray(appServerTelemetry) ||
+    JSON.stringify(Object.keys(appServerTelemetry).sort()) !== '["checked_codex_cli","contract","live_probe","reducer","runner"]' ||
+    appServerTelemetry.contract !== 'codex-app-server-telemetry/v1' || appServerTelemetry.checked_codex_cli !== '0.147.0' ||
+    typeof appServerTelemetry.live_probe !== 'string' || appServerTelemetry.live_probe.length === 0 ||
+    JSON.stringify(Object.keys(appServerTelemetry.runner ?? {}).sort()) !== '["path","sha256"]' ||
+    appServerTelemetry.runner.path !== 'benchmarks/runtime/app-server-runner.mjs' || !isHash(appServerTelemetry.runner.sha256) ||
+    JSON.stringify(Object.keys(appServerTelemetry.reducer ?? {}).sort()) !== '["path","sha256"]' ||
+    appServerTelemetry.reducer.path !== 'benchmarks/runtime/app-server-telemetry.mjs' || !isHash(appServerTelemetry.reducer.sha256)) {
+  throw new Error('benchmark App Server telemetry contract is invalid');
+}
 const telemetryCapability = manifest.runtime_telemetry_capability;
 if (!telemetryCapability || typeof telemetryCapability !== 'object' || Array.isArray(telemetryCapability) ||
     JSON.stringify(Object.keys(telemetryCapability).sort()) !== '["blocker","checked_at","checked_codex_cli","status"]' ||
@@ -396,7 +407,9 @@ const telemetryVerified = Boolean(adapterConfigured) && runAdapterContract === a
   result.orchestration.parent_settings_verification === 'verified' &&
   result.orchestration.telemetry_adapter_hash === adapter.sha256 &&
   result.orchestration.telemetry_provenance === `runtime-telemetry-adapter-sha256:${adapter.sha256}`);
-const telemetryPartial = autoRuns.some(result => result.orchestration.telemetry_verification === 'partial');
+const telemetryPartial = autoRuns.some(result => result.orchestration.telemetry_verification === 'partial' &&
+  result.orchestration.telemetry_adapter_hash === appServerTelemetry.reducer.sha256 &&
+  result.orchestration.telemetry_provenance === `codex-app-server-telemetry/v1-sha256:${appServerTelemetry.reducer.sha256}`);
 const promotionCapabilityAvailable = telemetryCapability.status === 'available' && Boolean(adapterConfigured);
 const smallestEffectiveTeamVerified = telemetryVerified;
 const smallestEffectiveTeamPassed = smallestEffectiveTeamVerified && autoRuns.every(result =>

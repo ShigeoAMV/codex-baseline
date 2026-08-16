@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/benchmark-summary-v2.schema.json",
+  "$id": "https://codex-baseline.invalid/benchmarks/contracts/benchmark-summary-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "contract", "runs", "task_repetitions", "provenance", "by_arm", "by_cache_state", "comparisons", "by_task", "gates", "limitations"],

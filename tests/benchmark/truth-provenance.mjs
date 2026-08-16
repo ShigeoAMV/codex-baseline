@@ -58,6 +58,12 @@ function makeManifest({adapter = true, releaseStatus = 'rc.1'} = {}) {
     bootstrap_resamples: 10000,
     auto_overlay: {path: 'benchmarks/auto-execution.overlay.md', sha256: overlayHash},
     runtime_telemetry_adapter: adapter ? {contract: 'codex-runtime-telemetry/v1', sha256: adapterHash} : null,
+    app_server_telemetry: {
+      contract: 'codex-app-server-telemetry/v1', checked_codex_cli: '0.147.0',
+      runner: {path: 'benchmarks/runtime/app-server-runner.mjs', sha256: '4'.repeat(64)},
+      reducer: {path: 'benchmarks/runtime/app-server-telemetry.mjs', sha256: '5'.repeat(64)},
+      live_probe: 'synthetic-test-fixture'
+    },
     runtime_telemetry_capability: adapter
       ? {status: 'available', checked_at: '2026-08-16', checked_codex_cli: '0.147.0', blocker: null}
       : {status: 'unavailable', checked_at: '2026-08-16', checked_codex_cli: '0.147.0',
@@ -185,12 +191,12 @@ function summarize(runs, manifest, {dirty = false, revision = 'a'.repeat(40), st
     })}\n`);
     const representative = path.join(directory, 'result.json');
     fs.writeFileSync(representative, `${JSON.stringify(runs.at(-1))}\n`);
-    execFileSync(python, [schemaValidator, path.join(root, 'contracts', 'benchmark-result.schema.json'), representative], {stdio: 'pipe'});
+    execFileSync(python, [schemaValidator, path.join(root, 'benchmarks', 'contracts', 'benchmark-result.schema.json'), representative], {stdio: 'pipe'});
     const summary = JSON.parse(execFileSync(process.execPath, [summarizer, input, runPath, manifestPath],
       {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}));
     const summaryPath = path.join(directory, 'summary.json');
     fs.writeFileSync(summaryPath, `${JSON.stringify(summary)}\n`);
-    execFileSync(python, [schemaValidator, path.join(root, 'contracts', 'benchmark-summary.schema.json'), summaryPath], {stdio: 'pipe'});
+    execFileSync(python, [schemaValidator, path.join(root, 'benchmarks', 'contracts', 'benchmark-summary.schema.json'), summaryPath], {stdio: 'pipe'});
     return summary;
   } finally {
     fs.rmSync(directory, {recursive: true, force: true});
@@ -203,7 +209,7 @@ function assertResultSchemaRejects(result) {
     const resultPath = path.join(directory, 'result.json');
     fs.writeFileSync(resultPath, `${JSON.stringify(result)}\n`);
     assert.throws(() => execFileSync(python,
-      [schemaValidator, path.join(root, 'contracts', 'benchmark-result.schema.json'), resultPath],
+      [schemaValidator, path.join(root, 'benchmarks', 'contracts', 'benchmark-result.schema.json'), resultPath],
       {stdio: 'pipe'}));
   } finally {
     fs.rmSync(directory, {recursive: true, force: true});

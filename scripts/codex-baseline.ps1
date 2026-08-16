@@ -696,7 +696,8 @@ function Read-CbManifest {
     foreach ($scriptPath in @(
         'scripts/codex-baseline.sh', 'scripts/codex-baseline.ps1',
         'scripts/onboard.sh', 'scripts/onboard.ps1',
-        'scripts/benchmark.sh', 'scripts/benchmark.ps1', 'scripts/lib/common.sh', 'scripts/lib/evaluation.sh'
+        'scripts/benchmark.sh', 'scripts/benchmark.ps1',
+        'scripts/lib/common.sh', 'scripts/lib/evaluation.sh'
     )) {
         $expectedPaths.Add($scriptPath) | Out-Null
     }

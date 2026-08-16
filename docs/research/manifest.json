@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "contract": "codex-baseline-research/v1",
-  "checked": "2026-08-15",
+  "checked": "2026-08-16",
   "review_by": "2026-09-15",
   "codex": {
     "stable_version": "0.147.0",
@@ -11,6 +11,7 @@
   "sources": [
     {"id": "codex-docs", "tier": 1, "url": "https://developers.openai.com/codex/", "observed": "2026-08-15", "version": "live", "license": null},
     {"id": "codex-subagents", "tier": 1, "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents", "observed": "2026-08-15", "version": "live", "license": null},
+    {"id": "codex-app-server", "tier": 1, "url": "https://learn.chatgpt.com/docs/app-server", "observed": "2026-08-16", "version": "0.147.0", "license": null},
     {"id": "openai-latest-model-guide", "tier": 1, "url": "https://developers.openai.com/api/docs/guides/latest-model", "observed": "2026-08-15", "version": "live", "license": null},
     {"id": "codex-fast-mode", "tier": 1, "url": "https://learn.chatgpt.com/docs/agent-configuration/speed", "observed": "2026-08-15", "version": "live", "license": null},
     {"id": "openai-ultrafast-preview", "tier": 1, "url": "https://openai.com/index/previewing-ultrafast/", "observed": "2026-08-15", "version": "preview", "license": null},

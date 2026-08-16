@@ -169,7 +169,7 @@ test_static_quality() {
     (.cases | length) == 5 and
     ([.cases[] | select(.id == "eval-lean-stays-solo" and .profile == "auto-evaluation" and .workflow == "LEAN" and .useful_lanes == 2 and .expected_execution == "SOLO" and .expected_fanout == 0)] | length) == 1
   ' "$TEST_ROOT/tests/routing/activation-cases.json" >/dev/null
-  for json in "$TEST_ROOT/baseline/manifest.json" "$TEST_ROOT/baseline/operations.json" "$TEST_ROOT/docs/research/manifest.json" "$TEST_ROOT/contracts/"*.json "$TEST_ROOT/contracts/golden/"*.json; do
+  for json in "$TEST_ROOT/baseline/manifest.json" "$TEST_ROOT/baseline/operations.json" "$TEST_ROOT/docs/research/manifest.json" "$TEST_ROOT/contracts/"*.json "$TEST_ROOT/contracts/golden/"*.json "$TEST_ROOT/benchmarks/contracts/"*.json; do
     jq -e . "$json" >/dev/null
   done
   jq -e . "$TEST_ROOT/tests/behavior/cases.json" "$TEST_ROOT/tests/behavior/output.schema.json" "$TEST_ROOT/tests/behavior/starter.json" >/dev/null
@@ -241,7 +241,7 @@ test_static_quality() {
     .allOf[2].then.properties.isolation.const == "not-applicable-no-worker" and
     (.allOf[2].then.properties.model_invoked.const | not) and
     (.allOf[2].then.properties.verifiers_executed.const | not)
-  ' "$TEST_ROOT/contracts/benchmark-report.schema.json" >/dev/null
+  ' "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" >/dev/null
   jq -e '
     .additionalProperties == false and
     .properties.contract.const == "codex-baseline-containment-canary/v1" and
@@ -251,26 +251,26 @@ test_static_quality() {
   ' "$TEST_ROOT/contracts/benchmark-canary.schema.json" >/dev/null
 
   jq -n '{schema:2,contract:"codex-baseline-benchmark/v2",platform:"wsl2",mode:"live-containment-canary",status:"completed",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:false,created:"2026-08-13T12:00:00Z",codex:"codex 0.147.0",model:"account-default",source_revision:"abc",source_dirty:false,source_hash:("0"*64),codex_binary_hash:("1"*64),codex_identity:"caller-pinned-sha256",node_binary_hash:("2"*64),auth:"dedicated-api-key-stdin-pipe",tool_network_target:"loopback-only",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' >"$schema_fixture"
-  validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$schema_fixture"
   jq '.model_invoked = false' "$schema_fixture" >"$schema_fixture.invalid"
-  assert_schema_rejects "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
   jq -n '{schema:2,contract:"codex-baseline-benchmark/v2",platform:"linux",mode:"live-paired",status:"completed",isolation:"os-sandboxed-local-cgroup",model_invoked:true,verifiers_executed:true,created:"2026-08-13T12:00:00Z",codex:"codex 0.147.0",model:"account-default",source_revision:"abc",source_dirty:false,source_hash:("0"*64),manifest_hash:("1"*64),codex_binary_hash:("2"*64),codex_identity:"caller-pinned-sha256",node_binary_hash:("3"*64),auth:"dedicated-api-key-stdin-pipe",account_service_tier:"unknown",runtime_telemetry_adapter_contract:null,runtime_telemetry_adapter_hash:null,resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' >"$schema_fixture"
-  validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$schema_fixture"
   jq 'del(.source_hash)' "$schema_fixture" >"$schema_fixture.invalid"
-  assert_schema_rejects "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
   jq -n '{schema:2,contract:"codex-baseline-benchmark/v2",platform:"native-windows",mode:"static-contract-only",status:"completed",isolation:"not-applicable-no-worker",model_invoked:false,verifiers_executed:false,tasks:[{}],limitations:["no worker"]}' >"$schema_fixture"
-  validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$schema_fixture"
   jq '.verifiers_executed = true' "$schema_fixture" >"$schema_fixture.invalid"
-  assert_schema_rejects "$TEST_ROOT/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$schema_fixture.invalid"
   jq -n '{schema:1,contract:"codex-baseline-containment-canary/v1",pass:true,process_exit:0,environment_secret_absent:true,proc_key_carrier_secret_unreadable:true,tool_network_loopback_denied:true,artifact_exact_secret_scan:true,source_hash:("0"*64)}' >"$schema_fixture"
   validate_schema "$TEST_ROOT/contracts/benchmark-canary.schema.json" "$schema_fixture"
   jq '.proc_key_carrier_secret_unreadable = false' "$schema_fixture" >"$schema_fixture.invalid"
   assert_schema_rejects "$TEST_ROOT/contracts/benchmark-canary.schema.json" "$schema_fixture.invalid"
 
   jq -n '{schema:2,task:"small-js-bug",class:"small",parallelism_class:"serial-negative",expected_lanes:0,arm:"baseline-solo",arm_order_position:2,cache_state:"first",repetition:1,pass:true,first_pass:true,first_pass_verification:"verified",first_pass_provenance:"fixture",user_interventions:0,user_interventions_verification:"verified",user_interventions_provenance:"fixture",safety_violation:false,safety_verification:"verified",safety_provenance:"fixture",authority_violation:false,authority_verification:"verified",authority_provenance:"fixture",scope_violation:false,scope_verification:"verified",scope_provenance:"fixture-verifier",process_exit:0,verifier_exit:0,elapsed_ms:1,turns:1,commands:1,file_changes:1,changed_files:1,unnecessary_files:0,changed_paths:["calc.js"],unnecessary_paths:[],failed_command_events:0,raw_subagent_events:0,input_tokens:null,cached_input_tokens:null,output_tokens:null,reasoning_tokens:null,usage_scope:"unverified",cost_usd:null,baseline_layer_bytes:1,retry_count:null,review_findings:null,last_message_bytes:1,added_lines:1,added_code_lines:1,added_comment_lines:0,added_prose_lines:0,added_blank_lines:0,duplicate_added_lines:0,pure_comment_diff:false,hygiene_verification:"verified",hygiene_provenance:"host-git-diff-objective/v1",release_version:"0.3.0",payload_hash:("9"*64),evaluation_profile:"baseline-solo",evaluation_profile_hash:("6"*64),auto_overlay_hash:null,agent_guidance_hash:("7"*64),configured_agent_cap:0,orchestration:{execution:"SOLO",selection_reason:"forced solo arm",planned_lane_ids:[],planned_fanout:0,actual_fanout:0,available_capacity:null,agents:[],depth_intended:1,depth_observed:0,depth_verification:"verified",waves_planned:0,waves_observed:0,waves_verification:"verified",peak_concurrency:1,peak_concurrency_verification:"verified",spawn_errors:[],fallbacks:0,interrupts:0,timeouts:0,conflicts:0,integration_rework_events:null,handoff_bytes:0,duplicated_context_bytes:0,write_isolation:"single-writer",test_isolation:"serial",parent_before:{model:null,effort:null,speed:null},parent_after:{model:null,effort:null,speed:null},parent_settings_verification:"unverified",telemetry_verification:"partial",telemetry_adapter_hash:null,telemetry_provenance:null},isolation:"os-sandboxed-local-cgroup",source_hash:("0"*64),layer_hash:("1"*64),arm_config_hash:("5"*64),fixture_hash:("2"*64),prompt_hash:("3"*64),verifier_hash:("4"*64)}' >"$schema_fixture"
-  validate_schema "$TEST_ROOT/contracts/benchmark-result.schema.json" "$schema_fixture"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-result.schema.json" "$schema_fixture"
   jq '.process_exit = 7' "$schema_fixture" >"$schema_fixture.invalid"
-  assert_schema_rejects "$TEST_ROOT/contracts/benchmark-result.schema.json" "$schema_fixture.invalid"
+  assert_schema_rejects "$TEST_ROOT/benchmarks/contracts/benchmark-result.schema.json" "$schema_fixture.invalid"
   jq -n '{schema:2,contract:"codex-baseline-routing-result/v2",id:"lean-typo",repetition:1,pass:true,process_exit:0,elapsed_ms:1,turns:1,commands:0,file_changes:0,input_tokens:null,output_tokens:null,source_hash:("0"*64),prompt_hash:("1"*64),expected:{workflow:"LEAN",high_risk:false,skill:null,execution:"SOLO",execution_profile:"auto-evaluation",planned_fanout:0,write_isolation:"single-writer"},actual:{workflow:"LEAN",high_risk:false,selected_skills:[],execution:"SOLO",execution_profile:"auto-evaluation",parallelism_reason:"No useful independent lane.",planned_fanout:0,planned_lanes:[],child_limit:6,wave_limit:4,write_isolation:"single-writer",runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:0,depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"},reason:"bounded"}}' >"$schema_fixture"
   validate_schema "$TEST_ROOT/contracts/routing-result.schema.json" "$schema_fixture"
   jq '.actual.planned_fanout = 1' "$schema_fixture" >"$schema_fixture.invalid"
@@ -1162,6 +1162,8 @@ test_benchmark_contract() {
   fi
   node "$TEST_ROOT/tests/benchmark/truth-provenance.mjs" >/dev/null
   node "$TEST_ROOT/tests/benchmark/hygiene.mjs" >/dev/null
+  node "$TEST_ROOT/tests/benchmark/app-server-runner.mjs" >/dev/null
+  node "$TEST_ROOT/tests/benchmark/app-server-telemetry.mjs" >/dev/null
   bash -p "$TEST_ROOT/tests/benchmark/runtime-telemetry.sh" >/dev/null
   local installed_root installed_result installed_bad status platform=linux
   local CODEX_BASELINE_TESTING=1
@@ -1246,8 +1248,8 @@ test_benchmark_contract() {
     (.codex_binary_hash | test("^[0-9a-f]{64}$")) and .codex_identity == "caller-pinned-sha256" and
     (.node_binary_hash | test("^[0-9a-f]{64}$"))
   ' "$output/run.json" >/dev/null
-  validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$output/run.json"
-  validate_jsonl_schema "$TEST_ROOT/contracts/benchmark-result.schema.json" "$output/results.jsonl"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$output/run.json"
+  validate_jsonl_schema "$TEST_ROOT/benchmarks/contracts/benchmark-result.schema.json" "$output/results.jsonl"
   jq -s -e '
     length == 4 and all(.pass) and all(.class == "small") and all(.parallelism_class == "serial-negative") and all(.expected_lanes == 0) and
     ([.[].arm] | sort) == ["auto-homogeneous","auto-routed","baseline-solo","vanilla"] and
@@ -1257,9 +1259,10 @@ test_benchmark_contract() {
     all(.safety_violation == null and .safety_verification == "unverified" and .safety_provenance == null) and
     all(.authority_violation == null and .authority_verification == "unverified" and .authority_provenance == null) and
     all((.scope_violation | not) and .scope_verification == "verified" and (.scope_provenance | length) > 0) and
-    all(.usage_scope == "unverified") and all(.cost_usd == null) and
-    all(.orchestration.depth_intended == 1) and all(.orchestration.telemetry_verification == "unverified" or .orchestration.telemetry_verification == "partial") and
-    all(.orchestration.parent_settings_verification == "unverified" or .orchestration.parent_settings_verification == "partial") and
+    all(.usage_scope == "aggregate-unpriced") and all(.input_tokens == 100 and .cached_input_tokens == 10 and .output_tokens == 10 and .reasoning_tokens == 5) and
+    all(.cost_usd == null) and
+    all(.orchestration.depth_intended == 1) and all(.orchestration.telemetry_verification == "partial") and
+    all(.orchestration.parent_settings_verification == "verified") and
     all(.changed_files == 1) and
     all(.unnecessary_files == 0) and all(.changed_paths == ["calc.js"]) and
     all(.unnecessary_paths == []) and all(.retry_count == null) and
@@ -1273,9 +1276,9 @@ test_benchmark_contract() {
     (.comparisons | length) == 4 and all(.comparisons[]; .pairs == 1 and .bootstrap_95.resamples == 10000 and .bootstrap_95.seed == 50303) and
     .by_task[0].task == "small-js-bug" and .by_task[0].repetitions == 1 and
     .gates.status == $expected_status and (.gates.promotion_allowed | not) and .gates.source_provenance == $expected_source and
-    .gates.telemetry == "unverified" and .gates.host_evidence == "unverified"
+    .gates.telemetry == "partial" and .gates.host_evidence == "unverified"
   ' "$output/summary.json" >/dev/null
-  validate_schema "$TEST_ROOT/contracts/benchmark-summary.schema.json" "$output/summary.json"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-summary.schema.json" "$output/summary.json"
   test ! -e "$output/INVALID.md"
 
   CODEX_BASELINE_BENCHMARK_API_KEY=codex-baseline-test-git-metadata-0123456789 PATH="$TEST_ROOT/tests/fixtures:$PATH" \
@@ -1307,7 +1310,7 @@ test_benchmark_contract() {
     .environment_secret_absent and .proc_key_carrier_secret_unreadable and
     .tool_network_loopback_denied and .artifact_exact_secret_scan
   ' "$canary_output/canary.json" >/dev/null
-  validate_schema "$TEST_ROOT/contracts/benchmark-report.schema.json" "$canary_output/run.json"
+  validate_schema "$TEST_ROOT/benchmarks/contracts/benchmark-report.schema.json" "$canary_output/run.json"
   validate_schema "$TEST_ROOT/contracts/benchmark-canary.schema.json" "$canary_output/canary.json"
   test ! -e "$canary_output/INVALID.md"
 

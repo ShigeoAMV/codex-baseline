@@ -46,9 +46,11 @@ are diagnostic gates against waste, not permission to sacrifice correctness.
 Fast is evaluated separately and never counted as subagent acceleration.
 Without the dedicated key, these live facts remain `unverified`; the RC may be
 built, but stable `0.3.0` and performance claims are not authorized. A key is
-necessary but not sufficient for this candidate: its manifest explicitly marks
-runtime orchestration telemetry and stable promotion as `unavailable` for the
-current Codex JSONL contract.
+necessary but not sufficient for this candidate. Codex App Server 0.147 now
+supplies bounded thread, collaboration, settings, timing, and per-thread token
+events, so the runner records core orchestration as partial evidence. Stable
+promotion remains `unavailable` until write/test isolation, monetary cost, and
+independent runner attestation are also verified.
 
 Live release evaluation consumes quota. Run the three commands directly from
 the reviewed checkout so every receipt covers the same full source scope. First
@@ -62,6 +64,7 @@ CODEX_SHA256=$(sha256sum -- "$CODEX_BIN" | awk '{print $1}')
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
   CODEX_BASELINE_EXPECTED_CODEX_SHA256="$CODEX_SHA256" \
   scripts/benchmark.sh --live --repetitions 10 \
+    --model '<reviewed-parent-model>' --effort '<reviewed-parent-effort>' \
     --host-evidence-verifier /reviewed/path/host-evidence-verifier \
     --expected-evidence-verifier-sha256 '<reviewed-verifier-sha256>'
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
@@ -80,17 +83,17 @@ pair `--runtime-telemetry-adapter /absolute/reviewed/file` and
 `--expected-runtime-telemetry-adapter-sha256 HASH`. These flags are live-only;
 supplying one without the other, a linked/non-executable file, a hash mismatch,
 or a contract/hash that differs from the manifest fails before any arm runs.
-The current RC intentionally registers `null`, so it refuses a supplied adapter
-and cannot produce promotion-authorizing orchestration telemetry. The manifest's
-`runtime_telemetry_capability` records the exact independent blocker. Codex CLI
-0.147 `exec --json` exposes the documented thread/turn/item vocabulary and turn
-token usage, but no authoritative child lane, requested/actual child model and
-effort, depth, waves, peak concurrency, or parent-settings events. The canonical
-[Codex SDK event types](https://github.com/openai/codex/blob/main/sdk/typescript/src/events.ts)
-and [item types](https://github.com/openai/codex/blob/main/sdk/typescript/src/items.ts)
-therefore do not support a truthful adapter for the promotion contract. An
-adapter based on model prose, private session files, or synthetic events would
-fabricate proof and remains rejected.
+The external promotion adapter remains `null`, so the RC still refuses an
+unregistered promotion-authorizing adapter. Paired live arms themselves now run
+through the pinned Codex [App Server](https://learn.chatgpt.com/docs/app-server)
+stdio protocol. The hash-pinned runner captures `thread/started`, collaboration
+tool calls, settings/reroutes, turn lifecycles, and cumulative per-thread token
+updates; a separate hash-pinned reducer reconstructs the bounded parent/child
+graph, requested versus observed model/effort, fan-out, depth, waves, peak
+concurrency, fallbacks, and token totals. It pseudonymizes thread/lane IDs and
+does not emit raw Child prompts. The model/authenticated live portion remains
+unverified without the dedicated benchmark key. Model prose, private session
+files, or synthetic events are never accepted as live proof.
 
 The task verifier proves executable task correctness, while the host Git check
 proves the declared changed-path scope. Neither can honestly infer first-pass
@@ -158,10 +161,9 @@ or lane count differs from the preregistered `expected_lanes`. Serial controls
 must prove zero planned lanes and `SOLO`; a two-, three-, or four-lane task
 cannot promote after indiscriminately planning six Children. The six-lane gate requires verified execution
 `SWARM`, planned and actual fan-out six, capacity at least six, and six distinct
-completed child receipts. The current RC registers no runtime telemetry
-adapter, so these runtime gates truthfully remain `unverified` and stable
-promotion is capability-blocked until Codex exposes the required authoritative
-events and a reviewed adapter is added with its pinned hash.
+completed child receipts. App Server makes these facts observable, but the
+result is deliberately `partial` until the independent isolation/cost/
+attestation evidence required by the promotion contract exists.
 An interrupted or unsuccessful run retains `status: running`
 plus `INVALID.md`. `summary.json` retains every paired comparison, aggregate
 pass outcomes, per-arm/per-task medians, and deterministic 95% bootstrap
@@ -191,12 +193,13 @@ peak concurrency, parent-setting drift, and inconsistent spawn/retry/fallback/
 interrupt/timeout counts. It then adds adapter provenance itself and
 merge-whitelists the validated fields into the result receipt.
 
-Token/cost values are accepted only when the raw JSONL contains one completed
-parent-turn usage object with integer token counters, explicit aggregate scope,
-and a non-negative cost. The adapter must reproduce those host-derived values
-exactly; it cannot upgrade parent-only, missing, cumulative, or ambiguous usage.
-Otherwise usage remains `null/unverified`, which blocks the effort and
-non-domination gates even if orchestration telemetry is otherwise valid.
+For App Server runs, the reducer checks monotonic cumulative token counters for
+the root and every observed Child and sums their final totals. Those values are
+reported as `aggregate-unpriced`: complete token evidence, but no invented
+dollar amount. A legacy external adapter may claim `aggregate` only when raw
+events also contain an explicit non-negative cost and it reproduces the
+host-derived values exactly. `aggregate-unpriced` and `unverified` both block
+the cost-dependent non-domination and stable-promotion gates.
 
 Git revision/dirty metadata is read only from an ordinary `.git` directory.
 The runner freezes that metadata, rejects local executable Git configuration
@@ -272,7 +275,7 @@ exact sentinel and API key, and attempts tool network only against a preflighted
 loopback TCP listener. A pass requires no worker connection plus a successful
 host postflight and exact listener hit count. The resulting `run.json` and `canary.json` remain
 a required real-model release receipt; their envelopes are defined by
-`contracts/benchmark-report.schema.json` and
+`benchmarks/contracts/benchmark-report.schema.json` and
 `contracts/benchmark-canary.schema.json`.
 
 By default live outputs go under

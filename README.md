@@ -213,11 +213,16 @@ installed runtime instead.
 ## Support truth
 
 The recorded 13-group WSL/Linux and 141/69 native PowerShell receipts belong to
-v0.2.0 and remain historical evidence. v0.3 deterministic and native matrices
-must be rerun on the final candidate revision. The four-arm live evaluation and
-its runtime subagent telemetry are still unverified because no dedicated
-benchmark key is available; therefore no autonomous speedup or stable-release
-claim is made. See [platform status](docs/PLATFORMS.md).
+v0.2.0 and remain historical evidence. The current working tree has passed the
+App Server protocol/reducer tests, the ten-task static benchmark, Bash
+self-update, and native Windows lifecycle (612 assertions) plus
+onboarding/benchmark (79 assertions); the final reducer-only truth-label delta
+also passed its focused tests and exact payload check. A clean-commit matrix is
+still required for release evidence. The authenticated four-arm evaluation is unverified
+because no dedicated benchmark key is available; independent isolation,
+pricing, and attestation evidence are also required. Therefore no autonomous
+speedup or stable-release claim is made. See
+[platform status](docs/PLATFORMS.md).
 
 ## License
 

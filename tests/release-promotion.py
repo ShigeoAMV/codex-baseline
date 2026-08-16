@@ -167,6 +167,12 @@ def make_benchmark_evidence(repository: Path, evidence: Path, revision: str, ver
         "bootstrap_resamples": 10000, "profiles": profiles, "tasks": tasks,
         "auto_overlay": {"path": "fixture", "sha256": HASH},
         "runtime_telemetry_adapter": {"contract": "codex-runtime-telemetry/v1", "sha256": HASH},
+        "app_server_telemetry": {
+            "contract": "codex-app-server-telemetry/v1", "checked_codex_cli": "0.147.0",
+            "runner": {"path": "benchmarks/runtime/app-server-runner.mjs", "sha256": "4" * 64},
+            "reducer": {"path": "benchmarks/runtime/app-server-telemetry.mjs", "sha256": "5" * 64},
+            "live_probe": "synthetic-promotion-fixture",
+        },
         "runtime_telemetry_capability": {
             "status": "available", "checked_at": "2026-08-16",
             "checked_codex_cli": "0.147.0", "blocker": None,

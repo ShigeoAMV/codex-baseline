@@ -3,12 +3,71 @@
 set -Eeuo pipefail
 
 if [[ ${1:-} == --version ]]; then
-  printf '%s\n' 'codex-baseline deterministic test double 1.0'
+  printf '%s\n' 'codex-cli 0.147.0 (deterministic test double)'
   exit 0
 fi
 
 if [[ ${1:-} == --strict-config && ${2:-} == --version ]]; then
-  printf '%s\n' 'codex-baseline deterministic test double 1.0'
+  printf '%s\n' 'codex-cli 0.147.0 (deterministic test double)'
+  exit 0
+fi
+
+if [[ ${1:-} == app-server ]]; then
+  thread_id=test-root-thread
+  turn_id=test-root-turn
+  while IFS= read -r request; do
+    method=$(jq -r '.method // empty' <<<"$request")
+    id=$(jq -r '.id // empty' <<<"$request")
+    case $method in
+      initialize)
+        jq -nc --argjson id "$id" '{id:$id,result:{userAgent:"codex-baseline-test-app-server/1"}}'
+        ;;
+      initialized) ;;
+      thread/start)
+        jq -nc --argjson id "$id" --arg thread "$thread_id" \
+          '{id:$id,result:{thread:{id:$thread,parentThreadId:null,sessionId:"test-session",status:{type:"idle"}},model:"test-model",modelProvider:"test",reasoningEffort:"high",serviceTier:"standard",approvalPolicy:"never",approvalsReviewer:"user",cwd:"/workspace",sandbox:{type:"workspaceWrite"}}}'
+        jq -nc --arg thread "$thread_id" \
+          '{method:"thread/started",params:{thread:{id:$thread,parentThreadId:null,sessionId:"test-session",status:{type:"idle"}}}}'
+        ;;
+      turn/start)
+        jq -nc --argjson id "$id" --arg turn "$turn_id" \
+          '{id:$id,result:{turn:{id:$turn,status:"inProgress",startedAt:1000}}}'
+        jq -nc --arg thread "$thread_id" \
+          '{method:"thread/settings/updated",params:{threadId:$thread,threadSettings:{model:"test-model",effort:"high",serviceTier:"standard"}}}'
+        jq -nc --arg thread "$thread_id" --arg turn "$turn_id" \
+          '{method:"turn/started",params:{threadId:$thread,turn:{id:$turn,status:"inProgress",startedAt:1000}}}'
+        if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-malformed-jsonl-* ]]; then
+          printf '%s\n' '{malformed'
+          exit 0
+        fi
+        if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-benchmark-fail-* ]]; then
+          jq -nc --arg thread "$thread_id" --arg turn "$turn_id" \
+            '{method:"turn/completed",params:{threadId:$thread,turn:{id:$turn,status:"failed",startedAt:1000,completedAt:1001}}}'
+          continue
+        fi
+        [[ -f /workspace/calc.js ]] || exit 2
+        if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-git-metadata-* && -w /workspace/.git ]]; then
+          printf '%s\n' '#!/bin/sh' ': > git-host-executed' 'printf "\\n"' >/workspace/.git/codex-baseline-fsmonitor
+          chmod 0755 /workspace/.git/codex-baseline-fsmonitor
+          /usr/bin/git -C /workspace config core.fsmonitor .git/codex-baseline-fsmonitor
+        fi
+        stage="/workspace/.codex-baseline-test-double.$$"
+        sed 's/return left - right;/return left + right;/' /workspace/calc.js >"$stage"
+        mv -- "$stage" /workspace/calc.js
+        jq -nc --arg thread "$thread_id" --arg turn "$turn_id" \
+          '{method:"item/completed",params:{threadId:$thread,turnId:$turn,completedAtMs:1000500,item:{id:"change-1",type:"fileChange",status:"completed",changes:[]}}}'
+        jq -nc --arg thread "$thread_id" --arg turn "$turn_id" \
+          '{method:"item/completed",params:{threadId:$thread,turnId:$turn,completedAtMs:1000800,item:{id:"message-1",type:"agentMessage",text:"Synthetic benchmark completion."}}}'
+        jq -nc --arg thread "$thread_id" \
+          '{method:"thread/tokenUsage/updated",params:{threadId:$thread,tokenUsage:{total:{inputTokens:100,cachedInputTokens:10,outputTokens:10,reasoningOutputTokens:5,totalTokens:110}}}}'
+        jq -nc --arg thread "$thread_id" --arg turn "$turn_id" \
+          '{method:"turn/completed",params:{threadId:$thread,turn:{id:$turn,status:"completed",startedAt:1000,completedAt:1001}}}'
+        ;;
+      *)
+        [[ -z $id ]] || jq -nc --argjson id "$id" '{id:$id,error:{code:-32601,message:"unsupported test request"}}'
+        ;;
+    esac
+  done
   exit 0
 fi
 

@@ -26,7 +26,8 @@ mapfile -t payload_paths < <(
     printf '%s\n' \
       scripts/codex-baseline.sh scripts/codex-baseline.ps1 \
       scripts/onboard.sh scripts/onboard.ps1 \
-      scripts/benchmark.sh scripts/benchmark.ps1 scripts/lib/common.sh scripts/lib/evaluation.sh
+      scripts/benchmark.sh scripts/benchmark.ps1 \
+      scripts/lib/common.sh scripts/lib/evaluation.sh
     find -P benchmarks -type f -printf '%p\n'
   } | LC_ALL=C sort -u
 )
