@@ -57,6 +57,10 @@ CB_UPDATE_MAX_ARCHIVE_BYTES=67108864
 CB_UPDATE_MAX_CONTENT_BYTES=134217728
 CB_UPDATE_MAX_RAW_TAR_BYTES=138412032
 CB_UPDATE_TEMP_ROOT=''
+CB_OPTIMIZE_MODE=check
+CB_OPTIMIZE_APPLY=0
+CB_OPTIMIZE_SPEED=keep
+CB_CONFIG_PLAN_CHANGE=0
 
 cb_usage() {
   cat <<'EOF'
@@ -70,6 +74,10 @@ Commands:
                             Check/apply the latest stable release; a checkout
                             remains local by default, installed runtime remote
   doctor [--json]           Inspect installation, Codex, paths, and conflicts
+  optimize [--check|--restore] [--speed keep|standard|fast|ultrafast]
+           [--dry-run|--apply] [--json]
+                            Inspect or transactionally manage allowlisted Codex
+                            agent-cap and explicit speed keys
   rollback [--dry-run]      Restore the state before the current transaction
   uninstall [--dry-run]     Remove only baseline-owned content
   onboard [options] [repo]  Perform bounded static repository discovery
@@ -84,21 +92,12 @@ EOF
 }
 
 cb_print_source_provenance() {
-  local root=$1 payload_hash=$2 acquisition=${3:-local-checkout} revision=unversioned dirty=unknown status_output='' untracked_output=''
-  if command -v git >/dev/null 2>&1 && [[ -e $root/.git ]]; then
-    revision=$(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 \
-      git -c core.fsmonitor=false -C "$root" rev-parse --verify HEAD 2>/dev/null || printf 'unversioned')
-    if [[ $revision == unversioned ]]; then
-      dirty=yes
-    elif status_output=$(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 \
-      git -c core.fsmonitor=false -C "$root" status --porcelain=v1 --untracked-files=no 2>/dev/null) && \
-      untracked_output=$(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_OPTIONAL_LOCKS=0 \
-        git -c core.fsmonitor=false -C "$root" ls-files --others --exclude-standard --directory 2>/dev/null); then
-      if [[ -n $status_output || -n $untracked_output ]]; then dirty=yes; else dirty=no; fi
-    fi
-  fi
+  local root=$1 payload_hash=$2 acquisition=${3:-local-checkout}
+  # Lifecycle provenance is payload-manifest based. Never ask checkout-owned Git
+  # metadata for informational revision/dirty fields: status/content conversion
+  # may execute repository-local filters or helpers before acknowledgement.
   printf 'source-origin: %s\nsource-revision: %s\nsource-dirty: %s\nsource-trust: unverified-source (unsigned-local-source)\nsource-acquisition: %s\nsource-payload-sha256: %s\n' \
-    "$root" "$revision" "$dirty" "$acquisition" "$payload_hash"
+    "$root" unversioned unknown "$acquisition" "$payload_hash"
 }
 
 cb_freeze_verified_source() {
@@ -144,6 +143,13 @@ cb_init_paths() {
   CB_LOCK="$CB_STATE_ROOT/lock"
   CB_CURRENT="$CB_STATE_ROOT/current"
   CB_PENDING="$CB_STATE_ROOT/pending"
+  CB_CONFIG_STATE="$CB_STATE_ROOT/config"
+  CB_CONFIG_CURRENT="$CB_CONFIG_STATE/current"
+  CB_CONFIG_PENDING="$CB_CONFIG_STATE/pending"
+  CB_CONFIG_TX_ROOT="$CB_CONFIG_STATE/transactions"
+  CB_COMPOSITE_ROOT="$CB_CONFIG_STATE/composite"
+  CB_COMPOSITE_PENDING="$CB_CONFIG_STATE/composite-pending"
+  CB_CONFIG_FILE="$CB_CODEX_HOME/config.toml"
   [[ $CB_HOME == /* && $CB_HOME != / && $CB_HOME != *$'\n'* && $CB_HOME != *$'\t'* ]] || cb_die "HOME must be a safe absolute directory: $CB_HOME"
   cb_assert_safe_root "$CB_CODEX_HOME"
   cb_assert_safe_root "$CB_AGENTS_HOME"
@@ -1176,6 +1182,14 @@ cb_on_exit() {
     cb_err "operation failed; recovering transaction $CB_ACTIVE_TX"
     cb_recover_tx "$CB_ACTIVE_TX" || cb_err "automatic recovery failed; run doctor before another mutation"
   fi
+  if [[ $code -ne 0 && -n ${CB_CONFIG_PENDING:-} && -f $CB_CONFIG_PENDING ]]; then
+    cb_err 'operation failed; recovering config transaction'
+    cb_config_recover_pending || cb_err 'automatic config recovery failed; run doctor before another mutation'
+  fi
+  if [[ $code -ne 0 && -n ${CB_COMPOSITE_PENDING:-} && -f $CB_COMPOSITE_PENDING ]]; then
+    cb_err 'operation failed; reconciling composite core/config transaction'
+    cb_composite_recover_pending || cb_err 'automatic composite recovery failed; run doctor before another mutation'
+  fi
   cb_release_lock
   cb_cleanup_temps
   exit "$code"
@@ -1255,6 +1269,8 @@ cb_cleanup_old_paths() {
 cb_begin_operation() {
   if [[ $CB_DRY_RUN -eq 1 ]]; then
     [[ ! -f $CB_PENDING ]] || cb_die 'an incomplete transaction requires recovery before dry-run'
+    [[ ! -f $CB_CONFIG_PENDING ]] || cb_die 'an incomplete config transaction requires recovery before dry-run'
+    [[ ! -f $CB_COMPOSITE_PENDING ]] || cb_die 'an incomplete composite transaction requires recovery before dry-run'
     CB_DRY_TX_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/codex-baseline-dry.XXXXXX")
     cb_register_temp "$CB_DRY_TX_ROOT"
     CB_TX_ROOT="$CB_DRY_TX_ROOT/state"
@@ -1263,13 +1279,29 @@ cb_begin_operation() {
     cb_init_mutation_roots
     cb_acquire_lock
     cb_recover_pending
+    cb_config_recover_pending
+    cb_composite_recover_pending
     if [[ -n $(cb_current_tx) ]]; then cb_validate_tx "$(cb_current_tx)" committed "$CB_STATE_ROOT"; fi
   fi
 }
 
+cb_global_guidance_source() {
+  local root=$1 status source
+  status=$(sed -n 's/^  "status": "\([A-Za-z0-9.]*\)"$/\1/p' "$root/baseline/release-status.json")
+  if [[ $status == stable ]]; then
+    source="$root/baseline/global/AGENTS.stable.block.md"
+  elif [[ $status =~ ^rc\.[1-9][0-9]*$ ]]; then
+    source="$root/baseline/global/AGENTS.block.md"
+  else
+    cb_die 'release status is missing or unsupported while selecting global guidance'
+  fi
+  [[ -f $source && ! -L $source ]] || cb_die 'release-specific global guidance is missing or unsafe'
+  printf '%s' "$source"
+}
+
 cb_install_like() {
   local operation=$1 source_root=${2:-$CB_SOURCE_ROOT} acquisition=${3:-local-checkout}
-  local version payload_hash manifest_hash verified_root tx dir agents_file block_tmp runtime_tmp wrapper_tmp obj changed=0 current current_version pause_attempt
+  local version payload_hash manifest_hash verified_root guidance_source tx dir agents_file block_tmp runtime_tmp wrapper_tmp obj changed=0 current current_version pause_attempt fresh_install=0
   version=$(cb_verify_source_manifest "$source_root")
   payload_hash=$(sed -n 's/^  "payload_hash": "\([0-9a-f]\{64\}\)",$/\1/p' "$source_root/baseline/manifest.json")
   manifest_hash=$(cb_sha256_file "$source_root/baseline/manifest.json")
@@ -1280,7 +1312,13 @@ cb_install_like() {
   CB_VERSION=$version
   cb_freeze_verified_source "$source_root" "$manifest_hash" "$payload_hash"
   verified_root=$CB_VERIFIED_SOURCE_ROOT
+  guidance_source=$(cb_global_guidance_source "$verified_root")
   cb_init_paths
+  if [[ $operation == install && $CB_DRY_RUN -eq 0 && ! -e $CB_CURRENT && ! -L $CB_CURRENT && \
+        ! -e $CB_PENDING && ! -L $CB_PENDING && ! -e $CB_CONFIG_PENDING && ! -L $CB_CONFIG_PENDING && \
+        ! -e $CB_COMPOSITE_PENDING && ! -L $CB_COMPOSITE_PENDING ]]; then
+    cb_config_auto_install_cap '' preflight
+  fi
   if [[ $acquisition == unsigned-github-release && ${CODEX_BASELINE_TESTING:-0} == 1 && \
         -n ${CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK:-} ]]; then
     [[ -d $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK && ! -L $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK ]] || cb_die 'update pause fixture directory is unsafe'
@@ -1292,12 +1330,21 @@ cb_install_like() {
     [[ -f $CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK/continue ]] || cb_die 'timed out waiting for concurrent update fixture'
   fi
   cb_begin_operation
+  current=$(cb_current_tx)
+  [[ -n $current ]] || fresh_install=1
   if [[ $acquisition == unsigned-github-release && $CB_DRY_RUN -eq 0 ]]; then
     current=$(cb_current_tx)
     if [[ -n $current ]]; then
       current_version=$(cb_read_field "$(cb_tx_dir "$current")/version")
       [[ $(cb_semver_compare "$version" "$current_version") -ge 0 ]] || cb_die "remote update would downgrade installed $current_version to $version"
     fi
+  fi
+  # Repeat the complete, non-mutating config preflight while holding the
+  # Baseline lock. The earlier check guarantees predictable failures leave no
+  # managed state; this check closes the interval in which config.toml could
+  # have changed before any core transaction is created.
+  if [[ $operation == install && $fresh_install -eq 1 && $CB_DRY_RUN -eq 0 ]]; then
+    cb_config_auto_install_cap '' preflight
   fi
   cb_new_tx "$operation"
   tx=$CB_NEW_TX
@@ -1309,7 +1356,7 @@ cb_install_like() {
   cb_register_temp "$block_tmp"
   cb_register_temp "$runtime_tmp"
   cb_register_temp "$wrapper_tmp"
-  cb_render_managed_block "$verified_root/baseline/global/AGENTS.block.md" "$version" "$block_tmp"
+  cb_render_managed_block "$guidance_source" "$version" "$block_tmp"
   cb_build_runtime "$runtime_tmp" "$verified_root"
   cb_render_wrapper "$wrapper_tmp"
 
@@ -1336,6 +1383,14 @@ cb_install_like() {
     CB_ACTIVE_TX=''
     return
   fi
+  if [[ $operation == install && $fresh_install -eq 1 ]]; then
+    if [[ $CB_DRY_RUN -eq 1 ]]; then
+      cb_config_auto_install_cap "$tx" preview
+      [[ $CB_CONFIG_PLAN_CHANGE -eq 0 ]] || printf '%s\n' "install: $CB_CONFIG_FILE (absent agent cap -> 6)"
+    else
+      cb_composite_begin install '' "$tx"
+    fi
+  fi
   if [[ $CB_DRY_RUN -eq 1 ]]; then
     printf 'dry-run: no files changed\n'
     cb_set_tx_state "$tx" dry-run
@@ -1344,7 +1399,7 @@ cb_install_like() {
     return
   fi
 
-  cb_write_field "$CB_PENDING" "$tx"
+  [[ -f $CB_PENDING ]] || cb_write_field "$CB_PENDING" "$tx"
   for obj in "$dir"/objects/*; do
     [[ $(cb_read_field "$obj/change") == 1 ]] || {
       cb_write_field "$obj/installed_hash" "$(cb_read_field "$obj/desired_hash")"
@@ -1373,6 +1428,7 @@ cb_install_like() {
   rm -f -- "$CB_PENDING"
   cb_sync_parent "$CB_PENDING"
   cb_cleanup_old_paths "$dir"
+  cb_composite_recover_pending
   cb_cleanup_temps
   CB_ACTIVE_TX=''
   printf 'installed codex-baseline %s (transaction %s)\n' "$version" "$tx"
@@ -1500,23 +1556,1249 @@ cb_rollback_once() {
 }
 
 cb_rollback() {
+  local core parent config_dir config_core
   CB_VERSION=$(<"$CB_SOURCE_ROOT/VERSION")
   cb_init_paths
   cb_begin_operation
+  core=$(cb_current_tx)
+  if [[ -z $core ]]; then
+    printf 'codex-baseline is not installed; no changes\n'
+    return 0
+  fi
+  parent=$(cb_read_field "$(cb_tx_dir "$core")/parent")
+  if [[ $CB_DRY_RUN -eq 1 ]]; then
+    config_dir=$(cb_config_current_dir_or_empty)
+    if [[ -n $config_dir ]]; then
+      config_core=$(cb_read_field "$config_dir/core_tx")
+      if [[ $config_core == "$core" ]]; then cb_config_restore rollback "$core" || true; fi
+    fi
+  else
+    cb_composite_begin rollback "$core" "$parent"
+  fi
   cb_rollback_once rollback || {
     local code=$?
     [[ $code -eq 2 ]] && return 0
     return "$code"
   }
+  [[ $CB_DRY_RUN -eq 1 ]] || cb_composite_recover_pending
+}
+
+cb_config_key_path() {
+  case $1 in
+    agents_enabled) printf 'agents.enabled' ;;
+    agents_max) printf 'agents.max_concurrent_threads_per_session' ;;
+    service_tier) printf 'service_tier' ;;
+    features_fast_mode) printf 'features.fast_mode' ;;
+    *) cb_die "unknown managed config key: $1" ;;
+  esac
+}
+
+cb_config_key_type() {
+  case $1 in
+    agents_enabled|features_fast_mode) printf 'boolean' ;;
+    agents_max) printf 'integer' ;;
+    service_tier) printf 'enum' ;;
+    *) cb_die "unknown managed config key: $1" ;;
+  esac
+}
+
+cb_config_assert_path() {
+  local target=$CB_CONFIG_FILE links owner size
+  cb_assert_target_under "$target" "$CB_CODEX_HOME"
+  [[ ! -L $target ]] || cb_die "config.toml is a symbolic link: $target"
+  if [[ -e $target ]]; then
+    [[ -f $target ]] || cb_die "config.toml is not a regular file: $target"
+    links=$(stat -Lc '%h' -- "$target")
+    owner=$(stat -Lc '%u' -- "$target")
+    size=$(stat -Lc '%s' -- "$target")
+    [[ $links == 1 ]] || cb_die 'config.toml hard links are not supported'
+    [[ $owner == "$EUID" ]] || cb_die 'config.toml must be owned by the current user'
+    [[ $size -le 1048576 ]] || cb_die 'config.toml exceeds the 1 MiB optimizer limit'
+  fi
+}
+
+cb_config_capture_metadata() {
+  local path=$1 label=$2 acl xattrs
+  cb_require_command getfacl
+  cb_require_command getfattr
+  [[ -f $path && ! -L $path ]] || cb_die "$label is not an ordinary config artifact: $path"
+  CB_CONFIG_META_UID=$(stat -Lc '%u' -- "$path")
+  CB_CONFIG_META_GID=$(stat -Lc '%g' -- "$path")
+  CB_CONFIG_META_MODE=$(stat -Lc '%a' -- "$path")
+  acl=$(getfacl -cp -- "$path" 2>/dev/null || cb_die "cannot inspect $label ACL")
+  if grep -Eq '^(default:|user:[^:]|group:[^:]|mask:)' <<<"$acl"; then
+    cb_die "$label has an extended ACL that cannot be preserved safely"
+  fi
+  xattrs=$(getfattr --absolute-names -m - -d --encoding=hex -- "$path" 2>/dev/null | sed '/^#/d;/^[[:space:]]*$/d') || cb_die "cannot inspect $label extended attributes"
+  [[ -z $xattrs ]] || cb_die "$label has extended attributes that cannot be preserved safely"
+  CB_CONFIG_META_ACL_STATE='base-only'
+  CB_CONFIG_META_XATTR_STATE='none'
+}
+
+cb_config_assert_mutation_metadata() {
+  local parent_acl
+  cb_require_command getfacl
+  cb_require_command getfattr
+  if [[ -d $CB_CODEX_HOME ]]; then
+    parent_acl=$(getfacl -cp -- "$CB_CODEX_HOME" 2>/dev/null || cb_die 'cannot inspect CODEX_HOME default ACL')
+    if grep -Eq '^default:' <<<"$parent_acl"; then
+      cb_die 'CODEX_HOME has a default ACL that cannot be preserved safely for config.toml'
+    fi
+  fi
+  if [[ -e $CB_CONFIG_FILE ]]; then
+    cb_config_capture_metadata "$CB_CONFIG_FILE" 'config.toml'
+    [[ $CB_CONFIG_META_UID == "$EUID" ]] || cb_die 'config.toml must be owned by the current user'
+  fi
+}
+
+cb_config_assert_metadata_matches() {
+  local path=$1 expected_uid=$2 expected_gid=$3 expected_mode=$4 expected_acl=$5 expected_xattrs=$6 label=$7
+  cb_config_validate_artifact "$path" "$label"
+  cb_config_capture_metadata "$path" "$label"
+  [[ $CB_CONFIG_META_UID == "$expected_uid" && $CB_CONFIG_META_GID == "$expected_gid" && \
+     $CB_CONFIG_META_MODE == "$expected_mode" && $CB_CONFIG_META_ACL_STATE == "$expected_acl" && \
+     $CB_CONFIG_META_XATTR_STATE == "$expected_xattrs" ]] || cb_die "$label metadata does not match the recovery journal"
+}
+
+cb_config_test_edit_before_rename() {
+  [[ ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_EDIT_CONFIG_BEFORE_RENAME:-0} == 1 ]] || return 0
+  if [[ -e $CB_CONFIG_FILE ]]; then
+    printf '\n%s\n' 'concurrent-config-test-edit = true' >>"$CB_CONFIG_FILE"
+  else
+    printf '%s\n' 'concurrent-config-test-edit = true' >"$CB_CONFIG_FILE"
+  fi
+  unset CODEX_BASELINE_TEST_EDIT_CONFIG_BEFORE_RENAME
+}
+
+cb_config_reject_quoted_definition() {
+  local content=$1 key=$2 kind=$3 rest=''
+  if [[ $content == "\"$key\""* ]]; then
+    rest=${content#"\"$key\""}
+  elif [[ $content == "'$key'"* ]]; then
+    rest=${content#"'$key'"}
+  else
+    return 0
+  fi
+  case $kind in
+    root)
+      [[ ! $rest =~ ^[[:space:]]*(\.|=) ]] || cb_die 'dotted, quoted, or inline definitions of managed TOML paths are unsupported'
+      ;;
+    key)
+      [[ ! $rest =~ ^[[:space:]]*= ]] || cb_die 'quoted managed or activation keys are unsupported for safe config decisions'
+      ;;
+    *) cb_die 'internal quoted config-definition classifier error' ;;
+  esac
+}
+
+cb_config_scan() {
+  local input=$1 index line content trimmed table='' key token id bom='' cr='' has_line_ending=0
+  declare -gA CB_CFG_INDEX=() CB_CFG_TOKEN=() CB_CFG_TABLE_HEADER=() CB_CFG_LINE_TABLE=()
+  declare -ga CB_CFG_LINES=()
+  CB_CFG_FINAL_NEWLINE=0
+  CB_CFG_DEFAULT_CR=''
+  CB_CFG_EOL_SET=0
+  if [[ -e $input ]]; then
+    [[ -f $input && ! -L $input ]] || cb_die "unsafe config candidate: $input"
+    cb_require_command iconv
+    cb_require_command od
+    iconv -f UTF-8 -t UTF-8 "$input" >/dev/null 2>&1 || cb_die 'config.toml is not valid UTF-8'
+    od -An -v -tu1 -- "$input" | awk '
+      { for (i = 1; i <= NF; i++) { byte = $i + 0; if (byte == 0 || (previous == 13 && byte != 10)) exit 1; previous = byte } }
+      END { if (previous == 13) exit 1 }
+    ' || cb_die 'config.toml contains NUL or an unsupported lone-CR line ending'
+    if [[ -s $input && $(od -An -tuC -j $(( $(stat -c '%s' -- "$input") - 1 )) -N 1 "$input" | tr -d ' ') == 10 ]]; then
+      CB_CFG_FINAL_NEWLINE=1
+    fi
+    mapfile -t CB_CFG_LINES <"$input"
+  fi
+  for ((index=0; index<${#CB_CFG_LINES[@]}; index++)); do
+    line=${CB_CFG_LINES[$index]}
+    content=$line; bom=''; cr=''
+    if [[ $index -eq 0 && $content == $'\xEF\xBB\xBF'* ]]; then bom=$'\xEF\xBB\xBF'; content=${content#$'\xEF\xBB\xBF'}; fi
+    if [[ $content == *$'\r' ]]; then cr=$'\r'; content=${content%$'\r'}; fi
+    has_line_ending=0
+    if (( index + 1 < ${#CB_CFG_LINES[@]} || CB_CFG_FINAL_NEWLINE == 1 )); then has_line_ending=1; fi
+    if [[ $CB_CFG_EOL_SET -eq 0 && $has_line_ending -eq 1 ]]; then CB_CFG_DEFAULT_CR=$cr; CB_CFG_EOL_SET=1; fi
+    [[ $content != *"'''"* && $content != *'"""'* ]] || cb_die 'multiline TOML strings are unsupported for safe key patching'
+    trimmed=${content#"${content%%[!$' \t']*}"}
+    CB_CFG_LINE_TABLE[$index]=$table
+    if [[ -z $trimmed || $trimmed == \#* ]]; then continue; fi
+    if [[ $trimmed =~ ^\[([A-Za-z0-9_-]+)\][[:space:]]*(#.*)?$ ]]; then
+      table=${BASH_REMATCH[1]}
+      CB_CFG_LINE_TABLE[$index]=$table
+      if [[ $table == agents || $table == features ]]; then
+        [[ -z ${CB_CFG_TABLE_HEADER[$table]+x} ]] || cb_die "duplicate [$table] table in config.toml"
+        CB_CFG_TABLE_HEADER[$table]=$index
+      fi
+      continue
+    fi
+    if [[ $trimmed == \[* ]]; then
+      if [[ $trimmed == *agents* || $trimmed == *features* ]]; then cb_die 'ambiguous quoted, dotted, array, or malformed managed TOML table'; fi
+      table=other
+      CB_CFG_LINE_TABLE[$index]=$table
+      continue
+    fi
+    cb_config_reject_quoted_definition "$trimmed" agents root
+    cb_config_reject_quoted_definition "$trimmed" features root
+    if [[ $trimmed =~ ^(agents|features)[[:space:]]*(\.|=) ]]; then
+      cb_die 'dotted, quoted, or inline definitions of managed TOML paths are unsupported'
+    fi
+    if [[ $table == '' ]]; then
+      cb_config_reject_quoted_definition "$trimmed" service_tier key
+    elif [[ $table == agents ]]; then
+      cb_config_reject_quoted_definition "$trimmed" enabled key
+      cb_config_reject_quoted_definition "$trimmed" max_concurrent_threads_per_session key
+      cb_config_reject_quoted_definition "$trimmed" max_threads key
+    elif [[ $table == features ]]; then
+      cb_config_reject_quoted_definition "$trimmed" fast_mode key
+      cb_config_reject_quoted_definition "$trimmed" multi_agent key
+    fi
+    key=''; id=''
+    if [[ $table == '' && $trimmed =~ ^service_tier[[:space:]]*= ]]; then key=service_tier; id=service_tier
+    elif [[ $table == agents && $trimmed =~ ^enabled[[:space:]]*= ]]; then key=enabled; id=agents_enabled
+    elif [[ $table == agents && $trimmed =~ ^max_concurrent_threads_per_session[[:space:]]*= ]]; then key=max_concurrent_threads_per_session; id=agents_max
+    elif [[ $table == agents && $trimmed =~ ^max_threads[[:space:]]*= ]]; then key=max_threads; id=agents_legacy_max
+    elif [[ $table == features && $trimmed =~ ^fast_mode[[:space:]]*= ]]; then key=fast_mode; id=features_fast_mode
+    elif [[ $table == features && $trimmed =~ ^multi_agent[[:space:]]*= ]]; then key=multi_agent; id=features_multi_agent
+    fi
+    [[ -n $id ]] || continue
+    if [[ $content =~ ^([[:space:]]*)$key([[:space:]]*=[[:space:]]*)(true|false|[0-9]+|\"[A-Za-z0-9_-]+\")([[:space:]]*(#.*)?)$ ]]; then
+      token=${BASH_REMATCH[3]}
+      [[ -z ${CB_CFG_INDEX[$id]+x} ]] || cb_die "duplicate managed key: $id"
+      case $id:$token in
+        agents_enabled:true|agents_enabled:false|features_fast_mode:true|features_fast_mode:false|features_multi_agent:true|features_multi_agent:false|agents_max:[0-9]*|agents_legacy_max:[0-9]*|service_tier:\"[A-Za-z0-9_-]*\") ;;
+        *) cb_die "managed key has an unsupported scalar type: $id" ;;
+      esac
+      if [[ $id == agents_max || $id == agents_legacy_max ]] && [[ ! $token =~ ^(0|[1-9][0-9]{0,5})$ ]]; then
+        cb_die "managed key has an unsupported integer token: $id"
+      fi
+      CB_CFG_INDEX[$id]=$index
+      CB_CFG_TOKEN[$id]=$token
+    else
+      cb_die "managed key uses ambiguous or unsupported TOML syntax: $id"
+    fi
+  done
+}
+
+cb_config_write_lines() {
+  local output=$1 final=$2 array_name=$3 index count value newline
+  declare -n lines_ref=$array_name
+  : >"$output"
+  count=${#lines_ref[@]}
+  for ((index=0; index<count; index++)); do
+    value=${lines_ref[$index]}; newline=0
+    if (( index + 1 < count || final == 1 )); then newline=1; fi
+    if [[ $newline -eq 0 && $value == *$'\r' ]]; then value=${value%$'\r'}; fi
+    printf '%s' "$value" >>"$output"
+    if [[ $newline -eq 1 ]]; then printf '\n' >>"$output"; fi
+  done
+}
+
+cb_config_patch_one() {
+  local input=$1 output=$2 id=$3 desired=$4 index found='' content bom='' cr='' key scope insert_at=-1 table_header=-1 line
+  local -a result=()
+  cb_config_scan "$input"
+  found=${CB_CFG_INDEX[$id]-}
+  case $id in
+    agents_enabled) scope=agents; key=enabled ;;
+    agents_max) scope=agents; key=max_concurrent_threads_per_session ;;
+    service_tier) scope=''; key=service_tier ;;
+    features_fast_mode) scope=features; key=fast_mode ;;
+    *) cb_die "unknown patch key: $id" ;;
+  esac
+  if [[ -n $found ]]; then
+    for ((index=0; index<${#CB_CFG_LINES[@]}; index++)); do
+      line=${CB_CFG_LINES[$index]}
+      if [[ $index -ne $found ]]; then result+=("$line"); continue; fi
+      [[ $desired != __ABSENT__ ]] || continue
+      content=$line; bom=''; cr=''
+      if [[ $index -eq 0 && $content == $'\xEF\xBB\xBF'* ]]; then bom=$'\xEF\xBB\xBF'; content=${content#$'\xEF\xBB\xBF'}; fi
+      if [[ $content == *$'\r' ]]; then cr=$'\r'; content=${content%$'\r'}; fi
+      [[ $content =~ ^([[:space:]]*)$key([[:space:]]*=[[:space:]]*)(true|false|[0-9]+|\"[A-Za-z0-9_-]+\")([[:space:]]*(#.*)?)$ ]] || cb_die "cannot safely rewrite managed key: $id"
+      result+=("$bom${BASH_REMATCH[1]}$key${BASH_REMATCH[2]}$desired${BASH_REMATCH[4]}$cr")
+    done
+    cb_config_write_lines "$output" "$CB_CFG_FINAL_NEWLINE" result
+    return
+  fi
+  if [[ $desired == __ABSENT__ ]]; then cp -- "$input" "$output"; return; fi
+  line="$key = $desired"
+  if [[ -z $scope ]]; then
+    insert_at=${#CB_CFG_LINES[@]}
+    for ((index=0; index<${#CB_CFG_LINES[@]}; index++)); do
+      content=${CB_CFG_LINES[$index]#$'\xEF\xBB\xBF'}
+      content=${content%$'\r'}; content=${content#"${content%%[!$' \t']*}"}
+      if [[ $content == \[* ]]; then insert_at=$index; break; fi
+    done
+  elif [[ -n ${CB_CFG_TABLE_HEADER[$scope]+x} ]]; then
+    table_header=${CB_CFG_TABLE_HEADER[$scope]}; insert_at=${#CB_CFG_LINES[@]}
+    for ((index=table_header+1; index<${#CB_CFG_LINES[@]}; index++)); do
+      if [[ ${CB_CFG_LINE_TABLE[$index]-} != "$scope" ]]; then insert_at=$index; break; fi
+    done
+  else
+    result=("${CB_CFG_LINES[@]}")
+    if [[ ${#result[@]} -gt 0 && ${result[-1]} != *$'\r' && -n $CB_CFG_DEFAULT_CR ]]; then result[-1]+=$'\r'; fi
+    if [[ ${#result[@]} -gt 0 && -n ${result[-1]%$'\r'} ]]; then result+=("$CB_CFG_DEFAULT_CR"); fi
+    result+=("[$scope]$CB_CFG_DEFAULT_CR")
+    if [[ $CB_CFG_FINAL_NEWLINE -eq 1 ]]; then line+="$CB_CFG_DEFAULT_CR"; fi
+    result+=("$line")
+    cb_config_write_lines "$output" "$CB_CFG_FINAL_NEWLINE" result
+    return
+  fi
+  if (( insert_at < ${#CB_CFG_LINES[@]} )); then
+    line+="$CB_CFG_DEFAULT_CR"
+  elif [[ ${#CB_CFG_LINES[@]} -gt 0 && ${CB_CFG_LINES[-1]} != *$'\r' && -n $CB_CFG_DEFAULT_CR ]]; then
+    CB_CFG_LINES[-1]+=$'\r'
+    if [[ $CB_CFG_FINAL_NEWLINE -eq 1 ]]; then line+="$CB_CFG_DEFAULT_CR"; fi
+  elif [[ $CB_CFG_FINAL_NEWLINE -eq 1 ]]; then line+="$CB_CFG_DEFAULT_CR"
+  fi
+  for ((index=0; index<=${#CB_CFG_LINES[@]}; index++)); do
+    if [[ $index -eq $insert_at ]]; then result+=("$line"); fi
+    if [[ $index -lt ${#CB_CFG_LINES[@]} ]]; then result+=("${CB_CFG_LINES[$index]}"); fi
+  done
+  cb_config_write_lines "$output" "$CB_CFG_FINAL_NEWLINE" result
+}
+
+cb_config_remove_empty_created_table() {
+  local input=$1 output=$2 scope=$3 separator_added=$4 header end index content meaningful=0
+  local -a result=()
+  cb_config_scan "$input"
+  header=${CB_CFG_TABLE_HEADER[$scope]-}
+  if [[ -z $header ]]; then cp -- "$input" "$output"; return; fi
+  end=${#CB_CFG_LINES[@]}
+  for ((index=header+1; index<${#CB_CFG_LINES[@]}; index++)); do
+    if [[ ${CB_CFG_LINE_TABLE[$index]-} != "$scope" ]]; then end=$index; break; fi
+    content=${CB_CFG_LINES[$index]%$'\r'}; content=${content#"${content%%[!$' \t']*}"}
+    # A comment inside a Baseline-created table is independent user content.
+    # Keep the table once any non-blank line remains after managed keys leave.
+    if [[ -n $content ]]; then meaningful=1; fi
+  done
+  if [[ $meaningful -eq 1 ]]; then cp -- "$input" "$output"; return; fi
+  for ((index=0; index<${#CB_CFG_LINES[@]}; index++)); do
+    if (( index >= header && index < end )); then continue; fi
+    if [[ $separator_added == 1 && $index -eq $((header - 1)) && -z ${CB_CFG_LINES[$index]%$'\r'} ]]; then continue; fi
+    result+=("${CB_CFG_LINES[$index]}")
+  done
+  cb_config_write_lines "$output" "$CB_CFG_FINAL_NEWLINE" result
+}
+
+cb_config_validate_candidate() {
+  local candidate=$1 temp codex_candidate codex_path status before_hash after_hash before_identity after_identity cursor owner mode link_owner
+  if [[ ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION:-0} == 1 ]]; then return 0; fi
+  cb_require_command realpath
+  codex_candidate=$(type -P codex 2>/dev/null || true)
+  [[ $codex_candidate == /* && ! $codex_candidate == *$'\n'* && ! $codex_candidate == *$'\r'* ]] ||
+    cb_die 'config mutation requires an absolute Codex executable path'
+  if [[ -L $codex_candidate ]]; then
+    link_owner=$(stat -c '%u' -- "$codex_candidate") || cb_die 'cannot inspect Codex executable link ownership'
+    [[ $link_owner == 0 || $link_owner == "$EUID" ]] || cb_die 'Codex executable link has an unexpected owner'
+  fi
+  codex_path=$(realpath -e -- "$codex_candidate") || cb_die 'cannot resolve Codex executable'
+  [[ $codex_path == /* && -f $codex_path && ! -L $codex_path && -x $codex_path ]] ||
+    cb_die 'resolved Codex executable is not an ordinary executable file'
+  for cursor in "$(dirname -- "$codex_candidate")" "$(dirname -- "$codex_path")"; do
+    while [[ $cursor != / ]]; do
+      cursor=$(realpath -e -- "$cursor") || cb_die 'cannot resolve Codex executable ancestry'
+      owner=$(stat -Lc '%u' -- "$cursor") || cb_die 'cannot inspect Codex executable ancestry owner'
+      mode=$(stat -Lc '%a' -- "$cursor") || cb_die 'cannot inspect Codex executable ancestry mode'
+      [[ $owner == 0 || $owner == "$EUID" ]] || cb_die 'Codex executable ancestry has an unexpected owner'
+      [[ $((8#$mode & 0022)) -eq 0 ]] || cb_die 'Codex executable ancestry is group/other writable'
+      cursor=$(dirname -- "$cursor")
+    done
+  done
+  owner=$(stat -Lc '%u' -- "$codex_path") || cb_die 'cannot inspect resolved Codex executable owner'
+  mode=$(stat -Lc '%a' -- "$codex_path") || cb_die 'cannot inspect resolved Codex executable mode'
+  [[ $owner == 0 || $owner == "$EUID" ]] || cb_die 'resolved Codex executable has an unexpected owner'
+  [[ $((8#$mode & 0022)) -eq 0 ]] || cb_die 'resolved Codex executable is group/other writable'
+  before_hash=$(cb_sha256_file "$codex_path")
+  before_identity=$(stat -Lc '%d:%i:%h' -- "$codex_path") || cb_die 'cannot inspect resolved Codex executable identity'
+  temp=$(mktemp -d "${TMPDIR:-/tmp}/codex-baseline-config-validate.XXXXXX")
+  cb_register_temp "$temp"
+  mkdir -- "$temp/sqlite"
+  cp -- "$candidate" "$temp/config.toml"
+  set +e
+  env -i HOME="$temp" CODEX_HOME="$temp" CODEX_SQLITE_HOME="$temp/sqlite" PATH=/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    "$codex_path" --strict-config --version >/dev/null 2>&1
+  status=$?
+  set -e
+  if [[ ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_SWAP_CODEX_AFTER_VALIDATION:-0} == 1 ]]; then
+    printf '\n# codex-baseline executable swap fixture\n' >>"$codex_path"
+  fi
+  after_hash=$(cb_sha256_file "$codex_path")
+  after_identity=$(stat -Lc '%d:%i:%h' -- "$codex_path") || cb_die 'cannot re-inspect resolved Codex executable identity'
+  [[ $before_hash == "$after_hash" && $before_identity == "$after_identity" ]] ||
+    cb_die 'Codex executable changed during isolated config validation'
+  [[ $status -eq 0 ]] || cb_die 'Codex rejected the isolated candidate config'
+}
+
+cb_config_tx_dir() {
+  cb_require_tx_id "$1"
+  printf '%s/%s' "$CB_CONFIG_TX_ROOT" "$1"
+}
+
+cb_config_current_tx() {
+  cb_read_tx_pointer "$CB_CONFIG_CURRENT"
+}
+
+cb_config_current_dir() {
+  local current
+  current=$(cb_config_current_tx)
+  [[ -n $current ]] || return 1
+  cb_config_validate_tx "$current" committed
+  printf '%s' "$(cb_config_tx_dir "$current")"
+}
+
+cb_config_current_dir_or_empty() {
+  if [[ ! -e $CB_CONFIG_CURRENT && ! -L $CB_CONFIG_CURRENT ]]; then return 0; fi
+  cb_config_current_dir
+}
+
+cb_config_validate_artifact() {
+  local path=$1 label=$2 links owner
+  [[ ! -L $path ]] || cb_die "symbolic config transaction $label is not allowed: $path"
+  [[ -f $path ]] || cb_die "config transaction $label is not an ordinary file: $path"
+  links=$(stat -Lc '%h' -- "$path")
+  owner=$(stat -Lc '%u' -- "$path")
+  [[ $links == 1 ]] || cb_die "config transaction $label has an unsafe link count: $path"
+  [[ $owner == "$EUID" ]] || cb_die "config transaction $label is not owned by the current user: $path"
+  [[ $(stat -Lc '%s' -- "$path") -le 1048576 ]] || cb_die "config transaction $label exceeds its size limit: $path"
+}
+
+cb_config_validate_token() {
+  local id=$1 token=$2 label=$3
+  case $id in
+    agents_enabled|features_fast_mode)
+      [[ $token == true || $token == false ]] || cb_die "invalid boolean token in $label"
+      ;;
+    agents_max)
+      [[ $token =~ ^(0|[1-9][0-9]{0,5})$ ]] || cb_die "invalid integer token in $label"
+      ;;
+    service_tier)
+      [[ $token =~ ^\"[a-z][a-z0-9_-]{0,31}\"$ ]] || cb_die "invalid enum token in $label"
+      ;;
+    *) cb_die "unknown managed config key in $label: $id" ;;
+  esac
+}
+
+cb_config_valid_unix_id() {
+  local value=$1
+  [[ $value =~ ^(0|[1-9][0-9]{0,9})$ ]] || return 1
+  [[ ${#value} -lt 10 ]] || (( 10#$value <= 4294967295 ))
+}
+
+cb_config_valid_unix_mode() {
+  [[ $1 =~ ^(0|[1-7][0-7]{0,3})$ ]]
+}
+
+cb_config_validate_tx() {
+  local tx=$1 expected_state=${2:-} dir entry name state operation version parent cursor parent_dir
+  local target stage old existed value key_dir id actual_fields expected_fields prefix uid gid mode acl_state xattr_state physical
+  cb_require_tx_id "$tx"
+  dir=$(cb_config_tx_dir "$tx")
+  [[ $(dirname -- "$dir") == "$CB_CONFIG_TX_ROOT" && -d $dir && ! -L $dir ]] || cb_die "unsafe or missing config transaction directory: $dir"
+  expected_fields='contract,core_tx,desired_acl_state,desired_gid,desired_mode,desired_physical_hash,desired_projection_hash,desired_structure_hash,desired_uid,desired_xattr_state,old,operation,ownership,parent,previous_acl_state,previous_existed,previous_gid,previous_mode,previous_physical_hash,previous_projection_hash,previous_structure_hash,previous_uid,previous_xattr_state,schema,stage,stage_acl_state,stage_gid,stage_mode,stage_physical_hash,stage_uid,stage_xattr_state,state,target,version'
+  actual_fields=''
+  while IFS= read -r -d '' entry; do
+    name=$(basename -- "$entry")
+    [[ ! -L $entry ]] || cb_die "symbolic config transaction entry is not allowed: $entry"
+    case $name in ownership) [[ -d $entry ]] || cb_die "config ownership entry is not a directory: $entry" ;; *) cb_require_scalar_file "$entry" "$tx/$name" ;; esac
+    if [[ -n $actual_fields ]]; then actual_fields+=','; fi
+    actual_fields+=$name
+  done < <(find -P "$dir" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
+  [[ $actual_fields == "$expected_fields" ]] || cb_die "config transaction has an invalid field inventory: $tx"
+  [[ $(cb_read_field "$dir/schema") == 2 ]] || cb_die "unsupported config transaction schema: $tx"
+  [[ $(cb_read_field "$dir/contract") == codex-baseline-config-transaction/v2 ]] || cb_die "config transaction contract mismatch: $tx"
+  operation=$(cb_read_field "$dir/operation")
+  case $operation in install-cap|optimize|restore|rollback|uninstall) ;; *) cb_die "invalid config transaction operation: $tx" ;; esac
+  state=$(cb_read_field "$dir/state")
+  case $state in planned|prepared|committing|committed|rolled-back) ;; *) cb_die "invalid config transaction state: $tx" ;; esac
+  [[ -z $expected_state || $state == "$expected_state" ]] || cb_die "config transaction $tx is not $expected_state"
+  version=$(cb_read_field "$dir/version")
+  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || cb_die "invalid config transaction version: $tx"
+  target=$(cb_read_field "$dir/target")
+  stage=$(cb_read_field "$dir/stage")
+  old=$(cb_read_field "$dir/old")
+  [[ $target == "$CB_CONFIG_FILE" ]] || cb_die "config transaction target mismatch: $tx"
+  [[ $stage == "$CB_CODEX_HOME/.codex-baseline-config-stage-$tx" ]] || cb_die "config transaction stage mismatch: $tx"
+  [[ $old == "$CB_CODEX_HOME/.codex-baseline-config-old-$tx" ]] || cb_die "config transaction old-path mismatch: $tx"
+  cb_assert_target_under "$target" "$CB_CODEX_HOME"
+  cb_assert_target_under "$stage" "$CB_CODEX_HOME"
+  cb_assert_target_under "$old" "$CB_CODEX_HOME"
+  [[ ! -e $stage && ! -L $stage ]] || cb_config_validate_artifact "$stage" stage
+  [[ ! -e $old && ! -L $old ]] || cb_config_validate_artifact "$old" old
+  existed=$(cb_read_field "$dir/previous_existed")
+  [[ $existed == 0 || $existed == 1 ]] || cb_die "invalid config previous-existed flag: $tx"
+  for name in previous_physical_hash desired_physical_hash; do
+    value=$(cb_read_field "$dir/$name")
+    [[ $value == absent || $value =~ ^[0-9a-f]{64}$ ]] || cb_die "invalid config transaction hash $name: $tx"
+  done
+  [[ $existed == 1 || $(cb_read_field "$dir/previous_physical_hash") == absent ]] || cb_die "config previous hash/existence mismatch: $tx"
+  for prefix in previous desired stage; do
+    uid=$(cb_read_field "$dir/${prefix}_uid")
+    gid=$(cb_read_field "$dir/${prefix}_gid")
+    mode=$(cb_read_field "$dir/${prefix}_mode")
+    acl_state=$(cb_read_field "$dir/${prefix}_acl_state")
+    xattr_state=$(cb_read_field "$dir/${prefix}_xattr_state")
+    if [[ $uid == absent || $gid == absent || $mode == absent || $acl_state == absent || $xattr_state == absent ]]; then
+      [[ $uid == absent && $gid == absent && $mode == absent && $acl_state == absent && $xattr_state == absent ]] || \
+        cb_die "partial absent config metadata in $prefix journal: $tx"
+    else
+      if [[ $acl_state != base-only || $xattr_state != none ]] || \
+         ! cb_config_valid_unix_id "$uid" || ! cb_config_valid_unix_id "$gid" || ! cb_config_valid_unix_mode "$mode"; then
+        cb_die "invalid config metadata in $prefix journal: $tx"
+      fi
+    fi
+  done
+  if [[ $existed == 1 ]]; then
+    [[ $(cb_read_field "$dir/previous_uid") != absent ]] || cb_die "existing config lacks previous metadata: $tx"
+    [[ $(cb_read_field "$dir/previous_uid") == "$EUID" ]] || cb_die "existing config journal owner mismatch: $tx"
+  else
+    [[ $(cb_read_field "$dir/previous_uid") == absent ]] || cb_die "absent config contains previous metadata: $tx"
+  fi
+  if [[ $(cb_read_field "$dir/desired_physical_hash") == absent ]]; then
+    [[ $(cb_read_field "$dir/desired_uid") == absent ]] || cb_die "absent desired config contains metadata: $tx"
+  else
+    [[ $(cb_read_field "$dir/desired_uid") != absent ]] || cb_die "present desired config lacks metadata: $tx"
+    [[ $(cb_read_field "$dir/desired_uid") == "$EUID" ]] || cb_die "desired config journal owner mismatch: $tx"
+  fi
+  physical=$(cb_read_field "$dir/stage_physical_hash")
+  [[ $physical =~ ^[0-9a-f]{64}$ && $(cb_read_field "$dir/stage_uid") != absent ]] || cb_die "invalid config stage metadata: $tx"
+  [[ $(cb_read_field "$dir/stage_uid") == "$EUID" ]] || cb_die "config stage journal owner mismatch: $tx"
+  for name in previous_projection_hash desired_projection_hash previous_structure_hash desired_structure_hash; do
+    [[ $(cb_read_field "$dir/$name") =~ ^[0-9a-f]{64}$ ]] || cb_die "invalid config transaction hash $name: $tx"
+  done
+  parent=$(cb_read_field "$dir/parent")
+  cursor=$parent
+  declare -A seen=(["$tx"]=1)
+  while [[ -n $cursor ]]; do
+    cb_require_tx_id "$cursor"
+    [[ -z ${seen[$cursor]+x} ]] || cb_die "config transaction parent cycle: $tx"
+    seen[$cursor]=1
+    parent_dir=$(cb_config_tx_dir "$cursor")
+    [[ -d $parent_dir && ! -L $parent_dir ]] || cb_die "config transaction parent is missing: $cursor"
+    cb_require_scalar_file "$parent_dir/state" "$cursor/state"
+    [[ $(cb_read_field "$parent_dir/state") == committed ]] || cb_die "config transaction parent is not committed: $cursor"
+    cb_require_scalar_file "$parent_dir/parent" "$cursor/parent"
+    cursor=$(cb_read_field "$parent_dir/parent")
+  done
+  value=$(cb_read_field "$dir/core_tx")
+  if [[ -n $value ]]; then
+    cb_require_tx_id "$value"
+    [[ -d $CB_STATE_ROOT/transactions/$value && ! -L $CB_STATE_ROOT/transactions/$value ]] || cb_die "config transaction core reference is missing: $value"
+  fi
+  [[ -d $dir/ownership/keys && ! -L $dir/ownership/keys ]] || cb_die "config ownership inventory is missing: $tx"
+  for key_dir in "$dir"/ownership/keys/*; do
+    [[ -e $key_dir || -L $key_dir ]] || continue
+    [[ -d $key_dir && ! -L $key_dir ]] || cb_die "invalid config ownership entry: $key_dir"
+    id=$(basename -- "$key_dir")
+    case $id in agents_enabled|agents_max|service_tier|features_fast_mode) ;; *) cb_die "unknown config ownership key: $id" ;; esac
+    actual_fields=''
+    while IFS= read -r -d '' entry; do
+      [[ -f $entry && ! -L $entry ]] || cb_die "invalid config ownership field: $entry"
+      cb_require_scalar_file "$entry" "$tx/$id/$(basename -- "$entry")"
+      if [[ -n $actual_fields ]]; then actual_fields+=','; fi
+      actual_fields+=$(basename -- "$entry")
+    done < <(find -P "$key_dir" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
+    expected_fields='core_tx,created_table,installed_token,path,prior_file_existed,prior_state,prior_token,separator_added,type'
+    [[ $actual_fields == "$expected_fields" ]] || cb_die "config ownership field inventory mismatch: $id"
+    [[ $(cb_read_field "$key_dir/path") == "$(cb_config_key_path "$id")" ]] || cb_die "config ownership path mismatch: $id"
+    [[ $(cb_read_field "$key_dir/type") == "$(cb_config_key_type "$id")" ]] || cb_die "config ownership type mismatch: $id"
+    for name in prior_file_existed created_table separator_added; do
+      value=$(cb_read_field "$key_dir/$name"); [[ $value == 0 || $value == 1 ]] || cb_die "invalid config ownership flag $name: $id"
+    done
+    value=$(cb_read_field "$key_dir/prior_state")
+    case $value in
+      present) cb_config_validate_token "$id" "$(cb_read_field "$key_dir/prior_token")" "$id/prior_token" ;;
+      absent) [[ -z $(cb_read_field "$key_dir/prior_token") ]] || cb_die "absent config ownership has a prior token: $id" ;;
+      *) cb_die "invalid config ownership prior state: $id" ;;
+    esac
+    cb_config_validate_token "$id" "$(cb_read_field "$key_dir/installed_token")" "$id/installed_token"
+    value=$(cb_read_field "$key_dir/core_tx")
+    if [[ -n $value ]]; then cb_require_tx_id "$value"; [[ -d $CB_STATE_ROOT/transactions/$value && ! -L $CB_STATE_ROOT/transactions/$value ]] || cb_die "config ownership core reference is missing: $id"; fi
+  done
+}
+
+cb_config_live_token() {
+  local id=$1
+  if [[ -n ${CB_CFG_INDEX[$id]-} ]]; then printf '%s' "${CB_CFG_TOKEN[$id]}"; else printf '__ABSENT__'; fi
+}
+
+cb_config_projection_hash() {
+  local input=$1 id
+  cb_config_scan "$input"
+  {
+    for id in agents_enabled agents_max service_tier features_fast_mode; do
+      printf '%s\t%s\n' "$(cb_config_key_path "$id")" "$(cb_config_live_token "$id")"
+    done
+  } | cb_sha256_text
+}
+
+cb_config_structure_hash() {
+  local input=$1 id
+  cb_config_scan "$input"
+  {
+    printf 'bom=%s\nfinal-newline=%s\n' "$([[ ${CB_CFG_LINES[0]-} == $'\xEF\xBB\xBF'* ]] && printf 1 || printf 0)" "$CB_CFG_FINAL_NEWLINE"
+    for id in agents_enabled agents_max service_tier features_fast_mode; do
+      printf '%s\t%s\n' "$(cb_config_key_path "$id")" "${CB_CFG_INDEX[$id]-absent}"
+    done
+    printf 'table-agents=%s\ntable-features=%s\n' "${CB_CFG_TABLE_HEADER[agents]-absent}" "${CB_CFG_TABLE_HEADER[features]-absent}"
+  } | cb_sha256_text
+}
+
+cb_config_assert_owned_clean() {
+  local current_dir key_dir id installed live
+  current_dir=$(cb_config_current_dir_or_empty)
+  [[ -n $current_dir ]] || return 0
+  [[ -d $current_dir && ! -L $current_dir && $(cb_read_field "$current_dir/state") == committed ]] || cb_die 'config ownership state is incomplete'
+  cb_config_scan "${CB_CONFIG_FILE:-/dev/null}"
+  for key_dir in "$current_dir"/ownership/keys/*; do
+    [[ -d $key_dir && ! -L $key_dir ]] || continue
+    id=$(basename -- "$key_dir")
+    installed=$(cb_read_field "$key_dir/installed_token")
+    live=$(cb_config_live_token "$id")
+    [[ $live == "$installed" ]] || cb_die "managed config key drifted: $(cb_config_key_path "$id")"
+  done
+}
+
+cb_config_assert_journal_metadata() {
+  local dir=$1 prefix=$2 path=$3 label=$4
+  cb_config_assert_metadata_matches "$path" \
+    "$(cb_read_field "$dir/${prefix}_uid")" \
+    "$(cb_read_field "$dir/${prefix}_gid")" \
+    "$(cb_read_field "$dir/${prefix}_mode")" \
+    "$(cb_read_field "$dir/${prefix}_acl_state")" \
+    "$(cb_read_field "$dir/${prefix}_xattr_state")" "$label"
+}
+
+cb_config_recover_pending() {
+  local tx dir target stage old existed before_hash desired_hash live_hash
+  tx=$(cb_read_tx_pointer "$CB_CONFIG_PENDING")
+  [[ -n $tx ]] || return 0
+  dir=$(cb_config_tx_dir "$tx")
+  [[ -d $dir && ! -L $dir ]] || cb_die "config transaction is missing: $tx"
+  cb_config_validate_tx "$tx"
+  cb_config_assert_path
+  cb_config_assert_mutation_metadata
+  target=$(cb_read_field "$dir/target"); stage=$(cb_read_field "$dir/stage"); old=$(cb_read_field "$dir/old")
+  existed=$(cb_read_field "$dir/previous_existed"); before_hash=$(cb_read_field "$dir/previous_physical_hash"); desired_hash=$(cb_read_field "$dir/desired_physical_hash")
+  if [[ -e $stage || -L $stage ]]; then
+    [[ $(cb_sha256_file "$stage") == "$(cb_read_field "$dir/stage_physical_hash")" ]] || cb_die 'config recovery stage content is unverifiable'
+    cb_config_assert_journal_metadata "$dir" stage "$stage" 'config recovery stage'
+  fi
+  if [[ -e $old || -L $old ]]; then
+    [[ $existed == 1 && $(cb_sha256_file "$old") == "$before_hash" ]] || cb_die 'config recovery preimage content is unverifiable'
+    cb_config_assert_journal_metadata "$dir" previous "$old" 'config recovery preimage'
+  fi
+  live_hash=absent; [[ ! -e $target ]] || live_hash=$(cb_sha256_file "$target")
+  if [[ $live_hash == "$desired_hash" ]]; then
+    if [[ $desired_hash != absent ]]; then cb_config_assert_journal_metadata "$dir" desired "$target" 'desired config recovery target'; fi
+    if [[ $existed == 1 ]]; then [[ -f $old && ! -L $old ]] || cb_die 'config recovery preimage is missing'; else [[ ! -e $old && ! -L $old ]] || cb_die 'unexpected config recovery preimage'; fi
+    cb_write_field "$CB_CONFIG_CURRENT" "$tx"
+    cb_write_field "$dir/state" committed
+    [[ ! -e $old ]] || rm -f -- "$old"
+    [[ ! -e $stage ]] || rm -f -- "$stage"
+  elif [[ $live_hash == "$before_hash" || ( $existed == 0 && $live_hash == absent ) ]]; then
+    if [[ $existed == 1 ]]; then cb_config_assert_journal_metadata "$dir" previous "$target" 'previous config recovery target'; fi
+    [[ ! -e $stage ]] || rm -f -- "$stage"
+    [[ ! -e $old ]] || rm -f -- "$old"
+    cb_write_field "$dir/state" rolled-back
+  elif [[ $live_hash == absent && -f $old && $(cb_sha256_file "$old") == "$before_hash" ]]; then
+    cb_config_assert_journal_metadata "$dir" previous "$old" 'config recovery preimage before restore'
+    [[ $(cb_sha256_file "$old") == "$before_hash" ]] || cb_die 'config recovery preimage changed before restore'
+    mv -T -- "$old" "$target"
+    [[ $(cb_sha256_file "$target") == "$before_hash" ]] || cb_die 'restored config recovery content mismatch'
+    cb_config_assert_journal_metadata "$dir" previous "$target" 'restored config recovery target'
+    cb_write_field "$dir/state" rolled-back
+  else
+    cb_die 'config transaction recovery found an unverifiable target state'
+  fi
+  rm -f -- "$CB_CONFIG_PENDING"
+  cb_sync_parent "$CB_CONFIG_PENDING"
+}
+
+cb_config_prepare_next_ownership() {
+  local tx_dir=$1 current_dir=$2 core_tx=${3:-} id key_dir prior_state prior_token scope created_table=0 separator_added=0 original_count
+  cb_safe_mkdir_path "$tx_dir/ownership/keys"
+  if [[ -n $current_dir ]]; then
+    for key_dir in "$current_dir"/ownership/keys/*; do
+      [[ -d $key_dir && ! -L $key_dir ]] || continue
+      cp -a -- "$key_dir" "$tx_dir/ownership/keys/"
+    done
+  fi
+  for id in agents_enabled agents_max service_tier features_fast_mode; do
+    [[ -n ${CB_CFG_ACTION[$id]+x} ]] || continue
+    key_dir="$tx_dir/ownership/keys/$id"
+    if [[ ${CB_CFG_NEXT_OWN[$id]} == 0 ]]; then
+      [[ ! -e $key_dir ]] || rm -rf -- "$key_dir"
+      continue
+    fi
+    if [[ ! -d $key_dir ]]; then
+      created_table=0
+      separator_added=0
+      cb_safe_mkdir_path "$key_dir"
+      if [[ ${CB_CFG_ORIGINAL_PRESENT[$id]-0} == 1 ]]; then prior_state=present; prior_token=${CB_CFG_ORIGINAL_TOKEN[$id]}; else prior_state=absent; prior_token=''; fi
+      cb_write_field "$key_dir/path" "$(cb_config_key_path "$id")"
+      cb_write_field "$key_dir/type" "$(cb_config_key_type "$id")"
+      cb_write_field "$key_dir/prior_state" "$prior_state"
+      cb_write_field "$key_dir/prior_token" "$prior_token"
+      cb_write_field "$key_dir/prior_file_existed" "${CB_CFG_ORIGINAL_FILE_EXISTED:-1}"
+      cb_write_field "$key_dir/core_tx" "$core_tx"
+      case $id in agents_enabled|agents_max) scope=agents ;; features_fast_mode) scope=features ;; *) scope='' ;; esac
+      if [[ -n $scope && ${CB_CFG_ORIGINAL_TABLE[$scope]-0} == 0 ]]; then
+        created_table=1
+        original_count=${CB_CFG_ORIGINAL_LINE_COUNT:-0}
+        if [[ $original_count -gt 0 && -n ${CB_CFG_ORIGINAL_LAST_LINE:-} ]]; then separator_added=1; fi
+      fi
+      cb_write_field "$key_dir/created_table" "$created_table"
+      cb_write_field "$key_dir/separator_added" "$separator_added"
+    fi
+    cb_write_field "$key_dir/installed_token" "${CB_CFG_ACTION[$id]}"
+  done
+}
+
+cb_config_apply_actions() {
+  local operation=$1 core_tx=${2:-} plan_mode=${3:-apply} input candidate next id before_hash desired_hash stage_hash previous_projection desired_projection previous_structure desired_structure tx tx_dir current_dir='' stage old existed=0 desired_present=1 remove_origin=0 all_released=1 key_dir
+  local before_mode=absent before_owner=absent before_group=absent before_acl_state=absent before_xattr_state=absent
+  local desired_mode=absent desired_owner=absent desired_group=absent desired_acl_state=absent desired_xattr_state=absent
+  local stage_mode=600 stage_owner=$EUID stage_group='' stage_acl_state=base-only stage_xattr_state=none parent_mode
+  local before_acl='' before_xattrs='' stage_acl='' stage_xattrs='' final_acl='' final_xattrs=''
+  CB_CONFIG_PLAN_CHANGE=0
+  cb_config_assert_path
+  if [[ $plan_mode == preflight ]]; then
+    [[ ! -e $CB_CONFIG_PENDING && ! -L $CB_CONFIG_PENDING ]] || cb_die 'an incomplete config transaction requires recovery before auto-cap preflight'
+  else
+    cb_config_recover_pending
+  fi
+  cb_config_assert_owned_clean
+  input=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-config-input.XXXXXX")
+  candidate=$(mktemp "${TMPDIR:-/tmp}/codex-baseline-config-candidate.XXXXXX")
+  cb_register_temp "$input"; cb_register_temp "$candidate"
+  if [[ -e $CB_CONFIG_FILE ]]; then cp -- "$CB_CONFIG_FILE" "$input"; existed=1; else : >"$input"; fi
+  CB_CFG_ORIGINAL_FILE_EXISTED=$existed
+  cb_config_scan "$input"
+  declare -gA CB_CFG_ORIGINAL_PRESENT=() CB_CFG_ORIGINAL_TOKEN=()
+  declare -gA CB_CFG_ORIGINAL_TABLE=([agents]=0 [features]=0)
+  [[ -z ${CB_CFG_TABLE_HEADER[agents]+x} ]] || CB_CFG_ORIGINAL_TABLE[agents]=1
+  [[ -z ${CB_CFG_TABLE_HEADER[features]+x} ]] || CB_CFG_ORIGINAL_TABLE[features]=1
+  CB_CFG_ORIGINAL_LINE_COUNT=${#CB_CFG_LINES[@]}
+  CB_CFG_ORIGINAL_LAST_LINE=''
+  [[ $CB_CFG_ORIGINAL_LINE_COUNT -eq 0 ]] || CB_CFG_ORIGINAL_LAST_LINE=${CB_CFG_LINES[$((CB_CFG_ORIGINAL_LINE_COUNT - 1))]%$'\r'}
+  for id in agents_enabled agents_max service_tier features_fast_mode; do
+    if [[ -n ${CB_CFG_INDEX[$id]-} ]]; then CB_CFG_ORIGINAL_PRESENT[$id]=1; CB_CFG_ORIGINAL_TOKEN[$id]=${CB_CFG_TOKEN[$id]}; else CB_CFG_ORIGINAL_PRESENT[$id]=0; CB_CFG_ORIGINAL_TOKEN[$id]=''; fi
+  done
+  current_dir=$(cb_config_current_dir_or_empty)
+  if [[ -z $core_tx && -n $current_dir ]]; then core_tx=$(cb_read_field "$current_dir/core_tx"); fi
+  cp -- "$input" "$candidate"
+  for id in agents_enabled agents_max service_tier features_fast_mode; do
+    [[ -n ${CB_CFG_ACTION[$id]+x} ]] || continue
+    next="$candidate.next"
+    cb_config_patch_one "$candidate" "$next" "$id" "${CB_CFG_ACTION[$id]}"
+    mv -- "$next" "$candidate"
+  done
+  if [[ -n $current_dir ]]; then
+    local scope key_dir created separator cleanup
+    for scope in agents features; do
+      created=0; separator=0
+      for id in $([[ $scope == agents ]] && printf '%s\n' agents_enabled agents_max || printf '%s\n' features_fast_mode); do
+        key_dir="$current_dir/ownership/keys/$id"
+        [[ -d $key_dir ]] || continue
+        [[ $(cb_read_field "$key_dir/created_table") == 1 ]] && created=1
+        [[ $(cb_read_field "$key_dir/separator_added") == 1 ]] && separator=1
+      done
+      if [[ $created == 1 ]]; then
+        cleanup="$candidate.cleanup"
+        cb_config_remove_empty_created_table "$candidate" "$cleanup" "$scope" "$separator"
+        mv -- "$cleanup" "$candidate"
+      fi
+    done
+  fi
+  if [[ $operation == restore || $operation == rollback || $operation == uninstall ]] && [[ ! -s $candidate && -n $current_dir ]]; then
+    for key_dir in "$current_dir"/ownership/keys/*; do
+      [[ -d $key_dir && ! -L $key_dir ]] || continue
+      id=$(basename -- "$key_dir")
+      [[ ${CB_CFG_NEXT_OWN[$id]-1} == 0 ]] || all_released=0
+      if [[ -f $key_dir/prior_file_existed && $(cb_read_field "$key_dir/prior_file_existed") == 0 ]]; then remove_origin=1; fi
+    done
+    if [[ $all_released == 1 && $remove_origin == 1 ]]; then desired_present=0; fi
+  fi
+  before_hash=absent; [[ $existed == 0 ]] || before_hash=$(cb_sha256_file "$input")
+  stage_hash=$(cb_sha256_file "$candidate")
+  if [[ $desired_present == 1 ]]; then desired_hash=$(cb_sha256_file "$candidate"); else desired_hash=absent; fi
+  previous_projection=$(cb_config_projection_hash "$input")
+  desired_projection=$(cb_config_projection_hash "$candidate")
+  previous_structure=$(cb_config_structure_hash "$input")
+  desired_structure=$(cb_config_structure_hash "$candidate")
+  if [[ $before_hash == "$desired_hash" ]]; then
+    return 0
+  fi
+  CB_CONFIG_PLAN_CHANGE=1
+  if [[ $plan_mode == preflight || ( $CB_DRY_RUN -eq 0 && ( $CB_OPTIMIZE_APPLY -ne 0 || $operation != optimize ) ) ]]; then
+    cb_config_assert_mutation_metadata
+    if [[ $existed == 1 ]]; then
+      before_owner=$CB_CONFIG_META_UID; before_group=$CB_CONFIG_META_GID; before_mode=$CB_CONFIG_META_MODE
+      before_acl_state=$CB_CONFIG_META_ACL_STATE; before_xattr_state=$CB_CONFIG_META_XATTR_STATE
+    fi
+  fi
+  cb_config_validate_candidate "$candidate"
+  if [[ $plan_mode == preflight || $CB_DRY_RUN -eq 1 || $CB_OPTIMIZE_APPLY -eq 0 && $operation == optimize ]]; then
+    return 0
+  fi
+  cb_require_command id
+  stage_group=$(id -g)
+  parent_mode=$(stat -Lc '%a' -- "$CB_CODEX_HOME")
+  if (( (8#$parent_mode & 02000) != 0 )); then stage_group=$(stat -Lc '%g' -- "$CB_CODEX_HOME"); fi
+  if [[ $desired_present == 1 ]]; then
+    if [[ $existed == 1 ]]; then
+      desired_owner=$before_owner; desired_group=$before_group; desired_mode=$before_mode
+      desired_acl_state=$before_acl_state; desired_xattr_state=$before_xattr_state
+      stage_owner=$desired_owner; stage_group=$desired_group; stage_mode=$desired_mode
+      stage_acl_state=$desired_acl_state; stage_xattr_state=$desired_xattr_state
+    else
+      desired_owner=$stage_owner; desired_group=$stage_group; desired_mode=$stage_mode
+      desired_acl_state=$stage_acl_state; desired_xattr_state=$stage_xattr_state
+    fi
+  fi
+  cb_safe_mkdir_path "$CB_CONFIG_TX_ROOT"
+  tx=$(date -u '+%Y%m%dT%H%M%SZ')-$$-$RANDOM
+  tx_dir=$(cb_config_tx_dir "$tx")
+  cb_safe_mkdir_path "$tx_dir"
+  stage="$CB_CODEX_HOME/.codex-baseline-config-stage-$tx"
+  old="$CB_CODEX_HOME/.codex-baseline-config-old-$tx"
+  [[ ! -e $stage && ! -L $stage && ! -e $old && ! -L $old ]] || cb_die 'config staging collision'
+  cb_write_field "$tx_dir/schema" 2
+  cb_write_field "$tx_dir/contract" codex-baseline-config-transaction/v2
+  cb_write_field "$tx_dir/operation" "$operation"
+  cb_write_field "$tx_dir/version" "$CB_VERSION"
+  cb_write_field "$tx_dir/parent" "$(cb_config_current_tx)"
+  cb_write_field "$tx_dir/core_tx" "$core_tx"
+  cb_write_field "$tx_dir/target" "$CB_CONFIG_FILE"
+  cb_write_field "$tx_dir/stage" "$stage"
+  cb_write_field "$tx_dir/old" "$old"
+  cb_write_field "$tx_dir/previous_existed" "$existed"
+  cb_write_field "$tx_dir/previous_physical_hash" "$before_hash"
+  cb_write_field "$tx_dir/previous_uid" "$before_owner"
+  cb_write_field "$tx_dir/previous_gid" "$before_group"
+  cb_write_field "$tx_dir/previous_mode" "$before_mode"
+  cb_write_field "$tx_dir/previous_acl_state" "$before_acl_state"
+  cb_write_field "$tx_dir/previous_xattr_state" "$before_xattr_state"
+  cb_write_field "$tx_dir/desired_physical_hash" "$desired_hash"
+  cb_write_field "$tx_dir/desired_uid" "$desired_owner"
+  cb_write_field "$tx_dir/desired_gid" "$desired_group"
+  cb_write_field "$tx_dir/desired_mode" "$desired_mode"
+  cb_write_field "$tx_dir/desired_acl_state" "$desired_acl_state"
+  cb_write_field "$tx_dir/desired_xattr_state" "$desired_xattr_state"
+  cb_write_field "$tx_dir/stage_physical_hash" "$stage_hash"
+  cb_write_field "$tx_dir/stage_uid" "$stage_owner"
+  cb_write_field "$tx_dir/stage_gid" "$stage_group"
+  cb_write_field "$tx_dir/stage_mode" "$stage_mode"
+  cb_write_field "$tx_dir/stage_acl_state" "$stage_acl_state"
+  cb_write_field "$tx_dir/stage_xattr_state" "$stage_xattr_state"
+  cb_write_field "$tx_dir/previous_projection_hash" "$previous_projection"
+  cb_write_field "$tx_dir/desired_projection_hash" "$desired_projection"
+  cb_write_field "$tx_dir/previous_structure_hash" "$previous_structure"
+  cb_write_field "$tx_dir/desired_structure_hash" "$desired_structure"
+  cb_write_field "$tx_dir/state" planned
+  cb_config_prepare_next_ownership "$tx_dir" "$current_dir" "$core_tx"
+  cp -- "$candidate" "$stage"
+  if [[ $desired_present == 1 ]]; then
+    if [[ $existed == 1 ]]; then
+      cp --attributes-only --preserve=all -- "$CB_CONFIG_FILE" "$stage" || cb_die 'cannot preserve config.toml metadata on the replacement stage'
+      [[ $(stat -Lc '%a' -- "$stage") == "$before_mode" && $(stat -Lc '%u' -- "$stage") == "$before_owner" && $(stat -Lc '%g' -- "$stage") == "$before_group" ]] || cb_die 'config.toml mode/owner/group did not copy exactly to the replacement stage'
+      before_acl=$(getfacl -cp -- "$CB_CONFIG_FILE") || cb_die 'cannot inspect config.toml ACL'
+      stage_acl=$(getfacl -cp -- "$stage") || cb_die 'cannot inspect replacement-stage ACL'
+      [[ $stage_acl == "$before_acl" ]] || cb_die 'config.toml ACL did not copy exactly to the replacement stage'
+      before_xattrs=$(getfattr --absolute-names -m - -d --encoding=hex -- "$CB_CONFIG_FILE" 2>/dev/null | sed '/^# file:/d') || cb_die 'cannot inspect config.toml extended attributes'
+      stage_xattrs=$(getfattr --absolute-names -m - -d --encoding=hex -- "$stage" 2>/dev/null | sed '/^# file:/d') || cb_die 'cannot inspect replacement-stage extended attributes'
+      [[ $stage_xattrs == "$before_xattrs" ]] || cb_die 'config.toml extended attributes did not copy exactly to the replacement stage'
+    else
+      chmod 0600 "$stage"
+    fi
+    stage_acl=$(getfacl -cp -- "$stage" 2>/dev/null || cb_die 'cannot inspect replacement-stage ACL')
+    if grep -Eq '^(default:|user:[^:]|group:[^:]|mask:)' <<<"$stage_acl"; then
+      cb_die 'replacement stage has an extended ACL that cannot be preserved safely'
+    fi
+    stage_xattrs=$(getfattr --absolute-names -m - -d --encoding=hex -- "$stage" 2>/dev/null | sed '/^#/d;/^[[:space:]]*$/d') || cb_die 'cannot inspect replacement-stage extended attributes'
+    [[ -z $stage_xattrs ]] || cb_die 'replacement stage has extended attributes that cannot be preserved safely'
+  else
+    chmod 0600 "$stage"
+  fi
+  [[ $(cb_sha256_file "$stage") == "$stage_hash" ]] || cb_die 'config.toml stage content changed during preparation'
+  cb_config_assert_journal_metadata "$tx_dir" stage "$stage" 'config replacement stage'
+  cb_sync_file "$stage"
+  if [[ $existed == 1 && $desired_present == 1 ]]; then
+    cp --preserve=all -- "$CB_CONFIG_FILE" "$old" || cb_die 'cannot create the config.toml recovery preimage'
+    [[ $(cb_sha256_file "$old") == "$before_hash" ]] || cb_die 'config.toml recovery preimage hash mismatch'
+    cb_config_assert_journal_metadata "$tx_dir" previous "$old" 'config.toml recovery preimage'
+    cb_sync_file "$old"
+  fi
+  cb_write_field "$tx_dir/state" prepared
+  if [[ ${CODEX_BASELINE_TESTING:-0} == 1 && ${CODEX_BASELINE_TEST_FAIL_AFTER_CONFIG_PREPARE_BEFORE_PENDING:-0} == 1 ]]; then
+    cb_die 'test fault after config preparation and before recovery publication'
+  fi
+  cb_write_field "$CB_CONFIG_PENDING" "$tx"
+  cb_sync_parent "$CB_CONFIG_PENDING"
+  cb_write_field "$tx_dir/state" committing
+  cb_config_assert_path
+  if [[ $existed == 1 ]]; then
+    [[ $(cb_sha256_file "$CB_CONFIG_FILE") == "$before_hash" ]] || cb_die 'config.toml changed before atomic replace'
+    cb_config_assert_journal_metadata "$tx_dir" previous "$CB_CONFIG_FILE" 'config.toml before atomic replace'
+    if [[ $desired_present != 1 ]]; then
+      cb_config_test_edit_before_rename
+      [[ $(cb_sha256_file "$CB_CONFIG_FILE") == "$before_hash" ]] || cb_die 'config.toml changed immediately before atomic remove'
+      cb_config_assert_journal_metadata "$tx_dir" previous "$CB_CONFIG_FILE" 'config.toml immediately before atomic remove'
+      mv -T -- "$CB_CONFIG_FILE" "$old"
+      cb_sync_parent "$CB_CONFIG_FILE"
+      cb_fault_after_mutation "config-moved-old:$CB_CONFIG_FILE"
+    fi
+  else
+    [[ ! -e $CB_CONFIG_FILE && ! -L $CB_CONFIG_FILE ]] || cb_die 'config.toml appeared before atomic create'
+  fi
+  if [[ $desired_present == 1 ]]; then
+    cb_config_test_edit_before_rename
+    if [[ $existed == 1 ]]; then
+      [[ $(cb_sha256_file "$CB_CONFIG_FILE") == "$before_hash" ]] || cb_die 'config.toml changed immediately before atomic replace'
+      cb_config_assert_journal_metadata "$tx_dir" previous "$CB_CONFIG_FILE" 'config.toml immediately before atomic replace'
+    else
+      [[ ! -e $CB_CONFIG_FILE && ! -L $CB_CONFIG_FILE ]] || cb_die 'config.toml appeared immediately before atomic create'
+    fi
+    [[ $(cb_sha256_file "$stage") == "$stage_hash" ]] || cb_die 'config.toml stage changed immediately before atomic replace'
+    cb_config_assert_journal_metadata "$tx_dir" stage "$stage" 'config stage immediately before atomic replace'
+    mv -Tf -- "$stage" "$CB_CONFIG_FILE"
+    cb_sync_file "$CB_CONFIG_FILE"
+    cb_sync_parent "$CB_CONFIG_FILE"
+  else
+    rm -f -- "$stage"
+  fi
+  cb_fault_after_mutation "config-committed:$CB_CONFIG_FILE"
+  if [[ $desired_present == 1 ]]; then
+    [[ $(cb_sha256_file "$CB_CONFIG_FILE") == "$desired_hash" ]] || cb_die 'config.toml post-commit hash mismatch'
+    cb_config_assert_journal_metadata "$tx_dir" desired "$CB_CONFIG_FILE" 'committed config.toml'
+    if [[ $existed == 1 ]]; then
+      [[ $(stat -Lc '%a' -- "$CB_CONFIG_FILE") == "$before_mode" && $(stat -Lc '%u' -- "$CB_CONFIG_FILE") == "$before_owner" && $(stat -Lc '%g' -- "$CB_CONFIG_FILE") == "$before_group" ]] || cb_die 'config.toml final mode/owner/group changed during replace'
+      final_acl=$(getfacl -cp -- "$CB_CONFIG_FILE") || cb_die 'cannot inspect final config.toml ACL'; [[ $final_acl == "$before_acl" ]] || cb_die 'config.toml final ACL changed during replace'
+      final_xattrs=$(getfattr --absolute-names -m - -d --encoding=hex -- "$CB_CONFIG_FILE" 2>/dev/null | sed '/^# file:/d') || cb_die 'cannot inspect final config.toml extended attributes'; [[ $final_xattrs == "$before_xattrs" ]] || cb_die 'config.toml final extended attributes changed during replace'
+    fi
+  else
+    [[ ! -e $CB_CONFIG_FILE && ! -L $CB_CONFIG_FILE ]] || cb_die 'config.toml post-commit absence mismatch'
+  fi
+  cb_config_scan "$CB_CONFIG_FILE"
+  for id in agents_enabled agents_max service_tier features_fast_mode; do
+    [[ ${CB_CFG_NEXT_OWN[$id]-0} == 1 ]] || continue
+    [[ $(cb_config_live_token "$id") == "${CB_CFG_ACTION[$id]-$(cb_read_field "$tx_dir/ownership/keys/$id/installed_token")}" ]] || cb_die "config key post-commit verification failed: $id"
+  done
+  cb_write_field "$CB_CONFIG_CURRENT" "$tx"
+  cb_write_field "$tx_dir/state" committed
+  rm -f -- "$CB_CONFIG_PENDING"
+  cb_sync_parent "$CB_CONFIG_PENDING"
+  [[ ! -e $old ]] || rm -f -- "$old"
+  cb_sync_parent "$CB_CONFIG_FILE"
+}
+
+cb_config_plan_restore() {
+  local current_dir key_dir id prior_state
+  declare -gA CB_CFG_ACTION=() CB_CFG_NEXT_OWN=()
+  current_dir=$(cb_config_current_dir_or_empty)
+  [[ -n $current_dir ]] || return 1
+  cb_config_scan "$CB_CONFIG_FILE"
+  for key_dir in "$current_dir"/ownership/keys/*; do
+    [[ -d $key_dir && ! -L $key_dir ]] || continue
+    id=$(basename -- "$key_dir")
+    prior_state=$(cb_read_field "$key_dir/prior_state")
+    if [[ $prior_state == present ]]; then CB_CFG_ACTION[$id]=$(cb_read_field "$key_dir/prior_token"); else CB_CFG_ACTION[$id]=__ABSENT__; fi
+    CB_CFG_NEXT_OWN[$id]=0
+  done
+  return 0
+}
+
+cb_config_restore() {
+  local operation=${1:-restore} core_tx=${2:-}
+  if ! cb_config_plan_restore; then return 1; fi
+  cb_config_apply_actions "$operation" "$core_tx"
+}
+
+cb_config_auto_install_cap() {
+  local core_tx=$1 plan_mode=${2:-apply}
+  CB_CONFIG_PLAN_CHANGE=0
+  cb_config_assert_path
+  cb_config_scan "$CB_CONFIG_FILE"
+  [[ -z ${CB_CFG_INDEX[agents_enabled]-} || ${CB_CFG_TOKEN[agents_enabled]} != false ]] || return 0
+  [[ -z ${CB_CFG_INDEX[features_multi_agent]-} || ${CB_CFG_TOKEN[features_multi_agent]} != false ]] || return 0
+  [[ -z ${CB_CFG_INDEX[agents_max]-} && -z ${CB_CFG_INDEX[agents_legacy_max]-} ]] || return 0
+  declare -gA CB_CFG_ACTION=([agents_max]=6) CB_CFG_NEXT_OWN=([agents_max]=1)
+  cb_config_apply_actions install-cap "$core_tx" "$plan_mode"
+}
+
+cb_core_chain_contains() {
+  local expected=$1 current=$2 dir
+  while [[ -n $current ]]; do
+    cb_require_tx_id "$current"
+    dir="$CB_STATE_ROOT/transactions/$current"
+    [[ -d $dir && ! -L $dir ]] || cb_die "core transaction chain is incomplete: $current"
+    [[ $(cb_read_field "$dir/state") == committed ]] || cb_die "core transaction chain contains an uncommitted entry: $current"
+    [[ $current != "$expected" ]] || return 0
+    current=$(cb_read_field "$dir/parent")
+  done
+  [[ -z $expected ]]
+}
+
+cb_composite_tx_dir() {
+  cb_require_tx_id "$1"
+  printf '%s/%s' "$CB_COMPOSITE_ROOT" "$1"
+}
+
+cb_composite_validate() {
+  local id=$1 dir entry name fields='' expected='contract,desired_core,operation,schema,source_core,state' operation state source desired value
+  cb_require_tx_id "$id"
+  dir=$(cb_composite_tx_dir "$id")
+  [[ $(dirname -- "$dir") == "$CB_COMPOSITE_ROOT" && -d $dir && ! -L $dir ]] || cb_die "unsafe or missing composite transaction directory: $dir"
+  while IFS= read -r -d '' entry; do
+    [[ -f $entry && ! -L $entry ]] || cb_die "invalid composite transaction field: $entry"
+    cb_require_scalar_file "$entry" "$id/$(basename -- "$entry")"
+    name=$(basename -- "$entry"); if [[ -n $fields ]]; then fields+=','; fi; fields+=$name
+  done < <(find -P "$dir" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
+  [[ $fields == "$expected" ]] || cb_die "composite transaction has an invalid field inventory: $id"
+  [[ $(cb_read_field "$dir/schema") == 2 && $(cb_read_field "$dir/contract") == codex-baseline-composite-transaction/v2 ]] || cb_die "composite transaction identity mismatch: $id"
+  operation=$(cb_read_field "$dir/operation"); case $operation in install|rollback|uninstall) ;; *) cb_die "invalid composite operation: $id" ;; esac
+  state=$(cb_read_field "$dir/state"); case $state in planned|committed|rolled-back) ;; *) cb_die "invalid composite state: $id" ;; esac
+  source=$(cb_read_field "$dir/source_core"); desired=$(cb_read_field "$dir/desired_core")
+  for value in "$source" "$desired"; do
+    [[ -z $value ]] || { cb_require_tx_id "$value"; [[ -d $CB_STATE_ROOT/transactions/$value && ! -L $CB_STATE_ROOT/transactions/$value ]] || cb_die "composite core reference is missing: $value"; }
+  done
+  case $operation in
+    install) [[ -z $source && -n $desired ]] || cb_die "invalid install composite endpoints: $id" ;;
+    rollback) [[ -n $source && $source != "$desired" ]] || cb_die "invalid rollback composite endpoints: $id" ;;
+    uninstall) [[ -n $source && -z $desired ]] || cb_die "invalid uninstall composite endpoints: $id" ;;
+  esac
+}
+
+cb_composite_begin() {
+  local operation=$1 source=$2 desired=$3 id dir
+  [[ ! -f $CB_COMPOSITE_PENDING ]] || cb_die 'another composite transaction is pending'
+  cb_safe_mkdir_path "$CB_COMPOSITE_ROOT"
+  id=$(date -u '+%Y%m%dT%H%M%SZ')-$$-$RANDOM
+  dir=$(cb_composite_tx_dir "$id")
+  cb_safe_mkdir_path "$dir"
+  cb_write_field "$dir/schema" 2
+  cb_write_field "$dir/contract" codex-baseline-composite-transaction/v2
+  cb_write_field "$dir/operation" "$operation"
+  cb_write_field "$dir/source_core" "$source"
+  cb_write_field "$dir/desired_core" "$desired"
+  cb_write_field "$dir/state" planned
+  cb_composite_validate "$id"
+  cb_write_field "$CB_COMPOSITE_PENDING" "$id"
+  cb_sync_parent "$CB_COMPOSITE_PENDING"
+}
+
+cb_composite_apply_config() {
+  local operation=$1 source=$2 desired=$3 current_dir='' config_core=''
+  case $operation in
+    install)
+      cb_config_auto_install_cap "$desired"
+      ;;
+    rollback)
+      current_dir=$(cb_config_current_dir_or_empty)
+      if [[ -n $current_dir ]]; then
+        config_core=$(cb_read_field "$current_dir/core_tx")
+        if [[ $config_core == "$source" ]]; then cb_config_restore rollback "$source" || true; fi
+      fi
+      ;;
+    uninstall)
+      if cb_config_current_dir >/dev/null; then cb_config_restore uninstall "$source" || true; fi
+      ;;
+  esac
+}
+
+cb_composite_finalize() {
+  local id=$1 terminal=$2 dir
+  cb_composite_validate "$id"
+  dir=$(cb_composite_tx_dir "$id")
+  cb_write_field "$dir/state" "$terminal"
+  rm -f -- "$CB_COMPOSITE_PENDING"
+  cb_sync_parent "$CB_COMPOSITE_PENDING"
+}
+
+cb_composite_recover_pending() {
+  local id dir operation source desired current
+  id=$(cb_read_tx_pointer "$CB_COMPOSITE_PENDING")
+  [[ -n $id ]] || return 0
+  cb_composite_validate "$id"
+  dir=$(cb_composite_tx_dir "$id")
+  [[ $(cb_read_field "$dir/state") == planned ]] || cb_die "pending composite transaction is not planned: $id"
+  operation=$(cb_read_field "$dir/operation")
+  source=$(cb_read_field "$dir/source_core")
+  desired=$(cb_read_field "$dir/desired_core")
+  current=$(cb_current_tx)
+  if [[ $operation == uninstall && -n $current && $current != "$desired" ]]; then
+    cb_core_chain_contains "$current" "$source" || cb_die 'uninstall composite found an unrelated core state'
+    while [[ -n $(cb_current_tx) ]]; do cb_rollback_once uninstall; done
+    current=$(cb_current_tx)
+  fi
+  if [[ $current == "$desired" ]]; then
+    if [[ -n $desired ]]; then cb_validate_tx "$desired" committed "$CB_STATE_ROOT"; fi
+    cb_composite_apply_config "$operation" "$source" "$desired"
+    cb_composite_finalize "$id" committed
+  elif [[ $current == "$source" ]]; then
+    cb_composite_finalize "$id" rolled-back
+  else
+    cb_die 'composite recovery found an unverifiable core state'
+  fi
+}
+
+cb_config_owned_keys_json() {
+  local current_dir key_dir separator=''
+  current_dir=$(cb_config_current_dir_or_empty)
+  printf '['
+  if [[ -n $current_dir ]]; then
+    for key_dir in "$current_dir"/ownership/keys/*; do
+      [[ -d $key_dir ]] || continue
+      printf '%s"%s"' "$separator" "$(cb_json_escape "$(cb_read_field "$key_dir/path")")"
+      separator=,
+    done
+  fi
+  printf ']'
+}
+
+cb_optimize_report() {
+  local mode=$1 status=$2 applied=$3 speed=$4 bytes=${5:-0} drift=${6:-false} enabled=null feature_enabled=null cap=null legacy=null override=false runtime_capability=unverified
+  cb_config_scan "$CB_CONFIG_FILE"
+  if [[ -n ${CB_CFG_TOKEN[agents_enabled]-} ]]; then enabled=${CB_CFG_TOKEN[agents_enabled]}; fi
+  if [[ -n ${CB_CFG_TOKEN[features_multi_agent]-} ]]; then feature_enabled=${CB_CFG_TOKEN[features_multi_agent]}; fi
+  if [[ -n ${CB_CFG_TOKEN[agents_max]-} ]]; then cap=${CB_CFG_TOKEN[agents_max]}; override=true; fi
+  if [[ -n ${CB_CFG_TOKEN[agents_legacy_max]-} ]]; then legacy=${CB_CFG_TOKEN[agents_legacy_max]}; override=true; fi
+  [[ $enabled != false ]] || override=true
+  [[ $feature_enabled != false ]] || override=true
+  if command -v codex >/dev/null 2>&1 && codex --strict-config --version >/dev/null 2>&1; then runtime_capability=available; fi
+  if [[ $CB_JSON -eq 1 ]]; then
+    printf '{"schema":1,"contract":"codex-baseline-optimize/v1","mode":"%s","status":"%s","apply":%s,"config":"%s","agents":{"enabled":%s,"cap":%s,"legacy_cap":%s,"effective_override":%s},"speed":"%s","managed_keys":' \
+      "$mode" "$status" "$applied" "$(cb_json_escape "$CB_CONFIG_FILE")" "$enabled" "$cap" "$legacy" "$override" "$speed"
+    cb_config_owned_keys_json
+    printf ',"drift":%s,"bytes_changed":%d,"capabilities":{"agents":"%s","fast":"%s","ultrafast":"unavailable"},"limitations":["runtime depth/model/concurrency telemetry may remain unverified","cooperative CAS is not a hostile-writer or power-loss guarantee"]}\n' "$drift" "$bytes" "$runtime_capability" "$runtime_capability"
+  else
+    printf 'Optimizer: %s (%s)\nConfig: %s\nAgents: enabled=%s cap=%s legacy-cap=%s\nSpeed: %s\nManaged keys: ' "$status" "$mode" "$CB_CONFIG_FILE" "$enabled" "$cap" "$legacy" "$speed"
+    cb_config_owned_keys_json
+    printf '\nUltrafast: unavailable; bytes changed: %d; drift: %s\n' "$bytes" "$drift"
+  fi
+}
+
+cb_optimize_prepare_plan() {
+  local current_dir='' key_dir='' id prior_state
+  if [[ $CB_OPTIMIZE_MODE == restore ]]; then
+    CB_OPTIMIZE_PLAN_MODE=restore
+    cb_config_plan_restore
+    return
+  fi
+  CB_OPTIMIZE_PLAN_MODE=optimize
+  cb_config_scan "$CB_CONFIG_FILE"
+  declare -gA CB_CFG_ACTION=([agents_enabled]=true [agents_max]=6) CB_CFG_NEXT_OWN=([agents_enabled]=1 [agents_max]=1)
+  if [[ $CB_OPTIMIZE_SPEED == fast ]]; then
+    current_dir=$(cb_config_current_dir_or_empty)
+    [[ -z $current_dir ]] || key_dir="$current_dir/ownership/keys/service_tier"
+    if [[ -n ${CB_CFG_INDEX[service_tier]-} && ! -d $key_dir && ${CB_CFG_TOKEN[service_tier]} != '"fast"' ]]; then
+      cb_die 'speed=fast refuses an unowned conflicting key: service_tier'
+    fi
+    CB_CFG_ACTION[service_tier]='"fast"'; CB_CFG_ACTION[features_fast_mode]=true
+    CB_CFG_NEXT_OWN[service_tier]=1; CB_CFG_NEXT_OWN[features_fast_mode]=1
+  elif [[ $CB_OPTIMIZE_SPEED == standard ]]; then
+    current_dir=$(cb_config_current_dir_or_empty)
+    for id in service_tier features_fast_mode; do
+      key_dir=''
+      [[ -z $current_dir ]] || key_dir="$current_dir/ownership/keys/$id"
+      if [[ -n $key_dir && -d $key_dir ]]; then
+        prior_state=$(cb_read_field "$key_dir/prior_state")
+        if [[ $prior_state == present ]]; then CB_CFG_ACTION[$id]=$(cb_read_field "$key_dir/prior_token"); else CB_CFG_ACTION[$id]=__ABSENT__; fi
+        CB_CFG_NEXT_OWN[$id]=0
+      elif [[ -n ${CB_CFG_INDEX[$id]-} ]]; then
+        if [[ $id == service_tier && ${CB_CFG_TOKEN[$id]} == '"fast"' ]] || \
+           [[ $id == features_fast_mode && ${CB_CFG_TOKEN[$id]} == true ]]; then
+          cb_die "speed=standard refuses an unowned conflicting key: $(cb_config_key_path "$id")"
+        fi
+      fi
+    done
+  fi
+}
+
+cb_optimize() {
+  local before=absent after=absent status=available mode=check current_dir='' key_dir id installed live drift=false applied=false bytes_changed=0
+  CB_OPTIMIZE_MODE=check; CB_OPTIMIZE_CHECK_SET=0; CB_OPTIMIZE_APPLY=0; CB_OPTIMIZE_SPEED=keep; CB_DRY_RUN=0; CB_JSON=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --check) CB_OPTIMIZE_MODE=check; CB_OPTIMIZE_CHECK_SET=1 ;;
+      --restore) CB_OPTIMIZE_MODE=restore ;;
+      --speed) shift; [[ $# -gt 0 ]] || cb_die '--speed requires keep, standard, fast, or ultrafast'; CB_OPTIMIZE_SPEED=$1 ;;
+      --speed=*) CB_OPTIMIZE_SPEED=${1#*=} ;;
+      --dry-run) CB_DRY_RUN=1 ;;
+      --apply) CB_OPTIMIZE_APPLY=1 ;;
+      --json) CB_JSON=1 ;;
+      *) cb_die "unknown optimize option: $1" ;;
+    esac
+    shift
+  done
+  case $CB_OPTIMIZE_SPEED in keep|standard|fast|ultrafast) ;; *) cb_die 'invalid --speed value' ;; esac
+  [[ $CB_DRY_RUN -eq 0 || $CB_OPTIMIZE_APPLY -eq 0 ]] || cb_die '--dry-run and --apply are mutually exclusive'
+  if [[ $CB_OPTIMIZE_CHECK_SET -eq 1 && ( $CB_OPTIMIZE_MODE != check || $CB_OPTIMIZE_SPEED != keep || $CB_DRY_RUN -eq 1 || $CB_OPTIMIZE_APPLY -eq 1 ) ]]; then
+    cb_die '--check cannot be combined with restore, speed, dry-run, or apply'
+  fi
+  if [[ $CB_OPTIMIZE_MODE == restore && $CB_OPTIMIZE_SPEED != keep ]]; then cb_die '--restore cannot be combined with --speed'; fi
+  if [[ $CB_OPTIMIZE_SPEED == ultrafast ]]; then
+    cb_init_paths; cb_optimize_report optimize unavailable false ultrafast 0 false
+    return 3
+  fi
+  cb_init_paths
+  cb_config_assert_path
+  if [[ $CB_OPTIMIZE_MODE == check && $CB_OPTIMIZE_SPEED == keep && $CB_OPTIMIZE_APPLY -eq 0 && $CB_DRY_RUN -eq 0 ]]; then
+    cb_config_scan "$CB_CONFIG_FILE"
+    current_dir=$(cb_config_current_dir_or_empty)
+    if [[ -n $current_dir ]]; then
+      for key_dir in "$current_dir"/ownership/keys/*; do
+        [[ -d $key_dir && ! -L $key_dir ]] || continue
+        id=$(basename -- "$key_dir")
+        installed=$(cb_read_field "$key_dir/installed_token")
+        live=$(cb_config_live_token "$id")
+        if [[ $live != "$installed" ]]; then drift=true; fi
+      done
+    fi
+    [[ $drift == false ]] || status=conflict
+    cb_optimize_report check "$status" false unmanaged 0 "$drift"
+    [[ $drift == false ]] || return 4
+    return 0
+  fi
+  if [[ $CB_OPTIMIZE_APPLY -eq 0 ]]; then CB_DRY_RUN=1; fi
+  CB_VERSION=$(<"$CB_SOURCE_ROOT/VERSION")
+  if [[ $CB_OPTIMIZE_APPLY -eq 1 && ! -e $CB_PENDING && ! -L $CB_PENDING && \
+        ! -e $CB_CONFIG_PENDING && ! -L $CB_CONFIG_PENDING && ! -e $CB_COMPOSITE_PENDING && ! -L $CB_COMPOSITE_PENDING ]]; then
+    if ! cb_optimize_prepare_plan; then cb_optimize_report restore not-managed false keep 0 false; return 0; fi
+    cb_config_apply_actions "$CB_OPTIMIZE_PLAN_MODE" '' preflight
+  fi
+  if [[ $CB_OPTIMIZE_APPLY -eq 1 ]]; then
+    cb_init_mutation_roots
+    cb_acquire_lock
+    cb_recover_pending
+    cb_config_recover_pending
+    cb_composite_recover_pending
+  fi
+  [[ ! -e $CB_CONFIG_FILE ]] || before=$(cb_sha256_file "$CB_CONFIG_FILE")
+  if ! cb_optimize_prepare_plan; then cb_optimize_report restore not-managed false keep 0 false; return 0; fi
+  mode=$CB_OPTIMIZE_PLAN_MODE
+  cb_config_apply_actions "$mode" ''
+  [[ ! -e $CB_CONFIG_FILE ]] || after=$(cb_sha256_file "$CB_CONFIG_FILE")
+  if [[ $CB_OPTIMIZE_APPLY -eq 1 ]]; then
+    applied=true
+    if [[ $mode == restore ]]; then status=restored; else status=applied; fi
+  else
+    status=planned
+  fi
+  if [[ $before != "$after" && $after != absent ]]; then bytes_changed=$(stat -c '%s' -- "$CB_CONFIG_FILE"); fi
+  cb_optimize_report "$mode" "$status" "$applied" "$CB_OPTIMIZE_SPEED" "$bytes_changed" false
 }
 
 cb_uninstall() {
-  local current current_dir obj
+  local current source current_dir obj
   CB_VERSION=$(<"$CB_SOURCE_ROOT/VERSION")
   cb_init_paths
   cb_begin_operation
+  source=$(cb_current_tx)
   if [[ $CB_DRY_RUN -eq 1 ]]; then
-    current=$(cb_current_tx)
+    if cb_config_current_dir >/dev/null; then cb_config_restore uninstall "$source" || true; fi
+    current=$source
     if [[ -z $current ]]; then
       printf 'codex-baseline is not installed; no changes\n'
       return 0
@@ -1534,9 +2816,16 @@ cb_uninstall() {
     printf 'dry-run: no files changed\n'
     return 0
   fi
+  if [[ -z $source ]]; then
+    if cb_config_current_dir >/dev/null; then cb_config_restore uninstall '' || true; fi
+    printf 'codex-baseline is not installed; baseline-owned config state was restored where present\n'
+    return 0
+  fi
+  cb_composite_begin uninstall "$source" ''
   while [[ -n $(cb_current_tx) ]]; do
     cb_rollback_once uninstall
   done
+  cb_composite_recover_pending
   printf 'codex-baseline is uninstalled; transaction history retained in %s\n' "$CB_STATE_ROOT"
 }
 
@@ -1546,10 +2835,11 @@ cb_doctor() {
   local manifest manifest_root manifest_error_file manifest_error='' minimum_codex='' tested_codex='' research_checked='' research_review_by='' research_state=unknown platform=linux capabilities=unknown
   local baseline_version='' provenance_scope='local-source' provenance_version='' provenance_trust='' provenance_hash=''
   local codex_verification=not-found marker_begin marker_end transaction_json baseline_version_json provenance_version_json provenance_trust_json provenance_hash_json research_checked_json research_review_json
-  local dependency dependency_state=verified config_state=unverified-codex-not-found deprecated_state=unverified-codex-not-found
+  local dependency dependency_state=verified config_state=unverified-codex-not-found deprecated_state=unverified-codex-not-found optimizer_capability=unverified
+  local config_owned=0 config_drift=false config_dir='' key_dir
   local -a warning_messages=() failure_messages=() required_dependencies=(
-    awk bash basename chmod cp cut date dirname find grep head ln mkdir mktemp mv
-    realpath sed sort stat tail wc
+    awk bash basename chmod cp cut date dirname find getfacl getfattr grep head iconv ln mkdir mktemp mv
+    od realpath sed sort stat tail tr wc
   ) missing_dependencies=()
   cb_init_paths
   for dependency in "${required_dependencies[@]}"; do
@@ -1619,6 +2909,7 @@ cb_doctor() {
     fi
     if codex features list 2>/dev/null | awk '$1 == "goals" || $1 == "multi_agent" || $1 == "skill_search" { if ($2 == "stable" && $3 == "true") seen[$1] = 1 } END { exit seen["goals"] && seen["multi_agent"] && seen["skill_search"] ? 0 : 1 }'; then
       capabilities=verified
+      [[ $config_state == accepted-by-strict-config ]] && optimizer_capability=available
     else
       warnings=$((warnings + 1))
       warning_messages+=('Native Codex capability probe is degraded.')
@@ -1665,6 +2956,30 @@ cb_doctor() {
     failures=$((failures + 1))
     failure_messages+=('An incomplete transaction is pending recovery.')
   fi
+  if [[ -f $CB_CONFIG_PENDING ]]; then
+    failures=$((failures + 1))
+    failure_messages+=('An incomplete config transaction is pending recovery.')
+  fi
+  if [[ -f $CB_COMPOSITE_PENDING ]]; then
+    failures=$((failures + 1))
+    failure_messages+=('An incomplete composite transaction is pending recovery.')
+  fi
+  config_dir=''
+  if [[ -e $CB_CONFIG_CURRENT || -L $CB_CONFIG_CURRENT ]]; then
+    if ! config_dir=$(cb_config_current_dir 2>/dev/null); then
+      failures=$((failures + 1))
+      failure_messages+=('Managed config transaction state is invalid.')
+      config_dir=''
+    fi
+  fi
+  if [[ -n $config_dir ]]; then
+    for key_dir in "$config_dir"/ownership/keys/*; do [[ ! -d $key_dir ]] || config_owned=$((config_owned + 1)); done
+    if ! (cb_config_assert_path; cb_config_assert_owned_clean) 2>/dev/null; then
+      config_drift=true
+      failures=$((failures + 1))
+      failure_messages+=('Managed config projection drifted or became unsafe.')
+    fi
+  fi
   if [[ -d $CB_LOCK ]]; then
     warnings=$((warnings + 1))
     warning_messages+=('An operation lock exists.')
@@ -1709,24 +3024,27 @@ cb_doctor() {
     provenance_hash_json=null; [[ -z $provenance_hash ]] || provenance_hash_json="\"$(cb_json_escape "$provenance_hash")\""
     research_checked_json=null; [[ -z $research_checked ]] || research_checked_json="\"$(cb_json_escape "$research_checked")\""
     research_review_json=null; [[ -z $research_review_by ]] || research_review_json="\"$(cb_json_escape "$research_review_by")\""
-    printf '{"schema":1,"contract":"codex-baseline-doctor/v1","platform":"%s","powershell":null,"codex":"%s","codex_verification":"%s","state":"%s","transaction":%s,"baseline_version":%s,"source_provenance":{"scope":"%s","version":%s,"trust":%s,"payload_sha256":%s},"global_guidance":"%s","marker_counts":{"begin":%d,"end":%d},"managed_objects":{"ok":%d,"total":%d},"skills":{"ok":%d,"total":4},"native_capabilities":"%s","runtime_dependencies":{"status":"%s","required":' \
+    printf '{"schema":2,"contract":"codex-baseline-doctor/v2","platform":"%s","powershell":null,"codex":"%s","codex_verification":"%s","state":"%s","transaction":%s,"baseline_version":%s,"source_provenance":{"scope":"%s","version":%s,"trust":%s,"payload_sha256":%s},"global_guidance":"%s","marker_counts":{"begin":%d,"end":%d},"managed_objects":{"ok":%d,"total":%d},"skills":{"ok":%d,"total":4},"native_capabilities":"%s","runtime_dependencies":{"status":"%s","required":' \
       "$platform" "$(cb_json_escape "$codex_version")" "$codex_verification" "$(cb_json_escape "$state")" "$transaction_json" "$baseline_version_json" "$(cb_json_escape "$provenance_scope")" "$provenance_version_json" "$provenance_trust_json" "$provenance_hash_json" \
       "$(cb_json_escape "$agents_file")" "$marker_begin" "$marker_end" "$managed_ok" "$managed_total" "$skill_count" "$capabilities" "$dependency_state"
     cb_json_string_array "${required_dependencies[@]}"
     printf ',"missing":'
     cb_json_string_array "${missing_dependencies[@]}"
-    printf '},"active_config":{"status":"%s","verification":"codex --strict-config --version"},"hook_state":{"baseline_owned":0,"user_owned":"preserved-not-enumerated"},"deprecated_settings":{"status":"%s"},"paths":{"home":"%s","codex_home":"%s","agents_home":"%s","state_root":"%s"},"owned_config_keys":0,"owned_hooks":0,"research":{"checked":%s,"review_by":%s,"state":"%s"},"warnings":' \
+    printf '},"active_config":{"status":"%s","verification":"codex --strict-config --version"},"hook_state":{"baseline_owned":0,"user_owned":"preserved-not-enumerated"},"deprecated_settings":{"status":"%s"},"paths":{"home":"%s","codex_home":"%s","agents_home":"%s","state_root":"%s"},"owned_config_keys":%d,"owned_hooks":0,"optimizer":{"contract":"codex-baseline-config-operations/v2","managed_keys":' \
       "$config_state" "$deprecated_state" "$(cb_json_escape "$CB_HOME")" "$(cb_json_escape "$CB_CODEX_HOME")" "$(cb_json_escape "$CB_AGENTS_HOME")" "$(cb_json_escape "$CB_STATE_ROOT")" \
-      "$research_checked_json" "$research_review_json" "$research_state"
+      "$config_owned"
+    cb_config_owned_keys_json
+    printf ',"drift":%s,"agents":"%s","fast":"%s","ultrafast":"unavailable"},"research":{"checked":%s,"review_by":%s,"state":"%s"},"warnings":' \
+      "$config_drift" "$optimizer_capability" "$optimizer_capability" "$research_checked_json" "$research_review_json" "$research_state"
     cb_json_string_array "${warning_messages[@]}"
     printf ',"failures":'
     cb_json_string_array "${failure_messages[@]}"
     printf ',"warning_count":%d,"failure_count":%d}\n' "$warnings" "$failures"
   else
-    printf 'Codex: %s\nPlatform: %s\nInstallation: %s\nTransaction: %s\nBaseline version: %s\nSource provenance: %s version=%s trust=%s payload=%s\nGlobal guidance: %s (markers %s)\nManaged objects: %d/%d\nSkills: %d/4\nNative capabilities: %s\nRuntime dependencies: %s (%d required, %d missing)\nActive config: %s; deprecated settings: %s\nPaths: HOME=%s CODEX_HOME=%s AGENTS_HOME=%s state=%s\nOwned config keys/hooks: 0/0\nResearch: %s (checked %s, review by %s)\nWarnings: %d\nFailures: %d\n' \
+    printf 'Codex: %s\nPlatform: %s\nInstallation: %s\nTransaction: %s\nBaseline version: %s\nSource provenance: %s version=%s trust=%s payload=%s\nGlobal guidance: %s (markers %s)\nManaged objects: %d/%d\nSkills: %d/4\nNative capabilities: %s\nRuntime dependencies: %s (%d required, %d missing)\nActive config: %s; deprecated settings: %s\nPaths: HOME=%s CODEX_HOME=%s AGENTS_HOME=%s state=%s\nOwned config keys/hooks: %d/0 (drift=%s; agents=%s; fast=%s; ultrafast=unavailable)\nResearch: %s (checked %s, review by %s)\nWarnings: %d\nFailures: %d\n' \
       "$codex_version" "$platform" "$state" "${current:-none}" "${baseline_version:-none}" "$provenance_scope" "${provenance_version:-unknown}" "${provenance_trust:-unknown}" "${provenance_hash:-unknown}" "$agents_file" "$markers" "$managed_ok" "$managed_total" "$skill_count" "$capabilities" \
       "$dependency_state" "${#required_dependencies[@]}" "${#missing_dependencies[@]}" "$config_state" "$deprecated_state" "$CB_HOME" "$CB_CODEX_HOME" "$CB_AGENTS_HOME" "$CB_STATE_ROOT" \
-      "$research_state" "${research_checked:-unknown}" "${research_review_by:-unknown}" "$warnings" "$failures"
+      "$config_owned" "$config_drift" "$optimizer_capability" "$optimizer_capability" "$research_state" "${research_checked:-unknown}" "${research_review_by:-unknown}" "$warnings" "$failures"
   fi
   [[ $failures -eq 0 ]]
 }
@@ -1755,10 +3073,12 @@ cb_prepare_update_archive() {
 }
 
 cb_update_remote_flow() {
-  local current_version descriptor archive_url comparison update_temp
+  local current_version current_release_status descriptor archive_url comparison update_temp
   cb_init_paths
   current_version=$(<"$CB_SOURCE_ROOT/VERSION")
   cb_semver_valid "$current_version" || cb_die 'installed updater version is not stable MAJOR.MINOR.PATCH'
+  current_release_status=$(sed -n 's/^  "status": "\([A-Za-z0-9.]*\)"$/\1/p' "$CB_SOURCE_ROOT/baseline/release-status.json")
+  [[ $current_release_status == stable || $current_release_status =~ ^rc\.[1-9][0-9]*$ ]] || cb_die 'installed release status is missing or unsupported'
   cb_update_temp_root
   update_temp=$CB_UPDATE_TEMP_ROOT
   descriptor="$update_temp/descriptor"
@@ -1771,10 +3091,14 @@ cb_update_remote_flow() {
   comparison=$(cb_semver_compare "$CB_UPDATE_VERSION" "$current_version")
   if [[ $comparison -lt 0 ]]; then cb_die "latest release $CB_UPDATE_VERSION is older than installed $current_version"; fi
   if [[ $CB_UPDATE_CHECK -eq 1 ]]; then
-    if [[ $comparison -eq 0 ]]; then
+    if [[ $comparison -eq 0 && $current_release_status == stable ]]; then
       printf 'codex-baseline %s is already current (latest stable %s)\n' "$current_version" "$CB_UPDATE_VERSION"
     else
-      printf 'codex-baseline update available: %s -> %s\n' "$current_version" "$CB_UPDATE_VERSION"
+      if [[ $comparison -eq 0 ]]; then
+        printf 'codex-baseline stable promotion available: %s-%s -> %s\n' "$current_version" "$current_release_status" "$CB_UPDATE_VERSION"
+      else
+        printf 'codex-baseline update available: %s -> %s\n' "$current_version" "$CB_UPDATE_VERSION"
+      fi
     fi
     printf 'source-acquisition: unsigned-github-release\nsource-authentication: not-publisher-authenticated\n'
     return 0
@@ -1859,6 +3183,9 @@ main() {
     doctor)
       cb_parse_common_flags "$@"
       cb_doctor
+      ;;
+    optimize)
+      cb_optimize "$@"
       ;;
     rollback)
       cb_parse_common_flags "$@"

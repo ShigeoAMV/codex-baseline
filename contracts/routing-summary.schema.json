@@ -1,12 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/routing-summary-v1.schema.json",
+  "$id": "https://codex-baseline.invalid/contracts/routing-summary-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "contract", "source_hash", "repetitions", "routing", "behavior"],
+  "required": ["schema", "contract", "execution_profile", "source_hash", "repetitions", "routing", "behavior"],
   "properties": {
-    "schema": {"const": 1},
-    "contract": {"const": "codex-baseline-routing-summary/v1"},
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-routing-summary/v2"},
+    "execution_profile": {"const": "auto-evaluation"},
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "repetitions": {"type": "integer", "minimum": 1},
     "routing": {"$ref": "#/$defs/group"},

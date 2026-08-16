@@ -28,3 +28,24 @@ deployment/lifecycle, threat boundaries, inspectability, exact scoped recovery,
 and periodic research revalidation. All gates still require implementation and
 authoritative verification; this acceptance is permission to implement, not a
 completion claim.
+
+## v0.3 pre-implementation critique
+
+Review date: 2026-08-15
+
+A new read-only critic challenged the autonomous execution/config design before
+implementation. Verdict: **accept-with-changes**. This is architecture input,
+not a post-implementation sign-off.
+
+| Severity | Finding | Disposition |
+| --- | --- | --- |
+| Critical | Changing the shared core operations schema/object count would make the frozen v0.2 updater reject v0.3 before it could install the new runtime | Accepted. The eight-object core remains `operations/v1`; TOML ownership is a separate `config-operations/v2` plane under the same lifecycle lock |
+| Critical | Automatic fresh-install cap ownership could commit independently of core install and leave a half-installed product | Accepted. Core/config preflight and pending state are coordinated; core failure requires the inverse config transaction, and update never acquires an unowned cap |
+| High | The PowerShell transaction published a pending pointer before the complete object journal existed | Accepted as an implementation prerequisite and covered by the crash-recovery matrix; no release claim may rely on the old pending window |
+| High | Whole-file config backup or journal content could expose unrelated secrets and overwrite independent edits | Accepted. Only allowlisted scalar/trivia bytes and structural hashes enter the config journal; restore is key-level three-way and drift fails closed |
+| High | Broad "metadata preserved" and atomic CAS wording overstated portable guarantees | Accepted. Unix/Windows supported metadata is enumerated; unsupported ACL/xattr/ADS/reparse/hard-link cases reject, and CAS is described only as cooperative-edit detection |
+| Medium | Six-agent autonomy could become slot-filling and total-token regression | Accepted. Fan-out equals useful runnable lanes, one writer/test-isolation rules apply, handoff/context waste is measured, and stable promotion depends on the frozen four-arm live gates |
+
+The critic did not authorize stable release or performance claims. Those remain
+blocked on deterministic platform evidence, cross-version recovery, fresh final
+reviews, and the dedicated-key live suite.

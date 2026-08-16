@@ -127,7 +127,7 @@ try {
     $dryReport = Invoke-Baseline @('onboard', '-Json', '-Repository', $fixture) | ConvertFrom-Json
     $onboardGolden = [System.IO.File]::ReadAllText((Join-Path $script:RepositoryRoot 'contracts\golden\onboarding-windows.json'), $script:Utf8NoBom) | ConvertFrom-Json
     Assert-True ($dryReport.platform -eq 'native-windows') 'onboarding JSON must label native Windows'
-    Assert-True ($dryReport.contract -eq 'codex-baseline-onboarding/v1') 'onboarding must emit the shared v1 report contract'
+    Assert-True ($dryReport.schema -eq 2 -and $dryReport.contract -eq 'codex-baseline-onboarding/v2') 'onboarding must emit the shared v2 report contract'
     Assert-True ($dryReport.entries_visited -ge $dryReport.files) 'shared onboarding shape must report every visited entry'
     Assert-True (((@($dryReport.PSObject.Properties.Name) | Sort-Object) -join ',') -eq ((@($onboardGolden.PSObject.Properties.Name) | Sort-Object) -join ',')) 'native onboarding keys must match the cross-platform golden contract'
     Assert-True ($dryReport.mode -eq 'dry-run') 'onboarding JSON must identify dry-run mode'
@@ -138,7 +138,24 @@ try {
     Assert-True ($dryReport.links_skipped -ge 1) 'junction input must be counted and skipped'
     Assert-True ('npm run test' -in @($dryReport.commands)) ("safe command inference must expose package script names only; commands={0}" -f (@($dryReport.commands) -join ','))
     Assert-True (-not (($dryReport | ConvertTo-Json -Depth 8) -match 'SECRET_DO_NOT_READ|outside needle')) 'sensitive and junction-target content must not leak into output'
+    Assert-True (@($dryReport.parallelism_map.statements).Count -ge 12 -and @($dryReport.parallelism_map.statements).Count -le 64) 'onboarding must emit every bounded parallelism-map category'
+    Assert-True (@($dryReport.parallelism_map.statements | ForEach-Object { $_.kind } | Select-Object -Unique).Count -ge 12) 'parallelism-map categories must be unique'
+    Assert-True (@($dryReport.parallelism_map.statements | Where-Object { $_.kind -eq 'source_root' -and $_.status -eq 'inferred' }).Count -gt 0) 'source roots must not be mislabeled as package boundaries'
+    Assert-True (@($dryReport.parallelism_map.statements | Where-Object { @('declared', 'inferred', 'unknown') -notcontains $_.status }).Count -eq 0) 'parallelism-map evidence status must be explicit'
     Assert-True ([System.Linq.Enumerable]::SequenceEqual($existingBytes, [System.IO.File]::ReadAllBytes($agentsPath))) 'dry-run must preserve AGENTS bytes'
+
+    $floodFixture = Join-Path $script:TestRoot 'generated-flood'
+    [System.IO.Directory]::CreateDirectory((Join-Path $floodFixture 'src')) | Out-Null
+    foreach ($index in 1..80) {
+        $generated = Join-Path $floodFixture ("generated-{0}" -f $index)
+        [System.IO.Directory]::CreateDirectory($generated) | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $generated 'package-lock.json'), '{}', $script:Utf8NoBom)
+    }
+    $floodReport = Invoke-Baseline @('onboard', '-Json', '-Repository', $floodFixture) | ConvertFrom-Json
+    $requiredKinds = @('api_boundary','generated_ownership','package_boundary','shared_build_output','shared_cache','shared_database','shared_fixture','shared_port','source_root','test_shard','write_conflict','write_safe')
+    $actualKinds = @($floodReport.parallelism_map.statements | ForEach-Object { [string]$_.kind } | Sort-Object -Unique)
+    Assert-True (@($floodReport.parallelism_map.statements).Count -le 64) 'generated-signal flood must preserve the public 64-statement bound'
+    Assert-True (($actualKinds -join ',') -eq ($requiredKinds -join ',')) 'generated-signal flood must retain every required parallelism-map category'
 
     $unacknowledgedApply = Invoke-Baseline @('onboard', '-Apply', '-Repository', $fixture) 1
     Assert-True ($unacknowledgedApply -match 'AcknowledgeExistingInstructions') 'apply must require explicit acknowledgement of reported existing instructions'
@@ -152,6 +169,7 @@ try {
     Assert-True ([regex]::Matches($appliedText, '(?m)^<!-- codex-baseline:onboarding:begin').Count -eq 1) 'apply must create exactly one managed marker block'
     Assert-True ($appliedText -match '`src`' -and $appliedText -match '`ARCHITECTURE\.md`') 'applied block must carry discovered source and architecture boundaries'
     Assert-True ($appliedText -match '`package-lock\.json`' -and $appliedText -match '`src/security-review\.md`') 'applied block must carry generated and risk-sensitive signals'
+    Assert-True ($appliedText -match 'Parallel execution map \(static evidence only\)' -and $appliedText -match 'one parent writer') 'applied block must carry bounded parallelism guidance'
     Assert-True ($appliedText -notmatch 'auth-\]\(bad\)') 'unsafe untrusted path names must not enter executable guidance'
     $backups = @(Get-ChildItem -LiteralPath $fixture -Filter 'AGENTS.md.codex-baseline-backup.*' -File)
     Assert-True ($backups.Count -eq 1) 'first apply must create one exact backup'
@@ -271,11 +289,14 @@ try {
 
     $benchmarkReport = Invoke-Baseline @('benchmark', '-Static', '-Json') | ConvertFrom-Json
     $benchmarkManifest = (Get-Content -LiteralPath (Join-Path $script:RepositoryRoot 'benchmarks\manifest.json') -Raw | ConvertFrom-Json)
-    Assert-True ($benchmarkReport.contract -eq 'codex-baseline-benchmark/v1' -and $benchmarkReport.status -eq 'completed') 'benchmark JSON must emit the shared completed v1 report envelope'
+    Assert-True ($benchmarkReport.schema -eq 2 -and $benchmarkReport.contract -eq 'codex-baseline-benchmark/v2' -and $benchmarkReport.status -eq 'completed') 'benchmark JSON must emit the shared completed v2 report envelope'
     Assert-True ($benchmarkReport.platform -eq 'native-windows') 'benchmark JSON must label native Windows'
     Assert-True ($benchmarkReport.mode -eq 'static-contract-only') 'benchmark must label static-only evidence'
     Assert-True (-not $benchmarkReport.model_invoked -and -not $benchmarkReport.verifiers_executed) 'static benchmark must invoke neither model nor verifier'
     Assert-True (@($benchmarkReport.tasks).Count -eq @($benchmarkManifest.tasks).Count) 'static benchmark must validate every registered task by default'
+    Assert-True (@($benchmarkReport.tasks).Count -eq 10) 'static benchmark must cover six parallel-positive and four serial-negative tasks'
+    Assert-True (@($benchmarkManifest.tasks | Where-Object { $_.parallelism_class -eq 'parallel-positive' }).Count -eq 6 -and @($benchmarkManifest.tasks | Where-Object { $_.parallelism_class -eq 'serial-negative' }).Count -eq 4) 'benchmark manifest must encode the required positive/negative balance'
+    Assert-True (@($benchmarkManifest.tasks | Where-Object { $_.expected_lanes -eq 6 }).Count -ge 1) 'benchmark manifest must contain a real six-lane case'
     Assert-True ((@($benchmarkReport.tasks | ForEach-Object { $_.class }) -join ',') -match 'small' -and
         'medium' -in @($benchmarkReport.tasks | ForEach-Object { $_.class }) -and
         'large' -in @($benchmarkReport.tasks | ForEach-Object { $_.class }) -and

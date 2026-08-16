@@ -14,6 +14,9 @@ live files changed after planning, and network content are untrusted.
   installation, broad permission enablement, or project-code execution. Install,
   doctor, rollback, uninstall, local/offline update, and tests are networkless;
   remote update alone performs the bounded public release fetch described below.
+- Lifecycle provenance is derived from the verified payload manifest and never
+  invokes checkout Git metadata; revision/dirty fields remain unavailable rather
+  than risk repository-local filters, helpers, includes, or worktree config.
 - Exact managed markers/prefixed targets and three-way hashes; conflicts fail
   closed rather than overwrite user work.
 - Absolute root containment, segment link/reparse checks, literal paths, bounded
@@ -24,6 +27,16 @@ live files changed after planning, and network content are untrusted.
   revalidation, and deterministic recovery. Journal schema, object IDs, target
   roots, stage/old derivation, backup locations, hashes, and states are
   allowlisted and globally preflighted before the first recovery mutation.
+- `config.toml` is key-owned, never file-owned. A strict byte-preserving patcher
+  rejects invalid/ambiguous managed paths, links, detected unsupported metadata,
+  drift, and failed compare-and-swap checks. Journals contain only allowlisted
+  key paths, safe scalar/trivia bytes, and hashes, never the full config or
+  secrets. Candidate validation runs in an isolated temporary `CODEX_HOME`.
+  Unix preserves supported mode/owner and requires exact `getfacl`/`getfattr`
+  inspection for an existing config; missing/erroring inspectors and ACL/xattr
+  states it cannot preserve fail before state or target mutation. Windows
+  preserves/verifies Owner plus DACL/protection and rejects
+  reparse points, hard links, and non-default ADS; SACL is not claimed.
 - PowerShell strict mode, terminating errors, .NET UTF-8-no-BOM and flush APIs,
   `-LiteralPath`, raw local-drive validation, and Junction/reparse tests.
 - Every installable source file is pinned by path, byte length, and SHA-256 plus

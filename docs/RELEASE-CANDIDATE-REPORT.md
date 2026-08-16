@@ -1,5 +1,11 @@
 # Release candidate report - 2026-08-14
 
+> Historical record: this report covers the v0.2.0 candidate and its exact
+> receipts. It is not proof for the `0.3.0` payload / `rc.1` autonomous-
+> execution candidate. Current gates are in the
+> [autonomous execution plan](plans/2026-08-15-autonomous-multi-agent.md) and
+> [traceability addendum](requirements/TRACEABILITY.md).
+
 ## Verdict
 
 Version 0.2.0 is an evidence-backed, Apache-2.0-licensed **unsigned public source

@@ -1,6 +1,6 @@
 # Community and research findings
 
-Research date: 2026-08-14
+Research date: 2026-08-15
 
 Community posts and issue reports locate failure surfaces. They do not establish
 prevalence or effectiveness. Papers are labelled by strength and scope; very
@@ -12,9 +12,10 @@ recent 2026 preprints need replication.
    and routing layer, not an encyclopedia.
 2. Skills help mainly when narrow, expert, version-compatible, and paired with
    executable evaluations. Generic packs are often neutral or costly.
-3. Subagents help independent breadth and fresh review, not tightly coupled
-   implementation on shared files. Lifecycle, ownership, deadlines, and typed
-   results matter more than agent count.
+3. Subagents can materially shorten independent critical-path work, including
+   large six-lane tasks, but useful lane count matters more than available slots.
+   Shared writes, verbose duplicated context, idle waits, and unconstrained Sol
+   children can erase the speed benefit and sharply increase token use.
 4. Additional model passes help when they receive new external evidence. Pure
    self-correction can worsen a result.
 5. Tests are strong but incomplete executable specifications. Visible tests can
@@ -85,7 +86,7 @@ baseline needs maximum attempts plus a no-progress stop.
 | --- | --- | --- |
 | [MAESTRO](https://arxiv.org/abs/2601.00481), 2026 | Across 12 systems, architecture affected cost, latency, and reproducibility more than many model/tool changes; run variance was high | Compare repeated runs and architecture cost, not a single success |
 | [E2EDevBench](https://arxiv.org/abs/2511.04064) | Controlled systems met only about half of requirements on average; omissions and weak self-verification dominated | Maintain original-request traceability outside worker memory |
-| [Agentless](https://arxiv.org/abs/2407.01489), FSE 2025 | A simple localization -> repair -> validation flow could beat complex agents | Single-agent is the default; complexity bears the burden of proof |
+| [Agentless](https://arxiv.org/abs/2407.01489), FSE 2025 | A simple localization -> repair -> validation flow could beat complex agents | Use SOLO for coupled work; multi-agent routes still bear the burden of a real critical-path advantage |
 | [Early diagnosis of wasted computation](https://arxiv.org/abs/2606.01365), 2026 | Tool reliability, recovery, repeated loops, information gain, and budget pressure are proposed early failure signals | Track retries/no-change/new-evidence signals in autonomous runs |
 
 Provider case studies support mechanisms but not their marketing numbers:
@@ -165,8 +166,23 @@ busy-polling, and over-spawn ([availability thread](https://www.reddit.com/r/cod
 [busy-polling](https://www.reddit.com/r/codex/comments/1vkqwz1/how_to_spawn_subagents_without_codex_looping_and/),
 [over-spawn](https://www.reddit.com/r/codex/comments/1rfeigi/subagent_madnress_with_0105/)).
 
-Design response: each delegated task needs scope, output contract, ownership,
-deadline, receipt, bounded waits, and explicit closure. No overlapping writes.
+Three 2026-08-15 community samples reinforce, but do not prove, the current
+design: users report that narrow child scopes outperform broad duplicated
+prompts ([Sub-Agent Usage](https://www.reddit.com/r/codex/comments/1tzv912/subagent_usage/));
+some report Sol-parent/Luna-child delegation as an efficient practical route
+([Sol/Luna experience](https://www.reddit.com/r/codex/comments/1veqtnq/delegating_tasks_from_sol_to_luna_subagents_is/));
+and others diagnose unexpectedly high consumption when expensive children run
+without visible routing/telemetry ([token-burn case](https://www.reddit.com/r/codex/comments/1vfbgtp/if_you_experience_extensive_token_burn_and_use/)).
+These are anecdotal failure/success signals, not product contracts or prevalence
+estimates.
+
+Design response: Codex automatically chooses SOLO/TEAM/SWARM from the exact
+number of independent, immediately runnable lanes. Each delegated task needs a
+minimal scope, output contract, ownership, deadline, receipt, bounded wait, and
+explicit closure. No filler children or overlapping writes; task-local child
+model hints fall back once and runtime facts remain `unverified` when not
+observable. Measure correctness, wall time, total/cached tokens, handoff bytes,
+and duplicated context together.
 
 ### Hooks
 

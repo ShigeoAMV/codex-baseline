@@ -23,6 +23,11 @@ def main() -> None:
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--release-status", default="stable", choices=("stable", "rc.1"))
+    parser.add_argument(
+        "--promote-from-rc", action="store_true",
+        help="copy an existing RC fixture and change only release-status.json plus deterministic manifest.json",
+    )
     arguments = parser.parse_args()
     source = arguments.source.resolve()
     output = arguments.output.resolve()
@@ -33,33 +38,53 @@ def main() -> None:
     output.mkdir(parents=True)
     for name in ("baseline", "benchmarks", "scripts"):
         shutil.copytree(source / name, output / name, symlinks=True)
-    (output / "VERSION").write_text(arguments.version + "\n", encoding="ascii", newline="\n")
-    block = output / "baseline" / "global" / "AGENTS.block.md"
-    block.write_text(block.read_text(encoding="utf-8") + f"\n<!-- update-fixture {arguments.version} -->\n", encoding="utf-8", newline="\n")
-    bash_entry = output / "scripts" / "codex-baseline.sh"
-    bash_text = bash_entry.read_text(encoding="utf-8")
-    bash_canary = (
-        'if [ -n "${CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY-}" ]; then\n'
-        '  printf "%s\\n" executed >"$CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY"\n'
-        'fi\n'
-    )
-    bash_entry.write_text(bash_text.replace("#!/bin/sh\n", "#!/bin/sh\n" + bash_canary, 1), encoding="utf-8", newline="\n")
-    powershell_entry = output / "scripts" / "codex-baseline.ps1"
-    powershell_text = powershell_entry.read_text(encoding="utf-8")
-    powershell_canary = (
-        "if (-not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY)) {\n"
-        "    [System.IO.File]::WriteAllText($env:CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY, \"executed`n\")\n"
-        "}\n\n"
-    )
-    powershell_entry.write_text(
-        powershell_text.replace("Set-StrictMode -Version 2.0\n", powershell_canary + "Set-StrictMode -Version 2.0\n", 1),
-        encoding="utf-8",
-        newline="\n",
-    )
+    if arguments.promote_from_rc:
+        if arguments.release_status != "stable":
+            raise SystemExit("--promote-from-rc requires --release-status stable")
+        source_version = (source / "VERSION").read_text(encoding="ascii").strip()
+        if source_version != arguments.version:
+            raise SystemExit("promotion fixture version must equal the RC VERSION")
+        source_status = json.loads((source / "baseline" / "release-status.json").read_text(encoding="utf-8"))
+        if source_status.get("status") != "rc.1":
+            raise SystemExit("--promote-from-rc source must have release status rc.1")
+        shutil.copy2(source / "VERSION", output / "VERSION")
+    else:
+        (output / "VERSION").write_text(arguments.version + "\n", encoding="ascii", newline="\n")
+        block = output / "baseline" / "global" / "AGENTS.block.md"
+        block.write_text(block.read_text(encoding="utf-8") + f"\n<!-- update-fixture {arguments.version} -->\n", encoding="utf-8", newline="\n")
+        bash_entry = output / "scripts" / "codex-baseline.sh"
+        bash_text = bash_entry.read_text(encoding="utf-8")
+        bash_canary = (
+            'if [ -n "${CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY-}" ]; then\n'
+            '  printf "%s\\n" executed >"$CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY"\n'
+            'fi\n'
+        )
+        bash_entry.write_text(bash_text.replace("#!/bin/sh\n", "#!/bin/sh\n" + bash_canary, 1), encoding="utf-8", newline="\n")
+        powershell_entry = output / "scripts" / "codex-baseline.ps1"
+        powershell_text = powershell_entry.read_text(encoding="utf-8")
+        powershell_canary = (
+            "if (-not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY)) {\n"
+            "    [System.IO.File]::WriteAllText($env:CODEX_BASELINE_TEST_DOWNLOADED_EXECUTION_CANARY, \"executed`n\")\n"
+            "}\n\n"
+        )
+        powershell_entry.write_text(
+            powershell_text.replace("Set-StrictMode -Version 2.0\n", powershell_canary + "Set-StrictMode -Version 2.0\n", 1),
+            encoding="utf-8",
+            newline="\n",
+        )
 
     manifest_path = output / "baseline" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["version"] = arguments.version
+    release_status_path = output / "baseline" / "release-status.json"
+    release_status_path.write_text(
+        json.dumps(
+            {"schema": 1, "contract": "codex-baseline-release-status/v1", "status": arguments.release_status},
+            indent=2,
+        ) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     payload = []
     canonical = []
     for original in manifest["payload"]:

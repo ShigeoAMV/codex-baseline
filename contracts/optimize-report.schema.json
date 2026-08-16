@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/optimize-report-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "mode", "status", "apply", "config", "agents", "speed", "managed_keys", "drift", "bytes_changed", "capabilities", "limitations"],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-optimize/v1"},
+    "mode": {"enum": ["check", "optimize", "restore"]},
+    "status": {"enum": ["available", "planned", "applied", "restored", "unavailable", "conflict", "not-managed"]},
+    "apply": {"type": "boolean"},
+    "config": {"type": "string"},
+    "agents": {"type": "object", "additionalProperties": false, "required": ["enabled", "cap", "legacy_cap", "effective_override"], "properties": {"enabled": {"type": ["boolean", "null"]}, "cap": {"type": ["integer", "null"]}, "legacy_cap": {"type": ["integer", "null"]}, "effective_override": {"type": "boolean"}}},
+    "speed": {"enum": ["keep", "standard", "fast", "ultrafast", "unmanaged"]},
+    "managed_keys": {"type": "array", "uniqueItems": true, "items": {"enum": ["agents.enabled", "agents.max_concurrent_threads_per_session", "service_tier", "features.fast_mode"]}},
+    "drift": {"type": "boolean"},
+    "bytes_changed": {"type": "integer", "minimum": 0},
+    "capabilities": {"type": "object", "additionalProperties": false, "required": ["agents", "fast", "ultrafast"], "properties": {"agents": {"enum": ["available", "unavailable", "unverified"]}, "fast": {"enum": ["available", "unavailable", "unverified"]}, "ultrafast": {"const": "unavailable"}}},
+    "limitations": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  }
+}

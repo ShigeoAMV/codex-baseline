@@ -1,6 +1,6 @@
 # Evidence-driven architecture decisions
 
-Research date: 2026-08-14
+Research date: 2026-08-15
 
 Status: **accepted with reconciled changes**. A fresh-context review returned
 `accept-with-changes`; the finding disposition is recorded in
@@ -141,7 +141,8 @@ The block contains only:
 - research discoverable facts before questions;
 - use deterministic checks and never claim an unrun check;
 - protect original acceptance criteria and authority boundaries;
-- selectively delegate independent exploration/review, not routine work;
+- autonomously choose the smallest effective team for independent critical-path
+  lanes, with parent authority, bounded waves, and isolated writes/tests;
 - compare substantial work with the original request before completion;
 - load only the relevant baseline skill.
 
@@ -181,6 +182,11 @@ ties select the deeper workflow only when risk, irreversibility, or requirement
 ambiguity is material; otherwise select the smaller flow. Every STRICT/DEEP
 receipt records the selected skill(s) or explains why native procedure sufficed.
 
+v0.3 adds the independent execution result `SOLO|TEAM|SWARM` from D021. It does
+not change the workflow or risk classification and requires no routine user
+mode selection. LEAN remains normally SOLO; a repository or safety constraint
+can still justify an independent bounded lane.
+
 Before a HIGH-RISK mutation, inspect the effective sandbox/permission mode and
 scope. If it is unknown, broader than necessary, cannot isolate the target, or
 lacks a tested rollback/recovery path, do not mutate: narrow the environment or
@@ -218,6 +224,11 @@ would match too broadly. Split only after benchmark evidence shows a recurring
 failure that a narrower skill fixes.
 
 ## D007 - One fresh reviewer role; isolation is a runner property
+
+**v0.3 status:** The role/isolation boundary remains accepted. Its selection
+paragraph is superseded by D021: substantial work is no longer limited to
+usually one reviewer, and autonomous bounded TEAM/SWARM execution is allowed
+when independent lanes provide a critical-path benefit.
 
 **Decision:** Install one prefixed custom reviewer agent configured read-only
 and instructed to consume the original requirement, acceptance criteria, actual
@@ -393,6 +404,9 @@ entry points. It exposes:
 - `doctor [--json]` - augment redacted native `codex doctor` with version,
   active guidance, skill/agent hashes, state, path, platform, dependency, and
   conflict checks;
+- `optimize [--check|--restore] [--speed keep|standard|fast|ultrafast]
+  [--dry-run|--apply]` - inspect or explicitly transact only allowlisted Codex
+  config scalars; no mutation occurs without apply;
 - `update [--check|--remote|--local|--offline ARCHIVE] [--dry-run]` - check or
   transactionally deploy the stable release; local/offline modes never fetch;
 - `rollback [--dry-run]` - transactionally undo the current committed operation
@@ -408,6 +422,11 @@ Help and dry-run expose the managed targets; daily `codex` usage never depends
 on the launcher being on PATH.
 
 ## D016 - Do not rewrite user `config.toml` without a unique need
+
+**v0.3 status:** The model/provider/permission ownership boundary remains
+accepted. Only the zero-key ownership paragraph is superseded by D022's narrow
+key-owned optimizer and absent fresh-install agent-cap exception; all unrelated
+config and optional-profile isolation guardrails remain.
 
 **Decision:** The core installer does not force a model, reasoning level,
 provider, MCP server, hook, profile, sandbox, or approval setting into the
@@ -430,7 +449,7 @@ whole baseline-owned objects and follow the same three-way transaction rules.
 ## D017 - Cross-platform operations contract
 
 **Decision:** Bash and PowerShell implementations validate the same versioned
-JSON operations inventory and golden report shapes. The shared data contract
+core and config JSON operations inventories and golden report shapes. The shared data contract
 defines UTF-8 without BOM, LF for baseline-owned text payloads, the exact
 operation/object inventories, state labels, and report identifiers. Native
 implementations own transition logic, timestamps, error details, hashing, and
@@ -499,14 +518,104 @@ telemetry is installed. Any future optimizer must run in an isolated profile
 and prove lower paired provider cost/latency without worse correctness, safety,
 scope, or recovery on the then-current Codex and target platform.
 
+**v0.3 status:** Retained. Native multi-agent routing and the key-level config
+optimizer do not install token middleware. Total/cached tokens, context
+duplication, handoff bytes, retries, prose, files, and code remain measured
+product costs; parallelism is not successful merely because wall time falls.
+
+## D021 - Autonomous smallest-effective-team execution
+
+**Decision:** The user supplies the goal; Codex autonomously selects
+`SOLO` (zero children), `TEAM` (one to three), or `SWARM` (four to six). The
+effective fan-out is the minimum of useful immediately runnable lanes, runtime
+capacity, user/config cap, and six. Unknown capacity may be requested once;
+rejection reduces actual fan-out without a spawn loop. An explicit user veto or
+lower cap wins.
+
+Small/coupled LEAN work normally stays SOLO. Direct parallel tool calls handle
+small structured reads. Subagents are used when fresh semantic judgment,
+context isolation, or independent critical-path work is valuable. Six children
+start together only for six evidenced non-overlapping lanes; free slots are not
+filled with duplicate tasks. Best-of-N is not the default and is bounded to two
+hypotheses only when wrong-path cost dominates duplicate analysis.
+
+The parent owns requirements, architecture, user authority, integration,
+conflict resolution, final tests, and the answer, and continues its own
+critical-path work during child execution. Each child receives a narrow goal/
+success criterion, relevant paths, read/write ownership, dependencies, compact
+result/evidence format, deadline, and `do not delegate further`. Depth one is
+policy until runtime telemetry proves it. Receipts separate intended/observed
+depth and planned/actual fan-out and use `unverified` rather than inference.
+
+One writer is the default. Multiple writers require disjoint file/API ownership
+in verified separate Git worktrees. Parallel tests require isolated cache,
+build/generated output, port, database, and fixture state. Execution has one
+primary and one independent review wave, then at most two remediation waves
+triggered by new executable evidence. Bounded wait/interrupt replaces busy
+polling; redundant children are steered or stopped.
+
+The parent model, reasoning/Ultra, and session speed remain user-owned. Child
+model hints are task-local: Luna low/medium for narrow repetitive work, Terra
+medium for broad reads, inherited Parent/Sol for architecture, security, and
+ambiguity when these choices are actually offered. A rejected explicit model
+is marked unavailable for the session and that lane retries once with inherited
+settings. No global child-model/effort defaults, duplicate wrapper roles,
+model-catalog edits, or `multi_agent_v2` hacks are permitted.
+
+**Efficiency rule:** Preserve authority/safety and maximize correct complete
+first-pass delivery first, then minimize wall time and user/repair turns, then
+minimize total/cached tokens, duplicated context, verbose handoffs, boilerplate,
+comments, files, and code. The smallest effective team—not the fewest or most
+agents—is optimal. Stable autonomous speed/quality claims require D012's frozen
+four-arm live gates.
+
+## D022 - Explicit key-owned optimizer and fresh-install cap exception
+
+**Decision:** Keep the frozen eight-object `codex-baseline-operations/v1` core
+contract byte-compatible so v0.2's installed updater can accept the v0.3
+payload. Add the separately versioned
+`codex-baseline-config-operations/v2` plane under the same lifecycle lock. The
+whole `config.toml` is never owned.
+
+A fresh install may automatically manage only a previously absent
+`agents.max_concurrent_threads_per_session = 6` when agents are not explicitly
+disabled and neither a current nor legacy cap exists. Existing settings win;
+update does not acquire an unowned cap. Core and config preflight before
+mutation, pending state is durable before commit, and core failure invokes the
+inverse config transaction.
+
+`optimize` defaults to check and never mutates without `--apply`. General apply
+enables agents and cap six. `speed=keep` changes nothing; Fast manages only
+`service_tier="fast"` plus `features.fast_mode=true`; standard removes unchanged
+Baseline-owned Fast state and refuses conflicting unowned tiers. Ultrafast
+returns structured `unavailable`, nonzero, and byte-identical config until an
+official Codex config contract and positive capability probe exist. Parent
+model, reasoning/Ultra, providers, permissions, and global child defaults are
+never managed.
+
+The patcher preserves foreign bytes, comments, Unicode, BOM, line endings, and
+final newline, and fails closed on invalid or ambiguous managed-path syntax,
+links/reparse points, drift, unsupported metadata, or cooperative CAS change.
+Candidate validation runs in an isolated temporary `CODEX_HOME`. Journals keep
+only allowlisted key paths, safe scalar/trivia bytes, state/structure hashes,
+and phase—never the full config or secrets. Rollback/uninstall perform key-level
+three-way restore and preserve independent user changes.
+
+Unix preserves supported mode/owner and rejects link or detected ACL/xattr
+state it cannot preserve. Windows preserves/verifies Owner plus DACL/protection
+and rejects reparse points, hard links, and non-default ADS; SACL preservation
+is not claimed. CAS is a cooperative-edit detector, not a hostile-writer or
+power-loss atomicity guarantee.
+
 ## Expected daily experience
 
 ```text
 install once
 open a repository and use Codex normally
-run/invoke onboarding once when repo guidance is absent
-small task -> LEAN and a focused check
-substantial task -> visible STRICT/DEEP receipt and objective evidence
+optionally onboard when repo guidance/parallelism facts are absent
+small or coupled task -> LEAN/SOLO and a focused check
+substantial task -> automatic SOLO/TEAM/SWARM plus objective evidence
 update from reviewed source -> preview -> transactional apply
-doctor / rollback / benchmark remain explicit inspectable operations
+optimize remains check-only unless apply is explicit
+doctor / rollback / benchmark remain inspectable operations
 ```

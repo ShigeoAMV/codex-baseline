@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "contract": "codex-baseline-routing-activation-cases/v1",
+  "cases": [
+    {
+      "id": "rc-strict-parallel-positive",
+      "profile": "production-rc",
+      "workflow": "STRICT",
+      "useful_lanes": 3,
+      "expected_execution": "SOLO",
+      "expected_fanout": 0,
+      "reason": "The RC production profile remains SOLO even when useful lanes exist."
+    },
+    {
+      "id": "rc-deep-parallel-positive",
+      "profile": "production-rc",
+      "workflow": "DEEP",
+      "useful_lanes": 6,
+      "expected_execution": "SOLO",
+      "expected_fanout": 0,
+      "reason": "Agent capacity does not lift the RC activation gate."
+    },
+    {
+      "id": "eval-lean-stays-solo",
+      "profile": "auto-evaluation",
+      "workflow": "LEAN",
+      "useful_lanes": 2,
+      "expected_execution": "SOLO",
+      "expected_fanout": 0,
+      "reason": "Optional side lanes do not justify spawn overhead for LEAN work."
+    },
+    {
+      "id": "eval-team",
+      "profile": "auto-evaluation",
+      "workflow": "STRICT",
+      "useful_lanes": 3,
+      "expected_execution": "TEAM",
+      "expected_fanout": 3,
+      "reason": "The trusted non-installed overlay enables exact useful-lane fan-out."
+    },
+    {
+      "id": "eval-swarm",
+      "profile": "auto-evaluation",
+      "workflow": "DEEP",
+      "useful_lanes": 6,
+      "expected_execution": "SWARM",
+      "expected_fanout": 6,
+      "reason": "The trusted non-installed overlay evaluates SWARM without production activation."
+    }
+  ]
+}

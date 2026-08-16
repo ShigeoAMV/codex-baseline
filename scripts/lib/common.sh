@@ -443,7 +443,7 @@ cb_remove_internal() {
 }
 
 cb_verify_source_manifest() {
-  local root=$1 manifest operations line path bytes digest version declared_payload_hash actual_payload_hash
+  local root=$1 manifest operations config_operations release_record line path bytes digest version release_status declared_payload_hash actual_payload_hash
   local payload_entries expected_paths actual_paths
   manifest="$root/baseline/manifest.json"
   [[ -f $manifest && ! -L $manifest ]] || cb_die "source manifest missing: $manifest"
@@ -481,6 +481,12 @@ cb_verify_source_manifest() {
   actual_payload_hash=$(cb_sha256_file "$payload_entries")
   rm -f -- "$payload_entries" "$expected_paths" "$actual_paths"
   [[ $actual_payload_hash == "$declared_payload_hash" ]] || cb_die 'aggregate source payload hash mismatch'
+  release_record="$root/baseline/release-status.json"
+  [[ -f $release_record && ! -L $release_record ]] || cb_die 'release-status payload is missing or unsafe'
+  grep -Fqx '  "schema": 1,' "$release_record" || cb_die 'release-status schema is unsupported'
+  grep -Fqx '  "contract": "codex-baseline-release-status/v1",' "$release_record" || cb_die 'release-status contract is unsupported'
+  release_status=$(sed -n 's/^  "status": "\([A-Za-z0-9.]*\)"$/\1/p' "$release_record")
+  [[ $release_status == stable || $release_status =~ ^rc\.[1-9][0-9]*$ ]] || cb_die 'release status is missing or unsupported'
   operations="$root/baseline/operations.json"
   grep -Fqx '  "contract": "codex-baseline-operations/v1",' "$operations" || cb_die 'operations contract identity mismatch'
   grep -Fqx '  "owned_text_encoding": "utf-8-no-bom",' "$operations" || cb_die 'operations encoding contract mismatch'
@@ -504,6 +510,17 @@ cb_verify_source_manifest() {
   do
     grep -Fqx -- "$line" "$operations" || cb_die "operations object contract mismatch: $line"
   done
+  config_operations="$root/baseline/config-operations.json"
+  [[ -f $config_operations && ! -L $config_operations ]] || cb_die 'config operations contract is missing'
+  grep -Fqx '  "contract": "codex-baseline-config-operations/v2",' "$config_operations" || cb_die 'config operations contract identity mismatch'
+  grep -Fqx '  "object_type": "toml-keys",' "$config_operations" || cb_die 'config operations object type mismatch'
+  grep -Fqx '  "operations": ["install-cap", "optimize", "restore", "rollback", "uninstall"],' "$config_operations" || cb_die 'config operations command inventory mismatch'
+  grep -Fqx '  "core_operations_compat": "codex-baseline-operations/v1",' "$config_operations" || cb_die 'config operations compatibility boundary mismatch'
+  grep -Fqx '  "native_validation": "isolated-sanitized-CODEX_HOME",' "$config_operations" || cb_die 'config operations validation boundary mismatch'
+  grep -Fqx '    "doctor": "codex-baseline-doctor/v2",' "$config_operations" || cb_die 'current doctor report contract mismatch'
+  grep -Fqx '    "onboarding": "codex-baseline-onboarding/v2",' "$config_operations" || cb_die 'current onboarding report contract mismatch'
+  grep -Fqx '    "benchmark": "codex-baseline-benchmark/v2",' "$config_operations" || cb_die 'current benchmark report contract mismatch'
+  grep -Fqx '    "optimize": "codex-baseline-optimize/v1",' "$config_operations" || cb_die 'current optimize report contract mismatch'
   printf '%s' "$version"
 }
 

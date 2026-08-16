@@ -1,6 +1,6 @@
 # Codex Engineering Baseline: durable progress
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 ## Objective
 
@@ -14,10 +14,14 @@ The full acceptance contract is the original mission supplied for this project.
 
 ## Current milestone
 
-Milestone 8 - remote self-update v0.2.0 publication, alongside the existing
-Milestones 4, 6, and 7 external-evidence work. The bounded update implementation,
-both complete platform matrices, and deterministic release builds pass. A clean
-post-commit rerun and unsigned preview publication remain.
+Milestone 9 - autonomous multi-agent acceleration v0.3 release candidate. The
+frozen contract is
+[`docs/plans/2026-08-15-autonomous-multi-agent.md`](docs/plans/2026-08-15-autonomous-multi-agent.md).
+Implementation and deterministic verification are in progress. The numeric
+  source payload is `0.3.0` with release status `rc.1`; installed execution stays
+  SOLO, while autonomous activation, stable promotion, tag, channel publication,
+  and speed/quality claims are blocked until the live gates pass. Existing v0.2
+  receipts below remain historical evidence, not v0.3 proof.
 
 ### Acceptance criteria
 
@@ -37,11 +41,12 @@ post-commit rerun and unsigned preview publication remain.
 | 1. Evidence and challenged architecture | Complete | Five research records, 20 decisions, two independent critiques and disposition |
 | 2. Portable install and rollback core | Complete | Unix lifecycle suite and native PowerShell 5.1 lifecycle suite |
 | 3. Repository onboarding | Complete | Static untrusted-repo fixture; dry-run/apply/idempotence/link/secret/no-exec checks |
-| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, real prompt discovery, ten classifications and four host-verified behavior cases; repeated real-model probes pending |
+| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, stable AUTO guidance bundled behind the RC gate, real prompt discovery, 16 classifications and four host-verified behavior cases; real-model telemetry remains unavailable |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
-| 6. Evaluation harness | In progress | Four classes and host-side verifiers pass static validation; live paired run pending |
-| 7. Dogfood and completion audit | In progress | Final immutable local revision and detached C0/H0/M0 review attestation are complete; live-model evidence and publisher signing remain |
-| 8. Explicit remote self-update | In progress | Deterministic v1 release assets plus 13/13 Unix and 141/69 native Windows regression receipts pass; clean post-commit rerun and unsigned preview publication remain |
+| 6. Evaluation harness | In progress | Four arms, exact smallest-team gates, host-side verifiers, and deterministic containment pass; live paired promotion is unavailable on the current Codex telemetry contract |
+| 7. Dogfood and completion audit | In progress | Current v0.3 RC working tree passes the final local platform matrices and fresh combined C0/H0 review; an immutable revision remains |
+| 8. Explicit remote self-update | In progress | Deterministic RC preview assets, cross-version update/rollback/uninstall, crash recovery, and 15/15 Unix plus 604/79 native Windows receipts pass; stable publication remains blocked |
+| 9. Autonomous execution acceleration | RC implemented; stable blocked | SOLO/TEAM/SWARM evaluation engine, dormant stable AUTO activation, smallest-effective-team gates, safe key-owned optimizer, optional onboarding map, and v2 truth contracts are implemented; official orchestration telemetry and independent attestation trust remain unavailable |
 
 ## Current evidence
 
@@ -110,6 +115,17 @@ post-commit rerun and unsigned preview publication remain.
   Windows tests atomically create a protected system-drive test root instead of
   relying on the foreign-writable `%LOCALAPPDATA%` ancestry; production path
   validation remains unchanged and fail-closed.
+- The `0.3.0-rc.1` snapshot with payload hash `5afc214d...0902` passed all 15
+  Unix/WSL groups from a private ext4 Git clone, 604 native Windows lifecycle
+  assertions, and 79 native Windows onboarding/benchmark assertions. A final
+  security delta removed all lifecycle Git invocation and passed the focused
+  Unix lifecycle group plus 13 native Windows provenance assertions. The
+  resulting 76-file payload hash is
+  `8356e50d0f4321d7f2038816866e019f0a94a6fc23123bdda10c3025de50cfcd`.
+- Codex CLI 0.147 does not expose the authoritative orchestration facts required
+  by the preregistered promotion gate. No independently distributed runner-
+  attestation trust root exists in this RC, so stable generation is explicitly
+  unavailable even with a benchmark API key.
 
 ## Open decisions
 
@@ -118,6 +134,9 @@ post-commit rerun and unsigned preview publication remain.
 - Whether direct skill-activation telemetry becomes available; current model
   `selected_skills` output remains explicitly probabilistic rather than a direct
   activation event.
+- Whether the frozen live gates justify stable autonomous routing claims. Until
+  then runtime capacity, actual child model/effort, recursion depth, and
+  concurrency observations that the client does not expose remain `unverified`.
 
 ## External evidence inputs
 
@@ -130,10 +149,12 @@ post-commit rerun and unsigned preview publication remain.
 
 ## Next action
 
-Commit the reconciled v0.2.0 tree, rerun both complete platform matrices from
-that clean immutable revision, build the release assets twice, and publish the
-explicitly unsigned GitHub preview with its hashes and limitations. Real-model
-evaluation remains deferred by owner choice until a dedicated benchmark
-credential is supplied. Separately, the owner may establish an
-offline-controlled signing identity and independently distributed trust root;
-never generate or commit that private key through this workflow.
+The final 15-group private-ext4 WSL suite, frozen-v0.2 cross-version
+transactions, native Windows PowerShell 5.1/7 matrices, final security delta,
+and combined C0/H0 review are complete. Freeze an immutable candidate revision
+only after an explicit commit decision. Stop at the explicitly unsigned
+`0.3.0-rc.1` state and publish neither a stable tag nor performance claims.
+Future stable work first needs authoritative runtime telemetry and an
+independently verifiable runner-attestation trust root; only then may it execute
+the unchanged candidate's frozen four-arm live suite and emit a promotion
+receipt.

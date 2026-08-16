@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/doctor-report-v1.schema.json",
+  "$id": "https://codex-baseline.invalid/contracts/doctor-report-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "contract", "platform", "powershell", "codex", "codex_verification", "state", "transaction", "baseline_version", "source_provenance", "global_guidance", "marker_counts", "managed_objects", "skills", "native_capabilities", "runtime_dependencies", "active_config", "hook_state", "deprecated_settings", "paths", "owned_config_keys", "owned_hooks", "research", "warnings", "failures", "warning_count", "failure_count"],
+  "required": ["schema", "contract", "platform", "powershell", "codex", "codex_verification", "state", "transaction", "baseline_version", "source_provenance", "global_guidance", "marker_counts", "managed_objects", "skills", "native_capabilities", "runtime_dependencies", "active_config", "hook_state", "deprecated_settings", "paths", "owned_config_keys", "owned_hooks", "optimizer", "research", "warnings", "failures", "warning_count", "failure_count"],
   "properties": {
-    "schema": {"const": 1},
-    "contract": {"const": "codex-baseline-doctor/v1"},
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-doctor/v2"},
     "platform": {"enum": ["linux", "wsl2", "native-windows"]},
     "powershell": {"type": ["string", "null"]},
     "codex": {"type": "string"},
@@ -25,8 +25,20 @@
     "hook_state": {"type": "object", "additionalProperties": false, "required": ["baseline_owned", "user_owned"], "properties": {"baseline_owned": {"const": 0}, "user_owned": {"const": "preserved-not-enumerated"}}},
     "deprecated_settings": {"type": "object", "additionalProperties": false, "required": ["status"], "properties": {"status": {"type": "string"}}},
     "paths": {"type": "object", "additionalProperties": false, "required": ["home", "codex_home", "agents_home", "state_root"], "properties": {"home": {"type": "string"}, "codex_home": {"type": "string"}, "agents_home": {"type": "string"}, "state_root": {"type": "string"}}},
-    "owned_config_keys": {"const": 0},
+    "owned_config_keys": {"type": "integer", "minimum": 0, "maximum": 4},
     "owned_hooks": {"const": 0},
+    "optimizer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract", "managed_keys", "drift", "agents", "fast", "ultrafast"],
+      "properties": {
+        "contract": {"const": "codex-baseline-config-operations/v2"},
+        "managed_keys": {"type": "array", "uniqueItems": true, "items": {"enum": ["agents.enabled", "agents.max_concurrent_threads_per_session", "service_tier", "features.fast_mode"]}},
+        "drift": {"type": "boolean"},
+        "agents": {"enum": ["available", "unavailable", "unverified"]},
+        "fast": {"enum": ["available", "unavailable", "unverified"]},
+        "ultrafast": {"const": "unavailable"}
+      }
+    },
     "research": {"type": "object", "additionalProperties": false, "required": ["checked", "review_by", "state"], "properties": {"checked": {"type": ["string", "null"]}, "review_by": {"type": ["string", "null"]}, "state": {"type": "string"}}},
     "warnings": {"type": "array", "items": {"type": "string"}},
     "failures": {"type": "array", "items": {"type": "string"}},

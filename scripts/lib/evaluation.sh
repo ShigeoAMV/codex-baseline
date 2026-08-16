@@ -22,6 +22,15 @@ EVAL_SECRET_ONE=''
 EVAL_SECRET_TWO=''
 EVAL_DISCOVERY_PATH=${EVAL_DISCOVERY_PATH:-/usr/bin:/bin}
 
+eval_monotonic_ms() {
+  local seconds fraction
+  [[ -r /proc/uptime ]] || cb_die 'monotonic evaluation clock is unavailable'
+  IFS='. ' read -r seconds fraction _ </proc/uptime || cb_die 'cannot read monotonic evaluation clock'
+  [[ $seconds =~ ^[0-9]+$ && $fraction =~ ^[0-9]+$ ]] || cb_die 'monotonic evaluation clock is malformed'
+  fraction+=000
+  printf '%s%03d\n' "$seconds" "$((10#${fraction:0:3}))"
+}
+
 eval_validate_system_boundary() {
   local path resolved owner mode cursor
   for path in "$EVAL_SYSTEMD_RUN" "$EVAL_SYSTEMCTL" "$EVAL_BWRAP" "$EVAL_TIMEOUT" \

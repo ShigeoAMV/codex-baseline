@@ -1,20 +1,29 @@
 # Codex Engineering Baseline
 
 A small, evidence-driven baseline for Codex CLI on Linux, WSL2, and native
-Windows. It adds universal engineering invariants, four progressively disclosed
-skills, safe repository onboarding, health/lifecycle operations, and a paired
-evaluation harness without installing an external orchestration framework.
+Windows. It adds universal engineering invariants, evaluation-gated autonomous
+execution-team selection, four progressively disclosed skills, safe repository onboarding,
+health/lifecycle operations, and a paired evaluation harness without installing
+an external orchestration framework.
 
-> **Status:** v0.2.0 is an Apache-2.0-licensed public source preview. The
-> deterministic Linux/WSL and native PowerShell evidence is recorded, while
-> repeated real-model routing and paired A/B evaluation remains explicitly
-> pending. Release provenance is currently unsigned, so installation retains
-> the `unsigned-local-source` acknowledgement.
+> **Status:** the source payload is `0.3.0`, release candidate `rc.1`. It is an
+> Apache-2.0-licensed, unsigned public preview. The autonomous routing and
+> optimizer implementation can be tested from this candidate, but installed RC
+> guidance remains `SOLO`; autonomous global activation, stable `0.3.0`, a
+> stable tag/channel, and speed or quality claims remain blocked until the
+> frozen four-arm live gates pass. AUTO is exercised only through a trusted,
+> non-installed evaluation overlay. Installation therefore retains the
+> `unsigned-local-source` acknowledgement.
 
-The baseline deliberately owns **zero `config.toml` keys and zero hooks**. It
-preserves the user's models, providers, permissions, MCP servers, hooks, rules,
-auth, and unrelated skills. Codex supplies native Plan, Goal, Review, Subagents,
-sandboxing, config precedence, and app worktrees.
+The baseline owns zero hooks and normally leaves `config.toml` alone. v0.3 has
+one narrow exception: a fresh install may add the previously absent
+`agents.max_concurrent_threads_per_session = 6` when agents are not disabled
+and neither a current nor legacy cap already exists. Existing settings win;
+`agents.enabled=false` or `features.multi_agent=false` explicitly vetoes the
+automatic cap and remains user-owned.
+Further key ownership is explicit through `optimize --apply`; parent model,
+reasoning/Ultra, providers, permissions, MCP servers, hooks, rules, auth, and
+unrelated skills remain user-owned.
 
 ## Install
 
@@ -41,9 +50,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-baseline
 & "$HOME\.local\bin\codex-baseline.ps1" doctor
 ```
 
-The v0.2.0 checkout is an unsigned local source. Both installers verify every
+The v0.3.0 candidate checkout is an unsigned local source. Both installers verify every
 installable file against the versioned path/byte/SHA-256 manifest, print source
-origin, revision/dirty state when available, trust label, and aggregate payload
+origin, intentionally unavailable revision/dirty state, trust label, and aggregate payload
 hash, then require explicit acknowledgement before mutation. That proves the
 checkout matches its manifest; it is not publisher authentication.
 
@@ -73,7 +82,11 @@ codex-baseline onboard --apply --acknowledge-existing-instructions /path/to/proj
 The default preview executes no project command. Applied commands are labelled
 `declared, not executed`; review and run the relevant ones separately.
 
-Workflow selection remains visible and proportional:
+Workflow selection remains visible and proportional. The installed RC guidance
+instructs `SOLO`; the following automatic execution vocabulary is active only
+in the trusted evaluation profile until promotion gates pass. This is a
+model-visible policy plus an output-schema check, not an OS/runtime block on
+child creation:
 
 - `LEAN`: small, clear, local, reversible, low-risk change.
 - `STRICT`: meaningful multi-file/API/refactor/moderate-risk change.
@@ -81,10 +94,23 @@ Workflow selection remains visible and proportional:
   materially ambiguous, multi-hour, or large unknown-repository work.
 - `HIGH RISK`: an independent axis that strengthens authority, permission,
   rollback, verification, and security review.
+- `SOLO`: no child; the default for small or coupled work.
+- `TEAM`: one to three children for that many immediately useful independent
+  lanes.
+- `SWARM`: four to six children only when four to six real lanes can start now.
 
 File count and keywords do not escalate work on their own. Focused read-only
 explanation or diagnosis remains `LEAN`; broad read-only analysis uses native
 `STRICT` without loading deep-work.
+
+The parent keeps requirements, architecture, integration, final tests, and the
+answer. It uses direct parallel tool calls for small structured reads and
+subagents only when fresh model judgment, context isolation, or independent
+critical-path work is useful. One writer is the default; parallel writers need
+disjoint ownership in verified worktrees, and parallel tests need isolated
+caches, outputs, ports, databases, and fixtures. Empty slots are never filled
+with duplicate work. Child packets and handoffs are deliberately narrow so
+parallelism does not become automatic context/token bloat.
 
 Only matching skills are loaded. A small task should remain inspect-change-check;
 a substantial delivery gets acceptance criteria and conformance evidence.
@@ -93,10 +119,14 @@ a substantial delivery gets acceptance criteria and conformance evidence.
 
 ```bash
 codex-baseline doctor --json
+codex-baseline optimize --check --json
+codex-baseline optimize --apply
+codex-baseline optimize --speed fast --apply
+codex-baseline optimize --restore --dry-run
 codex-baseline update --check
 codex-baseline update --dry-run
 codex-baseline update --acknowledge-unverified-source
-codex-baseline update --offline /path/to/codex-baseline-0.2.0.tar.gz --dry-run
+codex-baseline update --offline /path/to/codex-baseline-0.3.0-rc.1.tar.gz --dry-run
 codex-baseline rollback --dry-run
 codex-baseline rollback
 codex-baseline uninstall --dry-run
@@ -104,8 +134,15 @@ codex-baseline uninstall
 codex-baseline benchmark --static
 ```
 
+`optimize` is inspect-only unless `--apply` is supplied. It can enable agents
+with cap six or manage the documented Fast pair; `--speed keep` is the default.
+`standard` removes only Baseline-owned Fast values. `ultrafast` currently
+returns structured `unavailable` without changing bytes. No optimizer call
+changes the parent model or reasoning setting.
+
 From the installed wrapper, `update` checks/downloads the latest stable GitHub
-release; a checkout script remains local unless `--remote` is explicit.
+release; this RC is not published to that stable channel. A checkout script
+remains local unless `--remote` is explicit.
 Downloads use a strict descriptor, bounded HTTPS redirects, per-asset SHA-256,
 safe archive extraction, and the existing exact payload manifest. The release
 is still unsigned, so apply requires `--acknowledge-unverified-source`; this is
@@ -124,7 +161,7 @@ retroactively; subsequent v1 updates are self-contained.
 codex-baseline benchmark --static
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
   CODEX_BASELINE_EXPECTED_CODEX_SHA256='<reviewed-codex-sha256>' \
-  scripts/benchmark.sh --live --repetitions 3
+  scripts/benchmark.sh --live --repetitions 10
 CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
   CODEX_BASELINE_EXPECTED_CODEX_SHA256='<reviewed-codex-sha256>' \
   scripts/routing-probe.sh --repetitions 3
@@ -133,7 +170,7 @@ CODEX_BASELINE_BENCHMARK_API_KEY='<dedicated-short-lived-key>' \
   scripts/benchmark.sh --canary
 ```
 
-These live commands are Linux/WSL-only in v0.2.0, consume account quota, and
+These live commands are Linux/WSL-only in the v0.3 candidate, consume account quota, and
 never mount or copy normal Codex auth/session files. The routing command also
 runs read-only, host-verified DEEP/high-risk planning, ambiguity, onboarding,
 and conformance cases. Each Codex arm runs in a fresh Bubblewrap filesystem with
@@ -166,7 +203,8 @@ installed runtime instead.
 - [Benchmark design](docs/BENCHMARKS.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Release and provenance](docs/RELEASE.md)
-- [Release candidate report](docs/RELEASE-CANDIDATE-REPORT.md)
+- [Current v0.3 release candidate report](docs/RELEASE-CANDIDATE-REPORT-0.3.md)
+- [Historical v0.2 release candidate report](docs/RELEASE-CANDIDATE-REPORT.md)
 - [Research evidence](docs/research/EVIDENCE.md)
 - [Architecture decisions](docs/research/DECISIONS.md)
 - [Dogfood DEEP-work contract](docs/examples/DEEP-WORK-PLAN.md)
@@ -174,14 +212,12 @@ installed runtime instead.
 
 ## Support truth
 
-The release candidate is executed on WSL2/Linux (13 end-to-end test groups) and
-in native Windows PowerShell 5.1 through WSL interoperability (141 lifecycle
-and 69 onboarding/benchmark assertions). The lifecycle suite also exercises
-PowerShell 7 update staging and adversarial ACL rejection when `pwsh` is
-available. Native Codex 0.147.0 Doctor capability/config checks execute without
-reading authentication/session files. Codex App behavior is based on current
-official product contracts plus CLI prompt-input probes, not a complete
-cross-client execution test. See [platform status](docs/PLATFORMS.md).
+The recorded 13-group WSL/Linux and 141/69 native PowerShell receipts belong to
+v0.2.0 and remain historical evidence. v0.3 deterministic and native matrices
+must be rerun on the final candidate revision. The four-arm live evaluation and
+its runtime subagent telemetry are still unverified because no dedicated
+benchmark key is available; therefore no autonomous speedup or stable-release
+claim is made. See [platform status](docs/PLATFORMS.md).
 
 ## License
 

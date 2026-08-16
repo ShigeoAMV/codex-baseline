@@ -52,6 +52,7 @@ $script:SourceRoots = New-Object 'System.Collections.Generic.List[string]'
 $script:SensitiveAreas = New-Object 'System.Collections.Generic.List[string]'
 $script:Commands = New-Object 'System.Collections.Generic.List[string]'
 $script:Warnings = New-Object 'System.Collections.Generic.List[string]'
+$script:ParallelismMap = @()
 $script:FileCount = 0
 $script:VisitedCount = 0
 $script:TotalBytes = [long]0
@@ -512,6 +513,68 @@ function Add-ObSafePathSection {
     if ($emitted -eq 0) { $Lines.Add('- none observed within discovery limits') | Out-Null }
 }
 
+function New-ObParallelStatement {
+    param([string]$Kind, [string]$Subject, [string]$Status, [string]$Evidence)
+    return [pscustomobject]@{ kind = $Kind; subject = $Subject; status = $Status; evidence = @($Evidence) }
+}
+
+function Build-ObParallelismMap {
+    $statements = New-Object 'System.Collections.Generic.List[object]'
+    if ($script:SourceRoots.Count -gt 0) {
+        foreach ($value in $script:SourceRoots) { $statements.Add((New-ObParallelStatement 'source_root' $value 'inferred' $value)) | Out-Null }
+    }
+    else { $statements.Add((New-ObParallelStatement 'source_root' '*' 'unknown' 'no bounded source-root signal')) | Out-Null }
+    $packageManifest = @($script:Manifests | Where-Object { $_ -match '^(package\.json|Cargo\.toml|go\.mod|pyproject\.toml)$' } | Sort-Object -Unique | Select-Object -First 1)
+    if ($packageManifest.Count -eq 1) { $statements.Add((New-ObParallelStatement 'package_boundary' '.' 'inferred' ([string]$packageManifest[0]))) | Out-Null }
+    else { $statements.Add((New-ObParallelStatement 'package_boundary' '*' 'unknown' 'no bounded package/workspace manifest signal')) | Out-Null }
+    $statements.Add((New-ObParallelStatement 'api_boundary' '*' 'unknown' 'no explicit bounded API boundary declaration')) | Out-Null
+    if ($script:GeneratedSignals.Count -gt 0) {
+        foreach ($value in $script:GeneratedSignals) {
+            $statements.Add((New-ObParallelStatement 'generated_ownership' $value 'inferred' $value)) | Out-Null
+            $statements.Add((New-ObParallelStatement 'write_conflict' $value 'inferred' $value)) | Out-Null
+        }
+    }
+    else {
+        $statements.Add((New-ObParallelStatement 'generated_ownership' '*' 'unknown' 'no generated ownership signal')) | Out-Null
+        $statements.Add((New-ObParallelStatement 'write_conflict' '*' 'unknown' 'no bounded write-conflict signal')) | Out-Null
+    }
+    foreach ($kind in @('shared_cache','shared_build_output','shared_port','shared_database','shared_fixture','test_shard','write_safe')) {
+        $statements.Add((New-ObParallelStatement $kind '*' 'unknown' ("no bounded {0} declaration" -f $kind.Replace('_', ' ')))) | Out-Null
+    }
+    $ordered = @($statements | Sort-Object kind, subject -Unique)
+    $requiredKinds = @('source_root','package_boundary','api_boundary','generated_ownership','write_conflict','shared_cache','shared_build_output','shared_port','shared_database','shared_fixture','test_shard','write_safe')
+    $selected = New-Object 'System.Collections.Generic.List[object]'
+    $selectedKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($kind in $requiredKinds) {
+        $statement = @($ordered | Where-Object { $_.kind -eq $kind } | Select-Object -First 1)
+        if ($statement.Count -ne 1) { throw "Parallelism map is missing required category: $kind" }
+        $key = "{0}`0{1}`0{2}`0{3}" -f $statement[0].kind,$statement[0].subject,$statement[0].status,$statement[0].evidence[0]
+        $selected.Add($statement[0]) | Out-Null
+        $selectedKeys.Add($key) | Out-Null
+    }
+    foreach ($statement in $ordered) {
+        if ($selected.Count -ge 64) { break }
+        $key = "{0}`0{1}`0{2}`0{3}" -f $statement.kind,$statement.subject,$statement.status,$statement.evidence[0]
+        if ($selectedKeys.Add($key)) { $selected.Add($statement) | Out-Null }
+    }
+    $script:ParallelismMap = @($selected | Sort-Object kind, subject)
+}
+
+function Add-ObParallelismSection {
+    param([System.Collections.Generic.List[string]]$Lines)
+    $Lines.Add('') | Out-Null
+    $Lines.Add('## Parallel execution map (static evidence only)') | Out-Null
+    $emitted = 0
+    foreach ($statement in $script:ParallelismMap) {
+        if ($statement.status -eq 'unknown' -or $statement.subject.Length -gt 240 -or $statement.subject -notmatch '^[A-Za-z0-9._][A-Za-z0-9._/-]*$') { continue }
+        $Lines.Add(("- ``{0}``: {1} ({2}; evidence ``{3}``)" -f $statement.kind, $statement.subject, $statement.status, $statement.evidence[0])) | Out-Null
+        $emitted++
+        if ($emitted -ge 12) { break }
+    }
+    if ($emitted -eq 0) { $Lines.Add('- No safe parallel boundary was established by static discovery.') | Out-Null }
+    $Lines.Add('- Unknown write isolation means one parent writer; unknown test isolation means serial tests.') | Out-Null
+}
+
 function Render-ObBlock {
     $version = (Read-ObText (Join-Path $script:SourceRoot 'VERSION')).Trim()
     $lines = New-Object 'System.Collections.Generic.List[string]'
@@ -536,6 +599,7 @@ function Render-ObBlock {
     Add-ObSafePathSection $lines 'Architecture and project evidence' $script:ProjectDocs
     Add-ObSafePathSection $lines 'Generated-file signals (avoid manual edits unless required)' $script:GeneratedSignals
     Add-ObSafePathSection $lines 'Risk-sensitive path signals (raise verification depth)' $script:SensitiveAreas
+    Add-ObParallelismSection $lines
     $lines.Add('') | Out-Null
     $lines.Add('## Static discovery coverage') | Out-Null
     $gitDetected = Test-ObExists (Join-Path $script:RepositoryRoot '.git')
@@ -696,6 +760,7 @@ try {
         $script:TestSignals, $script:DeploymentSignals, $script:GeneratedSignals,
         $script:SourceRoots, $script:SensitiveAreas, $script:Warnings
     )) { Sort-ObList $inventoryList }
+    Build-ObParallelismMap
     $block = Render-ObBlock
     $rootAgents = if (Test-ObExists (Join-Path $script:RepositoryRoot 'AGENTS.md')) { 'present' } else { 'absent' }
     $existingInstructionsRequireAck = $script:AiInstructions.Count -gt 0
@@ -705,8 +770,8 @@ try {
     }
     if ($Json) {
         $report = [pscustomobject]@{
-            schema = 1
-            contract = 'codex-baseline-onboarding/v1'
+            schema = 2
+            contract = 'codex-baseline-onboarding/v2'
             platform = 'native-windows'
             mode = 'dry-run'
             repository = $script:RepositoryRoot
@@ -734,6 +799,7 @@ try {
             source_roots = @($script:SourceRoots)
             sensitive_areas = @($script:SensitiveAreas)
             warnings = @($script:Warnings)
+            parallelism_map = [pscustomobject]@{ statements = @($script:ParallelismMap) }
         }
         [Console]::Out.WriteLine(($report | ConvertTo-Json -Depth 5 -Compress))
     }

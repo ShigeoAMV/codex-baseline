@@ -13,6 +13,24 @@ the installed hash. Preserve the changed content, compare it with the source and
 journal, then either incorporate the intended change into this repository or
 restore the installed version. There is no blind force flag.
 
+An owned `config.toml` key can drift independently of files. `optimize --check`
+and `doctor --json` identify the path without printing the whole config. Preserve
+the user's value and reconcile ownership; restore/uninstall intentionally stop
+rather than overwrite a changed managed scalar.
+
+## Optimize rejects `config.toml`
+
+The narrow patcher intentionally rejects invalid TOML and ambiguous managed
+paths expressed through duplicate, dotted, quoted, or inline definitions. It
+also stops on links/reparse points, hard links or non-default ADS on Windows,
+and detected ACL/xattr state it cannot preserve on Unix. Do not normalize or
+rewrite the file merely to satisfy the tool. Review the reported managed path,
+choose one unambiguous ordinary table/scalar representation, preserve all
+unrelated values, then rerun `optimize --check` before `--apply`.
+
+`--speed ultrafast` currently returning `unavailable` is expected. There is no
+stable Codex config contract to activate it, and the command changes no bytes.
+
 ## Pending transaction or lock
 
 A live mutation auto-recovers a pending journal. `doctor` reports a pending

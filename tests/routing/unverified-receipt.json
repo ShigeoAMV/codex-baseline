@@ -1,0 +1,49 @@
+{
+  "execution_profile": "auto-evaluation",
+  "workflow": "DEEP",
+  "high_risk": false,
+  "selected_skills": ["codex-baseline-deep-work"],
+  "execution": "SWARM",
+  "parallelism_reason": "Six evaluation lanes are planned, but runtime telemetry was not emitted.",
+  "planned_fanout": 6,
+  "planned_lanes": [
+    {"id": "lane-a", "objective": "Inspect A", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []},
+    {"id": "lane-b", "objective": "Inspect B", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []},
+    {"id": "lane-c", "objective": "Inspect C", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []},
+    {"id": "lane-d", "objective": "Inspect D", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []},
+    {"id": "lane-e", "objective": "Inspect E", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []},
+    {"id": "lane-f", "objective": "Inspect F", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []}
+  ],
+  "child_limit": 6,
+  "wave_limit": 4,
+  "write_isolation": "read-only",
+  "runtime_receipt": {
+    "verification": "unverified",
+    "actual_fanout": null,
+    "available_capacity": null,
+    "children": [
+      {"lane_id": "lane-a", "wave": 1, "attempt": 1, "requested_model": "gpt-5.6-terra", "requested_effort": "medium", "actual_model": null, "actual_effort": null, "outcome": null, "fallback_used": null, "verification": "unverified"}
+    ],
+    "depth_intended": 1,
+    "depth_observed": null,
+    "depth_verification": "unverified",
+    "waves_observed": null,
+    "peak_concurrency": null,
+    "spawn_failures": null,
+    "fallbacks": null,
+    "interrupts": null,
+    "timeouts": null,
+    "write_isolation": {"verification": "unverified", "value": null},
+    "worktree_isolation": {"verification": "unverified", "value": null},
+    "test_isolation": {"verification": "unverified", "value": null},
+    "conflicts": null,
+    "integration_rework_actions": null,
+    "handoff_bytes": null,
+    "duplicate_context_bytes": null,
+    "parent_settings_before": null,
+    "parent_settings_after": null,
+    "parent_settings_unchanged": null,
+    "parent_settings_verification": "unverified"
+  },
+  "reason": "No observed runtime value is inferred from the plan."
+}

@@ -2,12 +2,35 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["case_id", "workflow", "high_risk", "selected_skills", "evidence_files", "material_question", "plan", "risk_controls", "onboarding", "conformance", "reason"],
+  "required": ["case_id", "execution_profile", "workflow", "high_risk", "selected_skills", "execution", "parallelism_reason", "planned_fanout", "planned_lanes", "child_limit", "wave_limit", "write_isolation", "runtime_receipt", "evidence_files", "material_question", "plan", "risk_controls", "onboarding", "conformance", "reason"],
   "properties": {
     "case_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "execution_profile": {"enum": ["production-rc", "auto-evaluation"]},
     "workflow": {"enum": ["LEAN", "STRICT", "DEEP"]},
     "high_risk": {"type": "boolean"},
     "selected_skills": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "execution": {"enum": ["SOLO", "TEAM", "SWARM"]},
+    "parallelism_reason": {"type": "string", "minLength": 1, "maxLength": 300},
+    "planned_fanout": {"type": "integer", "minimum": 0, "maximum": 6},
+    "planned_lanes": {
+      "type": "array", "maxItems": 6,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "objective", "kind", "writer", "write_scope", "dependencies"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+          "objective": {"type": "string", "minLength": 1, "maxLength": 200},
+          "kind": {"enum": ["exploration", "implementation", "test", "review"]},
+          "writer": {"enum": ["none", "parent", "child"]},
+          "write_scope": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}}
+        }
+      }
+    },
+    "child_limit": {"type": "integer", "minimum": 0, "maximum": 6},
+    "wave_limit": {"type": "integer", "minimum": 0, "maximum": 4},
+    "write_isolation": {"enum": ["read-only", "single-writer", "verified-worktrees"]},
+    "runtime_receipt": {"$ref": "#/$defs/runtime_receipt"},
     "evidence_files": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
     "material_question": {
       "anyOf": [
@@ -138,5 +161,62 @@
       ]
     },
     "reason": {"type": "string", "minLength": 1, "maxLength": 500}
+  },
+  "allOf": [
+    {"if": {"properties": {"execution_profile": {"const": "production-rc"}}}, "then": {"properties": {"execution": {"const": "SOLO"}, "planned_fanout": {"const": 0}, "planned_lanes": {"maxItems": 0}}}},
+    {"if": {"properties": {"execution": {"const": "SOLO"}}}, "then": {"properties": {"planned_fanout": {"const": 0}, "planned_lanes": {"maxItems": 0}, "runtime_receipt": {"properties": {"actual_fanout": {"enum": [0, null]}, "depth_intended": {"const": 0}, "children": {"maxItems": 0}}}}}},
+    {"if": {"properties": {"execution": {"const": "TEAM"}}}, "then": {"properties": {"execution_profile": {"const": "auto-evaluation"}, "planned_fanout": {"minimum": 1, "maximum": 3}, "planned_lanes": {"minItems": 1, "maxItems": 3}, "runtime_receipt": {"properties": {"actual_fanout": {"type": ["integer", "null"], "minimum": 0, "maximum": 3}, "depth_intended": {"const": 1}}}}}},
+    {"if": {"properties": {"execution": {"const": "SWARM"}}}, "then": {"properties": {"execution_profile": {"const": "auto-evaluation"}, "planned_fanout": {"minimum": 4, "maximum": 6}, "planned_lanes": {"minItems": 4, "maxItems": 6}, "runtime_receipt": {"properties": {"actual_fanout": {"type": ["integer", "null"], "minimum": 0, "maximum": 6}, "depth_intended": {"const": 1}}}}}}
+  ],
+  "$defs": {
+    "setting_snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "reasoning_effort", "speed"],
+      "properties": {"model": {"type": ["string", "null"]}, "reasoning_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]}, "speed": {"enum": ["standard", "fast", "ultrafast", null]}}
+    },
+    "isolation_observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verification", "value"],
+      "properties": {"verification": {"const": "unverified"}, "value": {"enum": ["read-only", "single-writer", "verified-worktrees", "isolated", "not-isolated", "not-applicable", null]}},
+      "allOf": [
+        {"if": {"properties": {"verification": {"const": "unverified"}}}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"verification": {"const": "verified"}}}, "then": {"properties": {"value": {"not": {"type": "null"}}}}}
+      ]
+    },
+    "child_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lane_id", "wave", "attempt", "requested_model", "requested_effort", "actual_model", "actual_effort", "outcome", "fallback_used", "verification"],
+      "properties": {
+        "lane_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+        "wave": {"type": "integer", "minimum": 1, "maximum": 4},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 2},
+        "requested_model": {"type": ["string", "null"]},
+        "requested_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]},
+        "actual_model": {"type": ["string", "null"]},
+        "actual_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]},
+        "outcome": {"enum": ["completed", "failed", "interrupted", "timeout", null]},
+        "fallback_used": {"type": ["boolean", "null"]},
+        "verification": {"const": "unverified"}
+      },
+      "allOf": [
+        {"if": {"properties": {"verification": {"const": "unverified"}}}, "then": {"properties": {"actual_model": {"type": "null"}, "actual_effort": {"type": "null"}, "outcome": {"type": "null"}, "fallback_used": {"type": "null"}}}},
+        {"if": {"properties": {"verification": {"const": "verified"}}}, "then": {"properties": {"outcome": {"not": {"type": "null"}}, "fallback_used": {"type": "boolean"}}}}
+      ]
+    },
+    "runtime_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verification", "actual_fanout", "available_capacity", "children", "depth_intended", "depth_observed", "depth_verification", "waves_observed", "peak_concurrency", "spawn_failures", "fallbacks", "interrupts", "timeouts", "write_isolation", "worktree_isolation", "test_isolation", "conflicts", "integration_rework_actions", "handoff_bytes", "duplicate_context_bytes", "parent_settings_before", "parent_settings_after", "parent_settings_unchanged", "parent_settings_verification"],
+      "properties": {
+        "verification": {"const": "unverified"}, "actual_fanout": {"type": ["integer", "null"], "minimum": 0, "maximum": 6}, "available_capacity": {"type": ["integer", "null"], "minimum": 0},
+        "children": {"type": "array", "maxItems": 48, "items": {"$ref": "#/$defs/child_receipt"}}, "depth_intended": {"type": "integer", "minimum": 0, "maximum": 1}, "depth_observed": {"type": ["integer", "null"], "minimum": 0}, "depth_verification": {"enum": ["verified", "unverified"]},
+        "waves_observed": {"type": ["integer", "null"], "minimum": 0, "maximum": 4}, "peak_concurrency": {"type": ["integer", "null"], "minimum": 0, "maximum": 6}, "spawn_failures": {"type": ["integer", "null"], "minimum": 0}, "fallbacks": {"type": ["integer", "null"], "minimum": 0}, "interrupts": {"type": ["integer", "null"], "minimum": 0}, "timeouts": {"type": ["integer", "null"], "minimum": 0},
+        "write_isolation": {"$ref": "#/$defs/isolation_observation"}, "worktree_isolation": {"$ref": "#/$defs/isolation_observation"}, "test_isolation": {"$ref": "#/$defs/isolation_observation"}, "conflicts": {"type": ["integer", "null"], "minimum": 0}, "integration_rework_actions": {"type": ["integer", "null"], "minimum": 0}, "handoff_bytes": {"type": ["integer", "null"], "minimum": 0}, "duplicate_context_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "parent_settings_before": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/setting_snapshot"}]}, "parent_settings_after": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/setting_snapshot"}]}, "parent_settings_unchanged": {"type": ["boolean", "null"]}, "parent_settings_verification": {"enum": ["verified", "unverified"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"verification": {"const": "unverified"}}}, "then": {"properties": {"children": {"items": {"properties": {"verification": {"const": "unverified"}}}}, "actual_fanout": {"type": "null"}, "available_capacity": {"type": "null"}, "depth_observed": {"type": "null"}, "depth_verification": {"const": "unverified"}, "waves_observed": {"type": "null"}, "peak_concurrency": {"type": "null"}, "spawn_failures": {"type": "null"}, "fallbacks": {"type": "null"}, "interrupts": {"type": "null"}, "timeouts": {"type": "null"}, "conflicts": {"type": "null"}, "integration_rework_actions": {"type": "null"}, "handoff_bytes": {"type": "null"}, "duplicate_context_bytes": {"type": "null"}, "parent_settings_before": {"type": "null"}, "parent_settings_after": {"type": "null"}, "parent_settings_unchanged": {"type": "null"}, "parent_settings_verification": {"const": "unverified"}, "write_isolation": {"properties": {"verification": {"const": "unverified"}, "value": {"type": "null"}}}, "worktree_isolation": {"properties": {"verification": {"const": "unverified"}, "value": {"type": "null"}}}, "test_isolation": {"properties": {"verification": {"const": "unverified"}, "value": {"type": "null"}}}}}},
+        {"if": {"properties": {"verification": {"const": "verified"}}}, "then": {"properties": {"children": {"items": {"properties": {"verification": {"const": "verified"}}}}, "actual_fanout": {"type": "integer"}, "available_capacity": {"type": "integer"}, "depth_observed": {"type": "integer"}, "depth_verification": {"const": "verified"}, "waves_observed": {"type": "integer"}, "peak_concurrency": {"type": "integer"}, "spawn_failures": {"type": "integer"}, "fallbacks": {"type": "integer"}, "interrupts": {"type": "integer"}, "timeouts": {"type": "integer"}, "conflicts": {"type": "integer"}, "integration_rework_actions": {"type": "integer"}, "handoff_bytes": {"type": "integer"}, "duplicate_context_bytes": {"type": "integer"}, "parent_settings_before": {"$ref": "#/$defs/setting_snapshot"}, "parent_settings_after": {"$ref": "#/$defs/setting_snapshot"}, "parent_settings_unchanged": {"const": true}, "parent_settings_verification": {"const": "verified"}, "write_isolation": {"properties": {"verification": {"const": "verified"}, "value": {"not": {"type": "null"}}}}, "worktree_isolation": {"properties": {"verification": {"const": "verified"}, "value": {"not": {"type": "null"}}}}, "test_isolation": {"properties": {"verification": {"const": "verified"}, "value": {"not": {"type": "null"}}}}}}}
+      ]
+    }
   }
 }

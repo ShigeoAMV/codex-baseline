@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/benchmark-report-v1.schema.json",
+  "$id": "https://codex-baseline.invalid/contracts/benchmark-report-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "contract", "platform", "mode", "status", "isolation", "model_invoked", "verifiers_executed"],
   "properties": {
-    "schema": {"const": 1},
-    "contract": {"const": "codex-baseline-benchmark/v1"},
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-benchmark/v2"},
     "platform": {"enum": ["linux", "wsl2", "native-windows"]},
     "mode": {"enum": ["live-paired", "live-containment-canary", "static-contract-only"]},
     "status": {"enum": ["running", "completed"]},
@@ -26,6 +26,8 @@
     "auth": {"type": "string"},
     "tool_network_target": {"type": "string"},
     "account_service_tier": {"type": "string"},
+    "runtime_telemetry_adapter_contract": {"type": ["string", "null"], "enum": ["codex-runtime-telemetry/v1", null]},
+    "runtime_telemetry_adapter_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "resource_profile": {"type": "string"},
     "tasks": {"type": "array", "minItems": 1, "items": {"type": "object"}},
     "limitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
@@ -52,7 +54,7 @@
     {
       "if": {"properties": {"mode": {"const": "live-paired"}}, "required": ["mode"]},
       "then": {
-        "required": ["created", "codex", "model", "source_revision", "source_dirty", "source_hash", "manifest_hash", "codex_binary_hash", "codex_identity", "node_binary_hash", "auth", "account_service_tier", "resource_profile"],
+        "required": ["created", "codex", "model", "source_revision", "source_dirty", "source_hash", "manifest_hash", "codex_binary_hash", "codex_identity", "node_binary_hash", "auth", "account_service_tier", "runtime_telemetry_adapter_contract", "runtime_telemetry_adapter_hash", "resource_profile"],
         "properties": {
           "platform": {"enum": ["linux", "wsl2"]},
           "isolation": {"const": "os-sandboxed-local-cgroup"},
@@ -60,7 +62,8 @@
           "verifiers_executed": {"const": true},
           "auth": {"const": "dedicated-api-key-stdin-pipe"},
           "resource_profile": {"const": "user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}
-        }
+        },
+        "allOf": [{"if": {"properties": {"runtime_telemetry_adapter_contract": {"type": "null"}}}, "then": {"properties": {"runtime_telemetry_adapter_hash": {"type": "null"}}}, "else": {"properties": {"runtime_telemetry_adapter_hash": {"type": "string"}}}}]
       }
     },
     {

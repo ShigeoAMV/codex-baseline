@@ -5,9 +5,14 @@
 Use a reviewed, immutable release or trusted checkout. The installer validates
 the exact installable path inventory, byte lengths, per-file SHA-256 values,
 aggregate payload hash, operations contract, and version. It prints the local
-origin, Git revision/dirty state when safely available, and the
-`unsigned-local-source` trust label. v0.2.0 does not authenticate a publisher or
-verify a release signature, so mutation requires an explicit acknowledgement.
+origin, an intentionally unavailable revision/dirty state, and the
+`unsigned-local-source` trust label. Lifecycle commands never query checkout
+Git metadata because repository-local filters and helpers are untrusted. The
+`0.3.0` payload / `rc.1` candidate does
+not authenticate a publisher or verify a release signature, so mutation
+requires an explicit acknowledgement. It is not a stable channel release;
+stable promotion and performance claims remain blocked until the documented
+live gates pass.
 Installation never performs `git pull`, package installation, or any network
 request. Network access is confined to an explicit/installed-runtime remote
 `update`; local and offline update remain networkless.
@@ -22,8 +27,12 @@ git status --short
 
 ## Linux
 
-Requires Bash, coreutils (`find`, `realpath`, `stat`, `sort`, SHA-256 tool), and
-a supported Codex CLI. Remote update additionally requires an ordinary `curl`
+Requires Bash, coreutils (`find`, `realpath`, `stat`, `sort`, SHA-256 tool),
+`iconv`, `getfacl` (normally package `acl`), `getfattr` (normally package
+`attr`), and a supported Codex CLI. The ACL/xattr inspectors are mandatory for
+an existing `config.toml`; mutation stops before touching state when either is
+unavailable because metadata preservation cannot otherwise be proved. Remote
+update additionally requires an ordinary `curl`
 executable, `gzip`, and GNU tar; the command reports a missing capability and
 stops before mutation. Local install/update does not require them. Run:
 
@@ -70,3 +79,14 @@ symbolic/reparse path segment. Native Windows additionally rejects relative,
 UNC/device, alternate-data-stream, and reparse-ancestor roots before
 normalization. No installer reads, copies, or tests with Codex auth/session
 files.
+
+The installer does not change the parent model, reasoning/Ultra, speed,
+provider, permission, MCP, hook, or global child-model settings. v0.3 has one
+narrow automatic config exception: on a fresh install it may add an absent
+`agents.max_concurrent_threads_per_session = 6` when agents are not explicitly
+disabled and neither a current nor legacy cap exists. Existing settings always
+win; `agents.enabled=false` and `features.multi_agent=false` both veto this
+exception and remain user-owned. Update never acquires a cap it did not
+previously own. Preview includes the
+planned key change. Use `codex-baseline optimize --check` to inspect and
+`optimize --restore --dry-run` to preview its key-level inverse.

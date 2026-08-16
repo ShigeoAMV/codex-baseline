@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/promotion-receipt-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "contract", "version", "candidate_status", "promotion_allowed",
+    "candidate_source_revision", "candidate_source_dirty", "candidate_source_hash", "candidate_payload_hash",
+    "benchmark_summary_file", "benchmark_summary_hash", "benchmark_run_file", "benchmark_run_hash",
+    "benchmark_results_file", "benchmark_results_hash", "benchmark_manifest_file", "benchmark_manifest_hash",
+    "runner_attestation_file", "runner_attestation_hash",
+    "stable_source_revision", "stable_payload_hash"
+  ],
+  "properties": {
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-promotion/v2"},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+    "candidate_status": {"type": "string", "pattern": "^rc\\.[1-9][0-9]*$"},
+    "promotion_allowed": {"const": true},
+    "candidate_source_revision": {"$ref": "#/$defs/revision"},
+    "candidate_source_dirty": {"const": false},
+    "candidate_source_hash": {"$ref": "#/$defs/hash"},
+    "candidate_payload_hash": {"$ref": "#/$defs/hash"},
+    "benchmark_summary_file": {"const": "summary.json"},
+    "benchmark_summary_hash": {"$ref": "#/$defs/hash"},
+    "benchmark_run_file": {"const": "run.json"},
+    "benchmark_run_hash": {"$ref": "#/$defs/hash"},
+    "benchmark_results_file": {"const": "results.jsonl"},
+    "benchmark_results_hash": {"$ref": "#/$defs/hash"},
+    "benchmark_manifest_file": {"const": "benchmark-manifest.json"},
+    "benchmark_manifest_hash": {"$ref": "#/$defs/hash"},
+    "runner_attestation_file": {"const": "runner-attestation.json"},
+    "runner_attestation_hash": {"$ref": "#/$defs/hash"},
+    "stable_source_revision": {"$ref": "#/$defs/revision"},
+    "stable_payload_hash": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

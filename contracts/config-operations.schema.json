@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/config-operations-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "core_operations_compat", "object_type", "operations", "mutation_requires_apply", "install_exception", "managed_paths", "user_override_paths", "states", "transaction_journal_fields", "ownership_entry_fields", "forbidden_journal_content", "metadata", "native_validation", "concurrency_boundary", "reports"],
+  "properties": {
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-config-operations/v2"},
+    "core_operations_compat": {"const": "codex-baseline-operations/v1"},
+    "object_type": {"const": "toml-keys"},
+    "operations": {"const": ["install-cap", "optimize", "restore", "rollback", "uninstall"]},
+    "mutation_requires_apply": {"const": true},
+    "install_exception": {"const": "absent-agent-cap-only"},
+    "managed_paths": {
+      "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+      "items": {"type": "object", "required": ["path", "type"], "properties": {"path": {"enum": ["agents.enabled", "agents.max_concurrent_threads_per_session", "service_tier", "features.fast_mode"]}, "type": {"enum": ["boolean", "integer", "enum"]}, "values": {"type": "array", "items": {"type": "string"}}}}
+    },
+    "user_override_paths": {"const": ["agents.enabled", "agents.max_concurrent_threads_per_session", "agents.max_threads", "features.multi_agent"]},
+    "states": {"const": ["planned", "prepared", "committing", "replaced-before-security", "committed", "rolled-back"]},
+    "transaction_journal_fields": {
+      "type": "object", "additionalProperties": false, "required": ["unix", "windows"],
+      "properties": {
+        "unix": {"const": ["contract", "core_tx", "desired_acl_state", "desired_gid", "desired_mode", "desired_physical_hash", "desired_projection_hash", "desired_structure_hash", "desired_uid", "desired_xattr_state", "old", "operation", "ownership", "parent", "previous_acl_state", "previous_existed", "previous_gid", "previous_mode", "previous_physical_hash", "previous_projection_hash", "previous_structure_hash", "previous_uid", "previous_xattr_state", "schema", "stage", "stage_acl_state", "stage_gid", "stage_mode", "stage_physical_hash", "stage_uid", "stage_xattr_state", "state", "target", "version"]},
+        "windows": {"const": ["Schema", "Contract", "Id", "Operation", "Version", "CreatedUtc", "Parent", "CoreTransaction", "State", "Target", "Stage", "Old", "PreviousExisted", "PreviousPhysicalHash", "DesiredPhysicalHash", "PreviousProjectionHash", "DesiredProjectionHash", "PreviousStructureHash", "DesiredStructureHash", "PreviousIdentity", "PreviousSecurity", "DesiredIdentity", "DesiredSecurity", "Ownership"]}
+      }
+    },
+    "ownership_entry_fields": {
+      "type": "object", "additionalProperties": false, "required": ["unix", "windows"],
+      "properties": {
+        "unix": {"const": ["core_tx", "created_table", "installed_token", "path", "prior_file_existed", "prior_state", "prior_token", "separator_added", "type"]},
+        "windows": {"const": ["Id", "Path", "Table", "Type", "PriorState", "PriorToken", "PriorFileExisted", "InstalledToken", "CreatedTable", "SeparatorAdded", "PriorFinalNewline"]}
+      }
+    },
+    "forbidden_journal_content": {"const": ["complete-config", "auth", "session", "secret-values"]},
+    "metadata": {"type": "object", "additionalProperties": false, "required": ["windows", "unix"], "properties": {"windows": {"type": "string"}, "unix": {"type": "string"}}},
+    "native_validation": {"const": "isolated-sanitized-CODEX_HOME"},
+    "concurrency_boundary": {"const": "cooperative-cas-not-hostile-writer-or-power-loss"},
+    "reports": {
+      "type": "object", "additionalProperties": false,
+      "required": ["doctor", "onboarding", "benchmark", "optimize", "routing_run", "routing_result", "routing_summary", "behavior_result"],
+      "properties": {
+        "doctor": {"const": "codex-baseline-doctor/v2"},
+        "onboarding": {"const": "codex-baseline-onboarding/v2"},
+        "benchmark": {"const": "codex-baseline-benchmark/v2"},
+        "optimize": {"const": "codex-baseline-optimize/v1"},
+        "routing_run": {"const": "codex-baseline-routing-run/v2"},
+        "routing_result": {"const": "codex-baseline-routing-result/v2"},
+        "routing_summary": {"const": "codex-baseline-routing-summary/v2"},
+        "behavior_result": {"const": "codex-baseline-behavior-result/v2"}
+      }
+    }
+  }
+}

@@ -241,6 +241,80 @@ ob_infer_commands() {
   LC_ALL=C sort -u "$CB_OB_TEMP/commands.raw" >"$CB_OB_TEMP/commands"
 }
 
+ob_parallel_statement() {
+  local kind=$1 subject=$2 status=$3 evidence=$4
+  [[ $kind =~ ^[a-z_]+$ && $status =~ ^(declared|inferred|unknown)$ ]] || cb_die 'invalid parallelism-map statement'
+  [[ ! -f $CB_OB_TEMP/parallelism-map.raw || $(grep -c "^${kind}"$'\t' "$CB_OB_TEMP/parallelism-map.raw" || true) -lt 64 ]] || return 0
+  printf '%s\t%s\t%s\t%s\n' "$kind" "$subject" "$status" "$evidence" >>"$CB_OB_TEMP/parallelism-map.raw"
+}
+
+ob_build_parallelism_map() {
+  local value kind line
+  local -a required_kinds=(source_root package_boundary api_boundary generated_ownership write_conflict shared_cache shared_build_output shared_port shared_database shared_fixture test_shard write_safe)
+  : >"$CB_OB_TEMP/parallelism-map.raw"
+  : >"$CB_OB_TEMP/parallelism-map"
+  if [[ -s $CB_OB_TEMP/source-roots ]]; then
+    while IFS= read -r value; do ob_parallel_statement source_root "$value" inferred "$value"; done <"$CB_OB_TEMP/source-roots"
+  else
+    ob_parallel_statement source_root '*' unknown 'no bounded source-root signal'
+  fi
+  if grep -Eq '^(package\.json|Cargo\.toml|go\.mod|pyproject\.toml)$' "$CB_OB_TEMP/manifests"; then
+    value=$(grep -E '^(package\.json|Cargo\.toml|go\.mod|pyproject\.toml)$' "$CB_OB_TEMP/manifests" | LC_ALL=C sort -u | head -n 1)
+    ob_parallel_statement package_boundary '.' inferred "$value"
+  else
+    ob_parallel_statement package_boundary '*' unknown 'no bounded package/workspace manifest signal'
+  fi
+  ob_parallel_statement api_boundary '*' unknown 'no explicit bounded API boundary declaration'
+  if [[ -s $CB_OB_TEMP/generated ]]; then
+    while IFS= read -r value; do
+      ob_parallel_statement generated_ownership "$value" inferred "$value"
+      ob_parallel_statement write_conflict "$value" inferred "$value"
+    done <"$CB_OB_TEMP/generated"
+  else
+    ob_parallel_statement generated_ownership '*' unknown 'no generated ownership signal'
+    ob_parallel_statement write_conflict '*' unknown 'no bounded write-conflict signal'
+  fi
+  for kind in shared_cache shared_build_output shared_port shared_database shared_fixture test_shard write_safe; do
+    ob_parallel_statement "$kind" '*' unknown "no bounded ${kind//_/ } declaration"
+  done
+  LC_ALL=C sort -u -o "$CB_OB_TEMP/parallelism-map.raw" "$CB_OB_TEMP/parallelism-map.raw"
+  # Reserve one statement for every public-contract category before spending
+  # the remaining budget on additional evidence from noisy repositories.
+  for kind in "${required_kinds[@]}"; do
+    line=$(grep -m 1 "^${kind}"$'\t' "$CB_OB_TEMP/parallelism-map.raw") || cb_die "parallelism map is missing required category: $kind"
+    printf '%s\n' "$line" >>"$CB_OB_TEMP/parallelism-map"
+  done
+  while IFS= read -r line; do
+    [[ $(wc -l <"$CB_OB_TEMP/parallelism-map") -lt 64 ]] || break
+    grep -Fqx -- "$line" "$CB_OB_TEMP/parallelism-map" || printf '%s\n' "$line" >>"$CB_OB_TEMP/parallelism-map"
+  done <"$CB_OB_TEMP/parallelism-map.raw"
+  LC_ALL=C sort -u -o "$CB_OB_TEMP/parallelism-map" "$CB_OB_TEMP/parallelism-map"
+}
+
+ob_json_parallelism_map() {
+  local kind subject status evidence separator=''
+  printf '{"statements":['
+  while IFS=$'\t' read -r kind subject status evidence; do
+    printf '%s{"kind":"%s","subject":"%s","status":"%s","evidence":["%s"]}' \
+      "$separator" "$kind" "$(cb_json_escape "$subject")" "$status" "$(cb_json_escape "$evidence")"
+    separator=,
+  done <"$CB_OB_TEMP/parallelism-map"
+  printf ']}'
+}
+
+ob_render_parallelism_map() {
+  local kind subject status evidence emitted=0
+  printf '\n%s\n' '## Parallel execution map (static evidence only)'
+  while IFS=$'\t' read -r kind subject status evidence; do
+    [[ $status != unknown && ${#subject} -le 240 && $subject =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ ]] || continue
+    printf -- '- %s%s%s: %s (%s; evidence %s%s%s)\n' '`' "$kind" '`' "$subject" "$status" '`' "$evidence" '`'
+    emitted=$((emitted + 1))
+    [[ $emitted -lt 12 ]] || break
+  done <"$CB_OB_TEMP/parallelism-map"
+  [[ $emitted -gt 0 ]] || printf '%s\n' '- No safe parallel boundary was established by static discovery.'
+  printf '%s\n' '- Unknown write isolation means one parent writer; unknown test isolation means serial tests.'
+}
+
 ob_print_list() {
   local title=$1 file=$2 line emitted=0 omitted=0
   printf '%s\n' "$title"
@@ -305,6 +379,7 @@ ob_render_block() {
     ob_render_safe_path_section 'Architecture and project evidence' "$CB_OB_TEMP/docs"
     ob_render_safe_path_section 'Generated-file signals (avoid manual edits unless required)' "$CB_OB_TEMP/generated"
     ob_render_safe_path_section 'Risk-sensitive path signals (raise verification depth)' "$CB_OB_TEMP/sensitive-areas"
+    ob_render_parallelism_map
     printf '\n%s\n' '## Static discovery coverage'
     printf -- '- Git metadata observed: %s. Manifests: %d; CI: %d; architecture/docs: %d; quality configs: %d; test paths: %d; deployment/IaC: %d; generated-file signals: %d.\n' \
       "$CB_OB_GIT_DETECTED" "$(wc -l <"$CB_OB_TEMP/manifests")" "$(wc -l <"$CB_OB_TEMP/ci")" \
@@ -413,12 +488,14 @@ ob_report() {
     fi
   fi
   if [[ $CB_OB_JSON -eq 1 ]]; then
-    printf '{"schema":1,"contract":"codex-baseline-onboarding/v1","platform":"unix","mode":"%s","repository":"%s","entries_visited":%d,"files":%d,"bytes":%d,"links_skipped":%d,"sensitive_skipped":%d,"large_skipped":%d,"root_agents":"%s","existing_instructions":%s,"existing_instructions_require_ack":%s,"existing_instructions_acknowledged":%s,"git_detected":%s,"project_commands_executed":false' \
+    printf '{"schema":2,"contract":"codex-baseline-onboarding/v2","platform":"unix","mode":"%s","repository":"%s","entries_visited":%d,"files":%d,"bytes":%d,"links_skipped":%d,"sensitive_skipped":%d,"large_skipped":%d,"root_agents":"%s","existing_instructions":%s,"existing_instructions_require_ack":%s,"existing_instructions_acknowledged":%s,"git_detected":%s,"project_commands_executed":false' \
       "$([[ $CB_OB_APPLY -eq 1 ]] && printf apply || printf dry-run)" "$(cb_json_escape "$CB_OB_ROOT_PATH")" "$CB_OB_ENTRIES" "$CB_OB_COUNT" "$CB_OB_TOTAL" "$CB_OB_LINKS" "$CB_OB_SKIPPED_SENSITIVE" "$CB_OB_SKIPPED_LARGE" "$root_agents" "$conflict" "$requires_ack" "$([[ $CB_OB_ACKNOWLEDGE_EXISTING_INSTRUCTIONS -eq 1 ]] && printf true || printf false)" "$CB_OB_GIT_DETECTED"
     for list in commands manifests ai ci docs quality tests deployment generated source-roots sensitive-areas warnings; do
       printf ',"%s":' "${list//-/_}"
       ob_json_array "$CB_OB_TEMP/$list"
     done
+    printf ',"parallelism_map":'
+    ob_json_parallelism_map
     printf '}\n'
   else
     printf 'Repository: %s\nMode: %s\nEntries visited: %d; static files inspected: %d (%d bytes)\nSkipped: %d links, %d sensitive paths, %d oversized/budgeted files\nProject commands executed: none\n\n' \
@@ -458,6 +535,7 @@ main() {
   ob_parse "$@"
   ob_collect
   ob_infer_commands
+  ob_build_parallelism_map
   ob_report
 }
 

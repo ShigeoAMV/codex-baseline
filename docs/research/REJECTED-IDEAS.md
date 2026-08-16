@@ -1,6 +1,6 @@
 # Rejected and deferred ideas
 
-Research date: 2026-08-13
+Research date: 2026-08-15
 
 Rejection means "not in the universal supported baseline," not that a project
 has no value. Rejected packages can remain isolated benchmark subjects. A
@@ -18,8 +18,13 @@ decision can be revisited when new evidence changes its measurable tradeoff.
 | Hook-only secret, permission, or completion enforcement | rejected | Hosted/special tool paths can bypass hooks; crashes/timeouts/malformed output can fail open | Never as sole enforcement; hooks may complement OS sandbox, CI, and deterministic rules |
 | Custom Ralph continuation engine | rejected | Native Goal mode already preserves objective/completion audits; open loops add drift, cost, false done, and side-effect risk | A benchmark shows a bounded external orchestrator adds unique value over Goal mode |
 | Unlimited Gauntlet/doubt iterations | rejected | Intrinsic self-review is weak and extra rounds without new evidence waste compute or degrade results | A finite risk-triggered review with new evidence, max rounds, and no-progress stop is allowed |
-| Automatic subagents for every meaningful task | rejected | Multi-agent work costs more tokens and shared code/state creates conflicts and lifecycle failure modes | Explicit independent read-heavy breadth or fresh review with measurable value |
+| Blind subagents or maximum fan-out for every meaningful task | rejected | Slot count is not useful-lane count; duplicated context, integration, shared state, and idle lifecycle can cost more tokens and time | Automatic TEAM/SWARM is allowed only for evidenced immediately runnable lanes and remains subject to live gates |
 | Parallel writable agents in one checkout | rejected | Overlapping files and shared Git state make ownership and rollback ambiguous | Separate worktrees, non-overlapping ownership, and integration order are explicit |
+| User-selected TURBO/parallelism mode as a required task decision | rejected | The product goal is zero routine orchestration decisions for the user | Respect explicit veto/caps, but otherwise Codex selects SOLO/TEAM/SWARM itself |
+| Fill all six slots or routine best-of-N duplication | rejected | Artificial lanes consume context/tokens and add integration without critical-path value | At most two competing hypotheses when high uncertainty makes a wrong path more expensive than duplicate analysis |
+| Global child model/effort defaults or model-catalog/`multi_agent_v2` hacks | rejected | Offered models/capabilities vary by runtime and account; hidden global routing can burn tokens or break compatibility | Task-local offered model hint, one inherited fallback, and honest actual-model telemetry |
+| Duplicate planner/researcher/tester wrapper-agent suite | rejected | Built-in explorer/worker plus the existing reviewer cover the needed roles; extra wrappers add prompt and maintenance surface | Add a role only after a distinct permission/context contract and paired result prove unique value |
+| Automatically enable Fast/Ultrafast as an orchestration optimization | rejected | Session speed and its quota/economic tradeoff belong to the user; Ultrafast has no stable Codex config contract | Fast only through explicit optimizer apply; Ultrafast remains non-mutating unavailable until an official contract/probe |
 | Hidden task classifier service/model | rejected | Adds cost, latency, and opaque behavior for a semantic decision the main agent can state and fixtures can test | A controlled benchmark shows materially better routing at acceptable overhead |
 | New inline `[profiles.*]` config | rejected | Removed native profile format since 0.134 and can conflict with separate profile files | Never for supported 0.147+ |
 | `codex exec --full-auto` | rejected | Removed in stable 0.147 despite stale prose; it also obscures actual sandbox intent | Never; use explicit sandbox/approval settings |

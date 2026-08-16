@@ -1,6 +1,6 @@
 # Candidate evaluation
 
-Research date: 2026-08-14
+Research date: 2026-08-15
 
 Decision vocabulary:
 
@@ -23,7 +23,7 @@ equivalence. Community reports are expanded in `COMMUNITY-FINDINGS.md`.
 | Native `AGENTS.md` | Layer global invariants with repo and subtree guidance | Stable across CLI, IDE, and app; global override and project precedence are implemented in 0.147 | Near-zero operational lock-in, but every loaded byte consumes context and stale/generated text can harm results | **Adopt**, with a measured small global block and conflict-safe repo onboarding |
 | Native Agent Skills | Progressive workflow disclosure from `.agents/skills` | Stable across CLI, IDE, and app; open Agent Skills format; symlinks supported | Initial metadata has a bounded context cost; full skill costs only on activation; quality varies sharply | **Adopt** a very small tested set; reject bulk packs |
 | Project `.codex/config.toml` and profile files | Durable trusted-repo overrides and explicit user configuration layers | Stable and cross-client; profiles changed in 0.134 and are now separate files | Strong native precedence/trust model; project keys have security restrictions and profiles are not automatic routing | **Adopt selectively**; do not write provider/auth/telemetry settings during onboarding |
-| Native custom agents and subagents | Isolated roles and parallel bounded work | Stable in app, CLI, and IDE; token overhead and lifecycle issues remain | Useful for read-heavy breadth/fresh review; write conflicts and runtime permission inheritance need controls | **Adopt selectively**, with one fresh reviewer and explicit ownership rather than default fan-out |
+| Native custom agents and subagents | Isolated roles and parallel bounded work | Stable in app, CLI, and IDE; token overhead and lifecycle issues remain | Useful for independent critical-path reads, implementation lanes, test shards, and fresh review; write conflicts and runtime permission inheritance need controls | **Adopt adaptively**: automatic SOLO/TEAM/SWARM from useful lanes, explicit ownership/isolation, no filler fan-out, and live promotion gates |
 | Plan, Review, and Goal modes | Proportional planning, native review, and persistent bounded work | Stable current product capabilities; Goal mode GA since May 2026 | Replaces much custom workflow machinery; plan/self-review still is not executable proof | **Adopt**; augment with acceptance/evidence artifacts and deterministic checks |
 | Native hooks | Lifecycle scripts around tools, compaction, prompts, agents, and stop | GA, but 0.147 differs from current docs on async handlers and open surface/coverage bugs exist | Additive concurrent handlers, trust UX, mostly fail-open errors, context spill, and dangerous Stop continuation semantics | **Do not use in core initially**; only add a narrow synchronous hook after a measured need and cross-surface smoke tests |
 | `codex exec --json` | Noninteractive automation and JSONL telemetry | Stable on CLI, with schema-constrained final output and token/tool events | Machine-testable and low lock-in; careful parser/error handling and auth isolation required | **Adopt** for benchmarks and controlled reviews |

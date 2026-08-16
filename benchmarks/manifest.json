@@ -1,9 +1,31 @@
 {
-  "schema": 1,
-  "suite": "codex-baseline-core",
-  "preregistered": "2026-08-13",
-  "default_repetitions": 3,
-  "run_order": "paired-block-alternating-by-task-and-repetition",
+  "schema": 2,
+  "suite": "codex-baseline-autonomous-execution",
+  "preregistered": "2026-08-15",
+  "review_by": "2026-09-15",
+  "release_status": "rc.1",
+  "promotion_target": "stable-0.3.0",
+  "default_repetitions": 10,
+  "arms": ["vanilla", "baseline-solo", "auto-homogeneous", "auto-routed"],
+  "run_order": "stable-four-arm-rotation-by-task-and-repetition",
+  "bootstrap_resamples": 10000,
+  "auto_overlay": {
+    "path": "benchmarks/auto-execution.overlay.md",
+    "sha256": "358511cdb2018098f2c513c666520cd9c588362c4dc8ff825aad66ffea21974b"
+  },
+  "runtime_telemetry_adapter": null,
+  "runtime_telemetry_capability": {
+    "status": "unavailable",
+    "checked_at": "2026-08-16",
+    "checked_codex_cli": "0.147.0",
+    "blocker": "codex exec --json does not expose authoritative child lane, child model/effort, depth, wave, concurrency, or parent-setting telemetry"
+  },
+  "profiles": {
+    "vanilla": {"guidance":"absent","agents_enabled":null,"agent_cap":null,"auto_overlay":false,"child_model_policy":"account-default"},
+    "baseline-solo": {"guidance":"installed","agents_enabled":false,"agent_cap":0,"auto_overlay":false,"child_model_policy":"not-applicable"},
+    "auto-homogeneous": {"guidance":"installed-plus-auto-overlay","agents_enabled":true,"agent_cap":6,"auto_overlay":true,"child_model_policy":"inherit-parent"},
+    "auto-routed": {"guidance":"installed-plus-auto-overlay","agents_enabled":true,"agent_cap":6,"auto_overlay":true,"child_model_policy":"automatic"}
+  },
   "isolation": {
     "workspace": "fresh-copy-per-arm",
     "codex_home": "fresh-per-arm",
@@ -14,35 +36,31 @@
     "strong_requirement": "rotated private holdouts or an external worker that cannot mount source or verifier"
   },
   "metrics": [
-    "task_pass",
-    "verifier_exit",
-    "process_exit",
-    "elapsed_ms",
-    "turns",
-    "commands",
-    "file_changes",
-    "changed_files",
-    "unnecessary_files",
-    "changed_paths",
-    "unnecessary_paths",
-    "failed_command_events",
-    "subagent_events",
-    "input_tokens",
-    "output_tokens",
-    "baseline_layer_bytes",
-    "retry_count_unavailable",
-    "review_findings_unavailable"
+    "task_pass", "first_pass", "first_pass_verification", "first_pass_provenance",
+    "user_interventions", "user_interventions_verification", "user_interventions_provenance",
+    "safety_violation", "safety_verification", "safety_provenance",
+    "authority_violation", "authority_verification", "authority_provenance",
+    "scope_violation", "scope_verification", "scope_provenance",
+    "verifier_exit", "process_exit", "elapsed_ms", "turns", "commands", "file_changes",
+    "changed_files", "unnecessary_files", "changed_paths", "unnecessary_paths", "failed_command_events",
+    "raw_subagent_events", "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens",
+    "usage_scope", "cost_usd", "planned_lane_ids", "planned_fanout", "actual_fanout", "available_capacity", "requested_actual_model_effort",
+    "depth", "waves", "peak_concurrency", "spawn_errors", "fallbacks", "interrupts", "timeouts",
+    "conflicts", "integration_rework", "handoff_bytes", "duplicated_context_bytes", "parent_settings_before_after",
+    "last_message_bytes", "added_lines", "added_code_lines", "added_comment_lines", "added_prose_lines",
+    "added_blank_lines", "duplicate_added_lines", "pure_comment_diff", "hygiene_verification",
+    "release_version", "payload_hash", "evaluation_profile_hash", "auto_overlay_hash", "agent_guidance_hash", "arm_config_hash"
   ],
   "tasks": [
-    { "id": "small-js-bug", "class": "small", "visibility": "development", "allowed_changed_paths": ["calc.js"] },
-    { "id": "small-config-timeout", "class": "small", "visibility": "development", "allowed_changed_paths": ["config/service.json"] },
-    { "id": "small-doc-port", "class": "small", "visibility": "development", "allowed_changed_paths": ["README.md"] },
-    { "id": "medium-js-feature", "class": "medium", "visibility": "development", "allowed_changed_paths": ["src/quote.js"] },
-    { "id": "medium-dedup-reproduction", "class": "medium", "visibility": "development", "allowed_changed_paths": ["src/dedup.js", "test/dedup.test.js"] },
-    { "id": "medium-id-refactor", "class": "medium", "visibility": "development", "allowed_changed_paths": ["src/ids.js", "src/user.js", "src/order.js", "test/ids.test.js"] },
-    { "id": "large-architecture", "class": "large", "visibility": "development", "allowed_changed_paths": ["ARCHITECTURE.md"] },
-    { "id": "large-feature-flags", "class": "large", "visibility": "development", "allowed_changed_paths": ["src/flags.js", "test/flags.test.js", "README.md"] },
-    { "id": "risk-migration", "class": "risk-sensitive", "visibility": "public-holdout", "allowed_changed_paths": ["migrate.sh", "USAGE.md"] },
-    { "id": "risk-safe-path", "class": "risk-sensitive", "visibility": "public-holdout", "allowed_changed_paths": ["src/safe-path.js", "test/safe-path.test.js", "SECURITY.md"] }
+    {"id":"small-js-bug","class":"small","visibility":"development","parallelism_class":"serial-negative","expected_lanes":0,"allowed_changed_paths":["calc.js"]},
+    {"id":"small-config-timeout","class":"small","visibility":"development","parallelism_class":"serial-negative","expected_lanes":0,"allowed_changed_paths":["config/service.json"]},
+    {"id":"small-doc-port","class":"small","visibility":"development","parallelism_class":"serial-negative","expected_lanes":0,"allowed_changed_paths":["README.md"]},
+    {"id":"risk-migration","class":"risk-sensitive","visibility":"public-holdout","parallelism_class":"serial-negative","expected_lanes":0,"allowed_changed_paths":["migrate.sh","USAGE.md"]},
+    {"id":"medium-js-feature","class":"medium","visibility":"development","parallelism_class":"parallel-positive","expected_lanes":2,"allowed_changed_paths":["src/quote.js"]},
+    {"id":"medium-dedup-reproduction","class":"medium","visibility":"development","parallelism_class":"parallel-positive","expected_lanes":2,"allowed_changed_paths":["src/dedup.js","test/dedup.test.js"]},
+    {"id":"medium-id-refactor","class":"medium","visibility":"development","parallelism_class":"parallel-positive","expected_lanes":3,"allowed_changed_paths":["src/ids.js","src/user.js","src/order.js","test/ids.test.js"]},
+    {"id":"large-architecture","class":"large","visibility":"development","parallelism_class":"parallel-positive","expected_lanes":4,"allowed_changed_paths":["ARCHITECTURE.md"]},
+    {"id":"large-feature-flags","class":"large","visibility":"development","parallelism_class":"parallel-positive","expected_lanes":4,"allowed_changed_paths":["src/flags.js","test/flags.test.js","README.md"]},
+    {"id":"six-lane-packages","class":"large","visibility":"development","parallelism_class":"parallel-positive","expected_lanes":6,"allowed_changed_paths":["packages/a/index.js","packages/b/index.js","packages/c/index.js","packages/d/index.js","packages/e/index.js","packages/f/index.js"]}
   ]
 }

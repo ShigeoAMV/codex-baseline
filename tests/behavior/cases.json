@@ -1,20 +1,24 @@
 {
-  "schema": 1,
+  "schema": 2,
   "cases": [
     {
       "id": "deep-risk-plan",
+      "profile": "auto-evaluation",
       "task": "Read request.md and architecture.md. Produce a bounded implementation plan only; do not change files or perform the migration. Research every discoverable fact in the supplied repository before deciding whether any material question remains."
     },
     {
       "id": "ambiguity-research",
+      "profile": "auto-evaluation",
       "task": "Read request.md, README.md, and docs/current-contract.md. Do not change files. Resolve repository facts yourself, then ask only a genuinely material product decision that remains unavailable from those sources."
     },
     {
       "id": "onboarding-semantic",
+      "profile": "auto-evaluation",
       "task": "Analyze this existing repository for Codex onboarding without changing files or executing repository/package commands. Preserve existing guidance and return evidence-labelled build, test, lint, type-check, architecture, generated-file, and validation facts."
     },
     {
       "id": "conformance-review",
+      "profile": "auto-evaluation",
       "task": "Act as a fresh independent conformance reviewer. Read the original request, frozen criteria, delivered artifact, and verification receipt. Do not modify files or rerun mutating checks. Classify every criterion and return an evidence-backed verdict."
     }
   ]

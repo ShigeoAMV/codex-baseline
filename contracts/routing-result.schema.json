@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/routing-result-v1.schema.json",
+  "$id": "https://codex-baseline.invalid/contracts/routing-result-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "contract", "id", "repetition", "pass", "process_exit", "elapsed_ms", "turns", "commands", "file_changes", "input_tokens", "output_tokens", "source_hash", "prompt_hash", "expected", "actual"],
   "properties": {
-    "schema": {"const": 1},
-    "contract": {"const": "codex-baseline-routing-result/v1"},
-    "id": {"enum": ["lean-typo", "lean-readonly-diagnosis", "lean-two-file-fix", "strict-feature", "strict-readonly-architecture", "deep-architecture-implementation", "deep-auth-migration", "onboarding", "conformance", "retrospective"]},
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-routing-result/v2"},
+    "id": {"enum": ["production-overlay-spoof", "production-capacity-not-activation", "lean-typo", "lean-readonly-diagnosis", "lean-two-file-fix", "strict-coupled-feature", "strict-readonly-architecture", "team-one-exploration", "team-three-components", "swarm-six-packages", "deep-architecture-implementation", "deep-auth-migration", "onboarding", "conformance", "retrospective", "user-veto"]},
     "repetition": {"type": "integer", "minimum": 1},
     "pass": {"type": "boolean"},
     "process_exit": {"type": "integer", "minimum": 0},
@@ -20,114 +20,140 @@
     "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "prompt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "expected": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["workflow", "high_risk", "skill"],
+      "type": "object", "additionalProperties": false,
+      "required": ["execution_profile", "workflow", "high_risk", "skill", "execution", "planned_fanout", "write_isolation"],
       "properties": {
+        "execution_profile": {"enum": ["production-rc", "auto-evaluation"]},
         "workflow": {"enum": ["LEAN", "STRICT", "DEEP"]},
         "high_risk": {"type": "boolean"},
-        "skill": {"type": ["string", "null"]}
+        "skill": {"type": ["string", "null"]},
+        "execution": {"enum": ["SOLO", "TEAM", "SWARM"]},
+        "planned_fanout": {"type": "integer", "minimum": 0, "maximum": 6},
+        "write_isolation": {"enum": ["read-only", "single-writer", "verified-worktrees"]}
       }
     },
-    "actual": {
-      "anyOf": [
-        {"type": "null"},
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["workflow", "high_risk", "selected_skills", "reason"],
-          "properties": {
-            "workflow": {"enum": ["LEAN", "STRICT", "DEEP"]},
-            "high_risk": {"type": "boolean"},
-            "selected_skills": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-            "reason": {"type": "string", "minLength": 1}
-          }
-        }
+    "actual": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/execution_decision"}]}
+  },
+  "$defs": {
+    "lane": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "objective", "kind", "writer", "write_scope", "dependencies"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+        "objective": {"type": "string", "minLength": 1, "maxLength": 200},
+        "kind": {"enum": ["exploration", "implementation", "test", "review"]},
+        "writer": {"enum": ["none", "parent", "child"]},
+        "write_scope": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}}
+      }
+    },
+    "setting_snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "reasoning_effort", "speed"],
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "reasoning_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]},
+        "speed": {"enum": ["standard", "fast", "ultrafast", null]}
+      }
+    },
+    "isolation_observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verification", "value"],
+      "properties": {
+        "verification": {"enum": ["verified", "unverified"]},
+        "value": {"enum": ["read-only", "single-writer", "verified-worktrees", "isolated", "not-isolated", "not-applicable", null]}
+      },
+      "allOf": [
+        {"if": {"properties": {"verification": {"const": "unverified"}}}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"verification": {"const": "verified"}}}, "then": {"properties": {"value": {"not": {"type": "null"}}}}}
+      ]
+    },
+    "child_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["lane_id", "wave", "attempt", "requested_model", "requested_effort", "actual_model", "actual_effort", "outcome", "fallback_used", "verification"],
+      "properties": {
+        "lane_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+        "wave": {"type": "integer", "minimum": 1, "maximum": 4},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 2},
+        "requested_model": {"type": ["string", "null"]},
+        "requested_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]},
+        "actual_model": {"type": ["string", "null"]},
+        "actual_effort": {"enum": ["low", "medium", "high", "xhigh", "max", "ultra", null]},
+        "outcome": {"enum": ["completed", "failed", "interrupted", "timeout", null]},
+        "fallback_used": {"type": ["boolean", "null"]},
+        "verification": {"enum": ["verified", "unverified"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"verification": {"const": "unverified"}}}, "then": {"properties": {"actual_model": {"type": "null"}, "actual_effort": {"type": "null"}, "outcome": {"type": "null"}, "fallback_used": {"type": "null"}}}},
+        {"if": {"properties": {"verification": {"const": "verified"}}}, "then": {"properties": {"outcome": {"not": {"type": "null"}}, "fallback_used": {"type": "boolean"}}}}
+      ]
+    },
+    "runtime_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verification", "actual_fanout", "available_capacity", "children", "depth_intended", "depth_observed", "depth_verification", "waves_observed", "peak_concurrency", "spawn_failures", "fallbacks", "interrupts", "timeouts", "write_isolation", "worktree_isolation", "test_isolation", "conflicts", "integration_rework_actions", "handoff_bytes", "duplicate_context_bytes", "parent_settings_before", "parent_settings_after", "parent_settings_unchanged", "parent_settings_verification"],
+      "properties": {
+        "verification": {"enum": ["verified", "unverified"]},
+        "actual_fanout": {"type": ["integer", "null"], "minimum": 0, "maximum": 6},
+        "available_capacity": {"type": ["integer", "null"], "minimum": 0},
+        "children": {"type": "array", "maxItems": 48, "items": {"$ref": "#/$defs/child_receipt"}},
+        "depth_intended": {"type": "integer", "minimum": 0, "maximum": 1},
+        "depth_observed": {"type": ["integer", "null"], "minimum": 0},
+        "depth_verification": {"enum": ["verified", "unverified"]},
+        "waves_observed": {"type": ["integer", "null"], "minimum": 0, "maximum": 4},
+        "peak_concurrency": {"type": ["integer", "null"], "minimum": 0, "maximum": 6},
+        "spawn_failures": {"type": ["integer", "null"], "minimum": 0},
+        "fallbacks": {"type": ["integer", "null"], "minimum": 0},
+        "interrupts": {"type": ["integer", "null"], "minimum": 0},
+        "timeouts": {"type": ["integer", "null"], "minimum": 0},
+        "write_isolation": {"$ref": "#/$defs/isolation_observation"},
+        "worktree_isolation": {"$ref": "#/$defs/isolation_observation"},
+        "test_isolation": {"$ref": "#/$defs/isolation_observation"},
+        "conflicts": {"type": ["integer", "null"], "minimum": 0},
+        "integration_rework_actions": {"type": ["integer", "null"], "minimum": 0},
+        "handoff_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "duplicate_context_bytes": {"type": ["integer", "null"], "minimum": 0},
+        "parent_settings_before": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/setting_snapshot"}]},
+        "parent_settings_after": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/setting_snapshot"}]},
+        "parent_settings_unchanged": {"type": ["boolean", "null"]},
+        "parent_settings_verification": {"enum": ["verified", "unverified"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"verification": {"const": "unverified"}}}, "then": {"properties": {"children": {"items": {"properties": {"verification": {"const": "unverified"}}}}, "actual_fanout": {"type": "null"}, "available_capacity": {"type": "null"}, "depth_observed": {"type": "null"}, "depth_verification": {"const": "unverified"}, "waves_observed": {"type": "null"}, "peak_concurrency": {"type": "null"}, "spawn_failures": {"type": "null"}, "fallbacks": {"type": "null"}, "interrupts": {"type": "null"}, "timeouts": {"type": "null"}, "conflicts": {"type": "null"}, "integration_rework_actions": {"type": "null"}, "handoff_bytes": {"type": "null"}, "duplicate_context_bytes": {"type": "null"}, "parent_settings_before": {"type": "null"}, "parent_settings_after": {"type": "null"}, "parent_settings_unchanged": {"type": "null"}, "parent_settings_verification": {"const": "unverified"}, "write_isolation": {"properties": {"verification": {"const": "unverified"}, "value": {"type": "null"}}}, "worktree_isolation": {"properties": {"verification": {"const": "unverified"}, "value": {"type": "null"}}}, "test_isolation": {"properties": {"verification": {"const": "unverified"}, "value": {"type": "null"}}}}}},
+        {"if": {"properties": {"verification": {"const": "verified"}}}, "then": {"properties": {"children": {"items": {"properties": {"verification": {"const": "verified"}}}}, "actual_fanout": {"type": "integer"}, "available_capacity": {"type": "integer"}, "depth_observed": {"type": "integer"}, "depth_verification": {"const": "verified"}, "waves_observed": {"type": "integer"}, "peak_concurrency": {"type": "integer"}, "spawn_failures": {"type": "integer"}, "fallbacks": {"type": "integer"}, "interrupts": {"type": "integer"}, "timeouts": {"type": "integer"}, "conflicts": {"type": "integer"}, "integration_rework_actions": {"type": "integer"}, "handoff_bytes": {"type": "integer"}, "duplicate_context_bytes": {"type": "integer"}, "parent_settings_before": {"$ref": "#/$defs/setting_snapshot"}, "parent_settings_after": {"$ref": "#/$defs/setting_snapshot"}, "parent_settings_unchanged": {"const": true}, "parent_settings_verification": {"const": "verified"}, "write_isolation": {"properties": {"verification": {"const": "verified"}, "value": {"not": {"type": "null"}}}}, "worktree_isolation": {"properties": {"verification": {"const": "verified"}, "value": {"not": {"type": "null"}}}}, "test_isolation": {"properties": {"verification": {"const": "verified"}, "value": {"not": {"type": "null"}}}}}}}
+      ]
+    },
+    "execution_decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["execution_profile", "workflow", "high_risk", "selected_skills", "execution", "parallelism_reason", "planned_fanout", "planned_lanes", "child_limit", "wave_limit", "write_isolation", "runtime_receipt", "reason"],
+      "properties": {
+        "execution_profile": {"enum": ["production-rc", "auto-evaluation"]},
+        "workflow": {"enum": ["LEAN", "STRICT", "DEEP"]},
+        "high_risk": {"type": "boolean"},
+        "selected_skills": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "execution": {"enum": ["SOLO", "TEAM", "SWARM"]},
+        "parallelism_reason": {"type": "string", "minLength": 1, "maxLength": 300},
+        "planned_fanout": {"type": "integer", "minimum": 0, "maximum": 6},
+        "planned_lanes": {"type": "array", "maxItems": 6, "items": {"$ref": "#/$defs/lane"}},
+        "child_limit": {"type": "integer", "minimum": 0, "maximum": 6},
+        "wave_limit": {"type": "integer", "minimum": 0, "maximum": 4},
+        "write_isolation": {"enum": ["read-only", "single-writer", "verified-worktrees"]},
+        "runtime_receipt": {"$ref": "#/$defs/runtime_receipt"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 300}
+      },
+      "allOf": [
+        {"if": {"properties": {"execution_profile": {"const": "production-rc"}}}, "then": {"properties": {"execution": {"const": "SOLO"}, "planned_fanout": {"const": 0}, "planned_lanes": {"maxItems": 0}}}},
+        {"if": {"properties": {"execution": {"const": "SOLO"}}}, "then": {"properties": {"planned_fanout": {"const": 0}, "planned_lanes": {"maxItems": 0}, "runtime_receipt": {"properties": {"actual_fanout": {"enum": [0, null]}, "depth_intended": {"const": 0}, "children": {"maxItems": 0}}}}}},
+        {"if": {"properties": {"execution": {"const": "TEAM"}}}, "then": {"properties": {"execution_profile": {"const": "auto-evaluation"}, "planned_fanout": {"minimum": 1, "maximum": 3}, "planned_lanes": {"minItems": 1, "maxItems": 3}, "runtime_receipt": {"properties": {"actual_fanout": {"type": ["integer", "null"], "minimum": 0, "maximum": 3}, "depth_intended": {"const": 1}}}}}},
+        {"if": {"properties": {"execution": {"const": "SWARM"}}}, "then": {"properties": {"execution_profile": {"const": "auto-evaluation"}, "planned_fanout": {"minimum": 4, "maximum": 6}, "planned_lanes": {"minItems": 4, "maxItems": 6}, "runtime_receipt": {"properties": {"actual_fanout": {"type": ["integer", "null"], "minimum": 0, "maximum": 6}, "depth_intended": {"const": 1}}}}}}
       ]
     }
   },
   "allOf": [
-    {
-      "if": {"properties": {"pass": {"const": true}}, "required": ["pass"]},
-      "then": {
-        "properties": {
-          "process_exit": {"const": 0},
-          "turns": {"minimum": 1},
-          "commands": {"const": 0},
-          "file_changes": {"const": 0},
-          "actual": {"type": "object"}
-        }
-      }
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "lean-typo"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
-        "actual": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "lean-readonly-diagnosis"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
-        "actual": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "lean-two-file-fix"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
-        "actual": {"properties": {"workflow": {"const": "LEAN"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "strict-feature"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
-        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "strict-readonly-architecture"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"type": "null"}}},
-        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"maxItems": 0}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "deep-architecture-implementation"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-deep-work"}}},
-        "actual": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-deep-work"}}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "deep-auth-migration"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": true}, "skill": {"const": "codex-baseline-deep-work"}}},
-        "actual": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": true}, "selected_skills": {"contains": {"const": "codex-baseline-deep-work"}}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "onboarding"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-repo-onboarding"}}},
-        "actual": {"properties": {"workflow": {"const": "DEEP"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-repo-onboarding"}}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "conformance"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-conformance-review"}}},
-        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-conformance-review"}}}}
-      }}
-    },
-    {
-      "if": {"properties": {"pass": {"const": true}, "id": {"const": "retrospective"}}, "required": ["pass", "id"]},
-      "then": {"properties": {
-        "expected": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "skill": {"const": "codex-baseline-retrospective"}}},
-        "actual": {"properties": {"workflow": {"const": "STRICT"}, "high_risk": {"const": false}, "selected_skills": {"contains": {"const": "codex-baseline-retrospective"}}}}
-      }}
-    }
+    {"if": {"properties": {"expected": {"properties": {"execution_profile": {"const": "production-rc"}}}}}, "then": {"properties": {"expected": {"properties": {"execution": {"const": "SOLO"}, "planned_fanout": {"const": 0}}}, "actual": {"anyOf": [{"type": "null"}, {"properties": {"execution_profile": {"const": "production-rc"}, "execution": {"const": "SOLO"}}}]}}}},
+    {"if": {"properties": {"expected": {"properties": {"execution_profile": {"const": "auto-evaluation"}}}}}, "then": {"properties": {"actual": {"anyOf": [{"type": "null"}, {"properties": {"execution_profile": {"const": "auto-evaluation"}}}]}}}},
+    {"if": {"properties": {"expected": {"properties": {"execution": {"const": "SOLO"}}}}}, "then": {"properties": {"expected": {"properties": {"planned_fanout": {"const": 0}}}, "actual": {"anyOf": [{"type": "null"}, {"properties": {"execution": {"const": "SOLO"}}}]}}}},
+    {"if": {"properties": {"expected": {"properties": {"execution": {"const": "TEAM"}}}}}, "then": {"properties": {"expected": {"properties": {"planned_fanout": {"minimum": 1, "maximum": 3}}}, "actual": {"anyOf": [{"type": "null"}, {"properties": {"execution": {"const": "TEAM"}}}]}}}},
+    {"if": {"properties": {"expected": {"properties": {"execution": {"const": "SWARM"}}}}}, "then": {"properties": {"expected": {"properties": {"planned_fanout": {"minimum": 4, "maximum": 6}}}, "actual": {"anyOf": [{"type": "null"}, {"properties": {"execution": {"const": "SWARM"}}}]}}}},
+    {"if": {"properties": {"pass": {"const": true}}}, "then": {"properties": {"process_exit": {"const": 0}, "turns": {"minimum": 1}, "commands": {"const": 0}, "file_changes": {"const": 0}, "actual": {"$ref": "#/$defs/execution_decision"}}}}
   ]
 }

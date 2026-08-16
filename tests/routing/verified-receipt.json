@@ -1,0 +1,47 @@
+{
+  "execution_profile": "auto-evaluation",
+  "workflow": "STRICT",
+  "high_risk": false,
+  "selected_skills": [],
+  "execution": "TEAM",
+  "parallelism_reason": "Two independent read-only lanes shorten the critical path.",
+  "planned_fanout": 2,
+  "planned_lanes": [
+    {"id": "bash", "objective": "Inspect Bash", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []},
+    {"id": "powershell", "objective": "Inspect PowerShell", "kind": "exploration", "writer": "none", "write_scope": [], "dependencies": []}
+  ],
+  "child_limit": 6,
+  "wave_limit": 4,
+  "write_isolation": "read-only",
+  "runtime_receipt": {
+    "verification": "verified",
+    "actual_fanout": 2,
+    "available_capacity": 6,
+    "children": [
+      {"lane_id": "bash", "wave": 1, "attempt": 1, "requested_model": "gpt-5.6-terra", "requested_effort": "medium", "actual_model": "gpt-5.6-terra", "actual_effort": "medium", "outcome": "completed", "fallback_used": false, "verification": "verified"},
+      {"lane_id": "powershell", "wave": 1, "attempt": 1, "requested_model": "gpt-5.6-terra", "requested_effort": "medium", "actual_model": null, "actual_effort": null, "outcome": "failed", "fallback_used": false, "verification": "verified"},
+      {"lane_id": "powershell", "wave": 1, "attempt": 2, "requested_model": null, "requested_effort": null, "actual_model": "gpt-5.6-sol", "actual_effort": "high", "outcome": "completed", "fallback_used": true, "verification": "verified"}
+    ],
+    "depth_intended": 1,
+    "depth_observed": 1,
+    "depth_verification": "verified",
+    "waves_observed": 1,
+    "peak_concurrency": 2,
+    "spawn_failures": 1,
+    "fallbacks": 1,
+    "interrupts": 0,
+    "timeouts": 0,
+    "write_isolation": {"verification": "verified", "value": "read-only"},
+    "worktree_isolation": {"verification": "verified", "value": "not-applicable"},
+    "test_isolation": {"verification": "verified", "value": "not-applicable"},
+    "conflicts": 0,
+    "integration_rework_actions": 0,
+    "handoff_bytes": 2048,
+    "duplicate_context_bytes": 128,
+    "parent_settings_before": {"model": "gpt-5.6-sol", "reasoning_effort": "high", "speed": "standard"},
+    "parent_settings_after": {"model": "gpt-5.6-sol", "reasoning_effort": "high", "speed": "standard"},
+    "parent_settings_unchanged": true,
+    "parent_settings_verification": "verified"
+  },
+  "reason": "The receipt records a single inherited fallback without estimating unavailable data."
+}

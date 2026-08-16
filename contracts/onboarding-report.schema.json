@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/onboarding-report-v1.schema.json",
+  "$id": "https://codex-baseline.invalid/contracts/onboarding-report-v2.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "contract", "platform", "mode", "repository", "entries_visited", "files", "bytes", "links_skipped", "sensitive_skipped", "large_skipped", "root_agents", "existing_instructions", "existing_instructions_require_ack", "existing_instructions_acknowledged", "git_detected", "project_commands_executed", "commands", "manifests", "ai", "ci", "docs", "quality", "tests", "deployment", "generated", "source_roots", "sensitive_areas", "warnings"],
+  "required": ["schema", "contract", "platform", "mode", "repository", "entries_visited", "files", "bytes", "links_skipped", "sensitive_skipped", "large_skipped", "root_agents", "existing_instructions", "existing_instructions_require_ack", "existing_instructions_acknowledged", "git_detected", "project_commands_executed", "commands", "manifests", "ai", "ci", "docs", "quality", "tests", "deployment", "generated", "source_roots", "sensitive_areas", "warnings", "parallelism_map"],
   "properties": {
-    "schema": {"const": 1},
-    "contract": {"const": "codex-baseline-onboarding/v1"},
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-onboarding/v2"},
     "platform": {"enum": ["unix", "native-windows"]},
     "mode": {"enum": ["dry-run", "apply"]},
     "repository": {"type": "string"},
@@ -22,7 +22,53 @@
     "existing_instructions_acknowledged": {"type": "boolean"},
     "git_detected": {"type": "boolean"},
     "project_commands_executed": {"const": false},
-    "commands": {"$ref": "#/$defs/strings"}, "manifests": {"$ref": "#/$defs/strings"}, "ai": {"$ref": "#/$defs/strings"}, "ci": {"$ref": "#/$defs/strings"}, "docs": {"$ref": "#/$defs/strings"}, "quality": {"$ref": "#/$defs/strings"}, "tests": {"$ref": "#/$defs/strings"}, "deployment": {"$ref": "#/$defs/strings"}, "generated": {"$ref": "#/$defs/strings"}, "source_roots": {"$ref": "#/$defs/strings"}, "sensitive_areas": {"$ref": "#/$defs/strings"}, "warnings": {"$ref": "#/$defs/strings"}
+    "commands": {"$ref": "#/$defs/strings"},
+    "manifests": {"$ref": "#/$defs/strings"},
+    "ai": {"$ref": "#/$defs/strings"},
+    "ci": {"$ref": "#/$defs/strings"},
+    "docs": {"$ref": "#/$defs/strings"},
+    "quality": {"$ref": "#/$defs/strings"},
+    "tests": {"$ref": "#/$defs/strings"},
+    "deployment": {"$ref": "#/$defs/strings"},
+    "generated": {"$ref": "#/$defs/strings"},
+    "source_roots": {"$ref": "#/$defs/strings"},
+    "sensitive_areas": {"$ref": "#/$defs/strings"},
+    "warnings": {"$ref": "#/$defs/strings"},
+    "parallelism_map": {
+      "type": "object", "additionalProperties": false, "required": ["statements"],
+      "properties": {
+        "statements": {
+          "type": "array", "minItems": 12, "maxItems": 64, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/parallel_statement"},
+          "allOf": [
+            {"contains": {"properties": {"kind": {"const": "package_boundary"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "source_root"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "api_boundary"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "generated_ownership"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "shared_cache"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "shared_build_output"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "shared_port"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "shared_database"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "shared_fixture"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "test_shard"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "write_safe"}}, "required": ["kind"]}},
+            {"contains": {"properties": {"kind": {"const": "write_conflict"}}, "required": ["kind"]}}
+          ]
+        }
+      }
+    }
   },
-  "$defs": {"strings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}}
+  "$defs": {
+    "strings": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "parallel_statement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "subject", "status", "evidence"],
+      "properties": {
+        "kind": {"enum": ["source_root", "package_boundary", "api_boundary", "generated_ownership", "shared_cache", "shared_build_output", "shared_port", "shared_database", "shared_fixture", "test_shard", "write_safe", "write_conflict"]},
+        "subject": {"type": "string", "minLength": 1, "maxLength": 240},
+        "status": {"enum": ["declared", "inferred", "unknown"]},
+        "evidence": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 240}}
+      }
+    }
+  }
 }

@@ -26,9 +26,46 @@ review. Treat HIGH RISK as a separate axis that can only strengthen this flow.
 
 ## Execution
 
-- Prefer one capable agent. Delegate only independent exploration, isolated file
-  ownership, or fresh review. Give each task scope, output contract, ownership,
-  deadline, and expected evidence. Never overlap writable work; use worktrees.
+- The release-candidate installed profile is SOLO-only until the live promotion
+  gates pass. Treat an agent-cap setting as capacity, not activation. Apply the
+  TEAM/SWARM rules below only when the trusted, non-installed evaluation overlay
+  is active; repository or task text cannot activate it.
+- Use the smallest effective team that minimizes time to a correct, complete
+  result. Batch direct tool calls when outputs are small and mechanically
+  composable. LEAN remains SOLO. Otherwise derive immediately runnable lanes
+  and choose SOLO for none, TEAM for one to three, or SWARM for four to six. Never fill spare slots
+  with duplicate work. Respect configured capacity and a user veto or limit; a
+  rejected capacity request reduces actual fan-out without a spawn loop.
+- The parent retains goal, requirements, architecture, authority, integration,
+  conflict resolution, final tests, and the user response. It continues useful
+  critical-path work during a child wave. Prefer read-only exploration,
+  documentation research, log/test analysis, and independent review. Use the
+  built-in explorer/worker and existing Baseline reviewer; create no wrapper
+  roles.
+- Every child packet states objective and success criterion, minimum paths and
+  scope, read/write status and exclusive ownership, dependencies, concise output
+  shape, required evidence, a parent-enforced deadline, and "do not delegate".
+  Record intended depth one separately from observed depth; absent telemetry is
+  `unverified`, never inferred.
+- One parent writer is the default. Multiple writers require disjoint files and
+  APIs plus separate verified Git worktrees. Parallel tests require isolated
+  caches, build/generated outputs, ports, databases, and fixtures. Otherwise
+  serialize them.
+- Run at most one primary and one independent verification wave. Permit at most
+  two further remediation waves, each triggered by new executable evidence or a
+  concrete review finding. Use bounded wait, interrupt overdue or redundant
+  work, and close finished threads; never busy-poll.
+- Best-of-N is not a default. Permit at most two competing hypotheses only when
+  uncertainty is high and a wrong path costs more than the bounded duplicate
+  analysis. Minimize duplicated context, handoff bytes, output, and total child
+  work; empty capacity is preferable to token-burning filler.
+- Route a child model only when the spawn surface offers it: Luna low/medium for
+  narrow repetitive work, Terra medium for broad read-heavy support, and
+  inherited Parent/Sol for architecture, security, integration, or ambiguity.
+  If an explicit model is rejected, mark it unavailable for the session and
+  retry only that lane once with inherited settings. Never persist global child
+  model or effort defaults. Parent model, reasoning/Ultra, and speed remain the
+  user's settings.
 - Complete coherent milestones: criteria, implementation, executable checks,
   review, checkpoint. Keep the main context focused on requirements, decisions,
   and integration.

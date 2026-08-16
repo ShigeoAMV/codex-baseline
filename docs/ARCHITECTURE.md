@@ -11,8 +11,9 @@ reviewed source checkout
 |-- four standalone user skills          -> progressive workflow detail
 |-- one custom reviewer role             -> fresh advisory perspective
 |-- Bash + PowerShell lifecycle           -> deploy/doctor/recover
-|-- hashed payload + operations contract  -> provenance/platform parity
-|-- static onboarding collector           -> repo-specific facts
+|-- hashed payload + core operations/v1   -> v0.2-compatible lifecycle plane
+|-- key-owned config operations/v2        -> explicit optimizer/config plane
+|-- static onboarding + parallelism map   -> optional repo-specific facts
 `-- source-bound evaluation boundary      -> paired/routing/Canary receipts
     |-- private source + executable copies
     |-- cgroup + Bubblewrap + bounded tmpfs
@@ -39,8 +40,9 @@ HTTPS/ZIP APIs.
 
 The source manifest is not a loose file list: both installers require the exact
 path inventory, byte lengths, file hashes, aggregate canonical payload digest,
-encoding/version metadata, and shared eight-object operations contract before
-install/update planning. The source is explicitly `unsigned-local-source`, its
+encoding/version metadata, the shared eight-object core operations contract,
+and the separate config-operations contract before install/update planning. The
+source is explicitly `unsigned-local-source`, its
 origin/revision/dirty state and payload hash are printed, and mutation requires
 acknowledgement. After verification, installers copy the exact payload into a
 private temporary snapshot, reverify it, and build every candidate only from
@@ -60,11 +62,18 @@ other lifecycle operation perform no fetch.
 
 ## Ownership and precedence
 
-The baseline owns only its exact marker block and uniquely prefixed targets. It
-owns no arbitrary `AGENTS.md` bytes, user config key, auth state, unrelated
-skill, hook, plugin, repository config, or project command. Native root-to-leaf
-project `AGENTS.md` discovery refines the global block; closer repository rules
-win when they conflict within Codex's normal instruction hierarchy.
+The baseline owns only its exact marker block, uniquely prefixed targets, and
+explicitly recorded TOML scalar keys. The v0.3 fresh-install exception may add
+only a previously absent `agents.max_concurrent_threads_per_session = 6` when
+agents are not disabled and neither a current nor legacy cap already exists.
+The user-owned `agents.enabled=false` and `features.multi_agent=false` values
+are explicit vetoes. Existing settings win, and update never acquires a cap
+that was not already Baseline-owned. `optimize --apply` is the only broader
+key-ownership path. It
+does not own arbitrary `AGENTS.md` bytes, the whole config file, auth state,
+unrelated skills, hooks, plugins, repository config, or project commands.
+Native root-to-leaf project `AGENTS.md` discovery refines the global block;
+closer repository rules win within Codex's normal instruction hierarchy.
 
 Each live object records `previous`, `installed`, and `desired` hashes. Update,
 rollback, and uninstall proceed only when the live managed hash equals the
@@ -93,19 +102,45 @@ allowlisted. Tests inject a `SIGKILL` mid-commit on Unix and a commit fault on
 PowerShell, corrupt preimages, tamper journal targets, and race whole-file global
 guidance changes.
 
-Portable exactness covers bytes, existence/kind, executable/mode bits preserved
-by the platform copy operation (including Unix tree-root mode), and
+For core file objects, portable exactness covers bytes, existence/kind,
+executable/mode bits preserved by the platform copy operation (including Unix tree-root mode), and
 UTF-8-no-BOM for generated Windows state. It does not claim preservation of
 owners, ACLs, ADS, or arbitrary extended attributes. Reparse/symlink paths fail
 closed.
 
+Config keys use a separate semantic transaction under the same lifecycle lock.
+The frozen eight-object `codex-baseline-operations/v1` plane remains unchanged
+so an installed v0.2 updater can validate the v0.3 payload. The
+`codex-baseline-config-operations/v2` plane owns only allowlisted key paths and
+records prior/installed scalar tokens, safe trivia and structural hashes rather
+than the full user config. Key-level three-way restore preserves unrelated user
+changes and stops on managed-key drift. A candidate is validated in an isolated
+temporary `CODEX_HOME`; immediately surrounding hash checks detect cooperative
+edits but are not claimed as hostile-writer or power-loss atomicity.
+Together the frozen core and semantic key plane are the documented operations-v2
+product contract; this name does not change the compatibility-critical core
+schema number.
+
+On Unix, config replacement preserves supported mode/owner state and rejects
+links or detected ACL/xattr state it cannot preserve. Windows preserves and
+verifies Owner plus DACL/protection and rejects reparse points, hard links, and
+non-default ADS; it makes no SACL-preservation claim.
+
 ## Workflow policy
 
 Routing is a transparent, probabilistic instruction policy, not a deterministic
-classifier. HIGH RISK overrides task size. User selection wins unless it would
-weaken a required safety boundary. Skills contain deeper procedure only for
-onboarding, complex durable work, original-request conformance, and repeated
-failure retrospectives. Routine LEAN/STRICT work uses native behavior.
+classifier. Workflow (`LEAN|STRICT|DEEP`), risk, and execution
+(`SOLO|TEAM|SWARM`) are separate. HIGH RISK overrides task size. An explicit
+user veto/cap wins unless it would weaken a required safety boundary. In rc.1,
+installed guidance instructs Codex to select SOLO; only the trusted,
+non-installed live evaluation overlay instructs autonomous team selection. This
+is a model-visible policy and schema gate, not an OS/runtime prohibition against
+spawning a child. The harness installs
+that overlay as host-controlled global guidance in an ephemeral AUTO home; it
+never concatenates it into task text, and production controls deliberately
+include a pasted-overlay spoof that must remain SOLO. Skills contain deeper
+procedure only for onboarding, complex durable work, original-request
+conformance, and repeated failure retrospectives.
 
 Routing is based on material scope, ambiguity, and risk rather than file count
 or keywords. Focused read-only work stays LEAN and broad read-only analysis uses
@@ -113,12 +148,35 @@ native STRICT; neither loads deep-work solely because architecture is discussed.
 LEAN adds no unrequested planning, delegation, workflow-skill, or broad-check
 overhead unless repository guidance or risk requires it.
 
-Subagents are justified by independent breadth, isolated implementation, or a
-fresh review. Delegation includes scope, ownership/read-only status, output,
-deadline, and receipt. Writable parallel work requires separate worktrees. The
-reviewer TOML is advisory. v0.2.0 ships no automated isolated review runner;
-fresh review artifacts must record the actual external sandbox and otherwise
-use the label `advisory review`.
+Within that evaluation profile, small/coupled work uses `SOLO`. `TEAM` uses one
+to three children and `SWARM`
+uses four to six only when exactly that many independent, immediately runnable
+lanes have a critical-path benefit. Small structured reads use parallel tool
+calls instead of model delegation. The parent keeps requirements, architecture,
+integration, conflict resolution, final tests, and the user response while
+continuing its own critical-path work.
+
+Each delegation includes a narrow objective and success criterion, relevant
+paths, read/write ownership, dependencies, compact output/evidence contract,
+deadline, and a no-further-delegation policy. One writer is the default;
+parallel writers require disjoint ownership in verified worktrees. Parallel
+tests require isolated caches, build outputs, ports, databases, fixtures, and
+generated files. There is one primary and one review wave, plus at most two
+evidence-triggered remediation waves. Empty capacity is never filled with
+duplicate work. Classification-only model output cannot certify runtime facts:
+the host replaces its runtime receipt with canonical `unverified`/`null`
+values, while separately supplied host observations must pass relational
+fan-out/capacity/counter/settings validation.
+These rules make token/context hygiene part of execution
+correctness: minimize repeated input, verbose handoffs, boilerplate, comments,
+files, and code while never trading away safety or completeness.
+
+The parent model, parent reasoning/Ultra, and session speed remain user-owned.
+Child model hints are task-local and capability-bound; unavailable explicit
+models receive one inherited-settings retry. No global child model/effort
+default, model-catalog patch, or `multi_agent_v2` hack is installed. The
+reviewer TOML remains advisory; review artifacts record actual isolation and
+otherwise use `advisory review`.
 
 ## Verification and learning
 

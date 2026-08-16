@@ -1,18 +1,64 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://codex-baseline.invalid/contracts/benchmark-summary-v1.schema.json",
+  "$id": "https://codex-baseline.invalid/contracts/benchmark-summary-v2.schema.json",
   "type": "object",
-  "required": ["schema", "contract", "comparison", "runs", "pairs", "by_arm", "paired_outcomes", "by_task", "inference", "limitations"],
+  "additionalProperties": false,
+  "required": ["schema", "contract", "runs", "task_repetitions", "provenance", "by_arm", "by_cache_state", "comparisons", "by_task", "gates", "limitations"],
   "properties": {
-    "schema": {"const": 1},
-    "contract": {"const": "codex-baseline-benchmark-summary/v1"},
-    "comparison": {"const": "paired-vanilla-vs-baseline"},
-    "runs": {"type": "integer", "minimum": 2},
-    "pairs": {"type": "integer", "minimum": 1},
-    "by_arm": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "object", "required": ["arm", "runs", "passes", "pass_rate", "median_elapsed_ms", "input_tokens", "output_tokens", "commands", "changed_files", "unnecessary_files", "failed_command_events", "subagent_events"]}},
-    "paired_outcomes": {"type": "object", "required": ["both_pass", "baseline_only_pass", "vanilla_only_pass", "neither_pass"]},
-    "by_task": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["task", "class", "repetitions", "vanilla_pass_rate", "baseline_pass_rate", "pass_rate_delta", "paired"]}},
-    "inference": {"type": "object", "required": ["confidence_interval", "reason"], "properties": {"confidence_interval": {"type": "null"}, "reason": {"type": "string"}}},
+    "schema": {"const": 2},
+    "contract": {"const": "codex-baseline-benchmark-summary/v2"},
+    "runs": {"type": "integer", "minimum": 4},
+    "task_repetitions": {"type": "integer", "minimum": 1},
+    "provenance": {"type": "object", "additionalProperties": false, "required": ["source_revision", "source_dirty", "source_hash", "version", "candidate_status", "payload_hash", "run_receipt_hash", "run_receipt_status", "manifest_hash", "result_set_hash", "release_status", "promotion_target", "clean_revision_verified", "manifest_bound"], "properties": {"source_revision": {"type": "string", "minLength": 1}, "source_dirty": {"type": ["boolean", "null"]}, "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}, "candidate_status": {"type": "string", "pattern": "^(rc\\.[1-9][0-9]*|stable)$"}, "payload_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "run_receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "run_receipt_status": {"const": "completed"}, "manifest_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "result_set_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "release_status": {"type": "string", "minLength": 1}, "promotion_target": {"type": "string", "minLength": 1}, "clean_revision_verified": {"type": "boolean"}, "manifest_bound": {"type": "boolean"}}},
+    "by_arm": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/armSummary"}},
+    "by_cache_state": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "object", "additionalProperties": false, "required": ["cache_state", "runs", "by_arm"], "properties": {"cache_state": {"enum": ["first", "subsequent"]}, "runs": {"type": "integer", "minimum": 0}, "by_arm": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/armSummary"}}}}},
+    "comparisons": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "object", "additionalProperties": false, "required": ["name", "numerator", "denominator", "pairs", "paired_median_elapsed_ratio", "bootstrap_95"], "properties": {"name": {"type": "string"}, "numerator": {"type": "string"}, "denominator": {"type": "string"}, "pairs": {"type": "integer"}, "paired_median_elapsed_ratio": {"type": "number"}, "bootstrap_95": {"type": "object", "additionalProperties": false, "required": ["resamples", "low", "high", "seed"], "properties": {"resamples": {"const": 10000}, "low": {"type": "number"}, "high": {"type": "number"}, "seed": {"const": 50303}}}}}},
+    "by_task": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/taskSummary"}},
+    "gates": {"type": "object", "additionalProperties": false, "required": ["status", "promotion_allowed", "execution_success", "run_parity", "source_provenance", "release_status", "profile_provenance", "authority_safety_scope", "quality", "first_pass", "positive_speed", "six_lane", "six_lane_capacity", "smallest_effective_team", "serial_selection", "swarm_value", "non_dominated", "hygiene", "host_evidence", "promotion_capability", "telemetry", "reasons"], "properties": {"status": {"enum": ["passed", "failed", "unverified"]}, "promotion_allowed": {"type": "boolean"}, "execution_success": {"enum": ["passed", "failed", "unverified"]}, "run_parity": {"enum": ["passed", "failed", "unverified"]}, "source_provenance": {"enum": ["passed", "failed", "unverified"]}, "release_status": {"enum": ["passed", "failed", "unverified"]}, "profile_provenance": {"enum": ["passed", "failed", "unverified"]}, "authority_safety_scope": {"enum": ["passed", "failed", "unverified"]}, "quality": {"enum": ["passed", "failed", "unverified"]}, "first_pass": {"enum": ["passed", "failed", "unverified"]}, "positive_speed": {"enum": ["passed", "failed", "unverified"]}, "six_lane": {"enum": ["passed", "failed", "unverified"]}, "six_lane_capacity": {"enum": ["passed", "failed", "unverified"]}, "smallest_effective_team": {"enum": ["passed", "failed", "unverified"]}, "serial_selection": {"enum": ["passed", "failed", "unverified"]}, "swarm_value": {"enum": ["passed", "failed", "unverified"]}, "non_dominated": {"enum": ["passed", "failed", "unverified"]}, "hygiene": {"enum": ["passed", "failed", "unverified"]}, "host_evidence": {"enum": ["verified", "unverified"]}, "promotion_capability": {"enum": ["available", "unavailable"]}, "telemetry": {"enum": ["verified", "partial", "unverified"]}, "reasons": {"type": "array", "items": {"type": "string"}}}},
     "limitations": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+  },
+  "$defs": {
+    "rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "nullableRate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "armSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["arm", "runs", "passes", "pass_rate", "median_elapsed_ms", "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens", "raw_subagent_events", "last_message_bytes", "added_lines", "added_code_lines", "added_comment_lines", "added_prose_lines", "added_blank_lines", "duplicate_added_lines", "pure_comment_diffs"],
+      "properties": {
+        "arm": {"enum": ["vanilla", "baseline-solo", "auto-homogeneous", "auto-routed"]},
+        "runs": {"type": "integer", "minimum": 0}, "passes": {"type": "integer", "minimum": 0},
+        "pass_rate": {"$ref": "#/$defs/rate"}, "median_elapsed_ms": {"type": "number", "minimum": 0},
+        "input_tokens": {"type": ["integer", "null"], "minimum": 0}, "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "output_tokens": {"type": ["integer", "null"], "minimum": 0}, "reasoning_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "raw_subagent_events": {"type": "integer", "minimum": 0},
+        "last_message_bytes": {"type": "integer", "minimum": 0}, "added_lines": {"type": "integer", "minimum": 0},
+        "added_code_lines": {"type": "integer", "minimum": 0}, "added_comment_lines": {"type": "integer", "minimum": 0},
+        "added_prose_lines": {"type": "integer", "minimum": 0}, "added_blank_lines": {"type": "integer", "minimum": 0},
+        "duplicate_added_lines": {"type": "integer", "minimum": 0}, "pure_comment_diffs": {"type": "integer", "minimum": 0}
+      }
+    },
+    "taskSummary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task", "class", "parallelism_class", "expected_lanes", "repetitions", "vanilla_pass_rate", "solo_pass_rate", "homogeneous_pass_rate", "routed_pass_rate", "vanilla_first_pass_rate", "solo_first_pass_rate", "homogeneous_first_pass_rate", "routed_first_pass_rate", "routed_unnecessary_files", "solo_unnecessary_files", "routed_last_message_bytes", "solo_last_message_bytes", "routed_added_lines", "solo_added_lines", "routed_added_code_lines", "solo_added_code_lines", "routed_added_comment_lines", "solo_added_comment_lines", "routed_added_prose_lines", "solo_added_prose_lines", "routed_added_blank_lines", "solo_added_blank_lines", "routed_duplicate_added_lines", "solo_duplicate_added_lines", "routed_pure_comment_diffs", "solo_pure_comment_diffs", "routed_solo_median_elapsed_ratio"],
+      "properties": {
+        "task": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+        "class": {"enum": ["small", "medium", "large", "risk-sensitive"]},
+        "parallelism_class": {"enum": ["parallel-positive", "serial-negative"]},
+        "expected_lanes": {"type": "integer", "minimum": 0, "maximum": 6}, "repetitions": {"type": "integer", "minimum": 1},
+        "vanilla_pass_rate": {"$ref": "#/$defs/rate"}, "solo_pass_rate": {"$ref": "#/$defs/rate"},
+        "homogeneous_pass_rate": {"$ref": "#/$defs/rate"}, "routed_pass_rate": {"$ref": "#/$defs/rate"},
+        "vanilla_first_pass_rate": {"$ref": "#/$defs/nullableRate"}, "solo_first_pass_rate": {"$ref": "#/$defs/nullableRate"},
+        "homogeneous_first_pass_rate": {"$ref": "#/$defs/nullableRate"}, "routed_first_pass_rate": {"$ref": "#/$defs/nullableRate"},
+        "routed_unnecessary_files": {"type": "integer", "minimum": 0}, "solo_unnecessary_files": {"type": "integer", "minimum": 0},
+        "routed_last_message_bytes": {"type": "integer", "minimum": 0}, "solo_last_message_bytes": {"type": "integer", "minimum": 0},
+        "routed_added_lines": {"type": "integer", "minimum": 0}, "solo_added_lines": {"type": "integer", "minimum": 0},
+        "routed_added_code_lines": {"type": "integer", "minimum": 0}, "solo_added_code_lines": {"type": "integer", "minimum": 0},
+        "routed_added_comment_lines": {"type": "integer", "minimum": 0}, "solo_added_comment_lines": {"type": "integer", "minimum": 0},
+        "routed_added_prose_lines": {"type": "integer", "minimum": 0}, "solo_added_prose_lines": {"type": "integer", "minimum": 0},
+        "routed_added_blank_lines": {"type": "integer", "minimum": 0}, "solo_added_blank_lines": {"type": "integer", "minimum": 0},
+        "routed_duplicate_added_lines": {"type": "integer", "minimum": 0}, "solo_duplicate_added_lines": {"type": "integer", "minimum": 0},
+        "routed_pure_comment_diffs": {"type": "integer", "minimum": 0}, "solo_pure_comment_diffs": {"type": "integer", "minimum": 0},
+        "routed_solo_median_elapsed_ratio": {"type": "number", "minimum": 0}
+      }
+    }
   }
 }

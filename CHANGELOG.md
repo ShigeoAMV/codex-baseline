@@ -3,6 +3,39 @@
 This project follows Semantic Versioning. Releases update `VERSION`, the source
 manifest version, payload checks, platform evidence, and this log together.
 
+## 0.3.0-rc.1 - Unreleased
+
+- Let Codex choose `SOLO`, `TEAM` with one to three children, or `SWARM` with
+  four to six children from the number of immediately useful independent lanes;
+  no per-task parallelism choice is required.
+- Keep requirements, architecture, integration, final verification, and the
+  user response with the parent; bound delegation to narrow packets, four waves,
+  isolated writes/tests, compact handoffs, and honest observed telemetry.
+- Prefer direct parallel tools for small structured reads and the smallest
+  effective model team for semantic work, without filler agents, unbounded
+  review loops, global child-model defaults, or duplicated wrapper roles.
+- Preserve user control over the parent model, reasoning/Ultra, and session
+  speed. Child model routing is task-local and falls back once to inherited
+  settings when an explicitly requested model is unavailable.
+- Add `optimize --check|--apply|--restore` plus explicit
+  `keep|standard|fast|ultrafast` speed handling. Ultrafast remains a
+  non-mutating `unavailable` interface until Codex publishes a stable config
+  contract and capability probing succeeds.
+- Add the one automatic config exception: a fresh install may own an absent
+  `agents.max_concurrent_threads_per_session = 6` only when agents are not
+  disabled and no current or legacy cap exists. Existing settings always win.
+- Add key-level, byte-preserving TOML transactions under the separate
+  `codex-baseline-config-operations/v2` contract while retaining the frozen
+  eight-object core `operations/v1` contract for v0.2 updater compatibility.
+- Extend optional static onboarding with labelled package, generated-output,
+  cache, port, database, fixture, test-shard, and write-conflict hints.
+- Extend routing, behavior, Doctor, onboarding, and benchmark contracts with
+  execution lanes, planned/actual fan-out, capacity, child model/effort,
+  depth/waves, isolation, conflicts, retries, handoff, and context hygiene.
+- Pre-register a four-arm, ten-repetition live evaluation. The numeric source
+  payload is `0.3.0`, but stable promotion, a stable tag/channel, and speed or
+  quality claims remain blocked until its live gates pass.
+
 ## 0.2.0 - 2026-08-14
 
 - Prefer the smaller workflow at ambiguous routing boundaries unless material

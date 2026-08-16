@@ -67,6 +67,7 @@ ROUTING_CODEX_PATH=''
 ROUTING_CODEX_HASH=''
 ROUTING_NODE_PATH=''
 ROUTING_NODE_HASH=''
+ROUTING_INSTALL_TOOL_ROOT=''
 
 routing_cleanup() {
   local pid
@@ -194,12 +195,15 @@ routing_freeze_source_and_tools() {
   eval_validate_expected_codex_hash "$ROUTING_EXPECTED_CODEX_HASH"
   tool_root="$ROUTING_TEMP/tools"
   mkdir -- "$tool_root"
+  ROUTING_INSTALL_TOOL_ROOT=$tool_root
   ROUTING_CODEX_PATH="$tool_root/codex"
   ROUTING_NODE_PATH="$tool_root/node"
   ROUTING_CODEX_HASH=$(eval_freeze_executable codex "$CB_SOURCE_ROOT" "$ROUTING_CODEX_PATH")
   [[ $ROUTING_CODEX_HASH == "$ROUTING_EXPECTED_CODEX_HASH" ]] ||
     cb_die 'resolved Codex executable does not match the caller-pinned SHA-256'
   ROUTING_NODE_HASH=$(eval_freeze_executable node "$CB_SOURCE_ROOT" "$ROUTING_NODE_PATH")
+  eval_freeze_executable getfacl "$CB_SOURCE_ROOT" "$tool_root/getfacl" >/dev/null
+  eval_freeze_executable getfattr "$CB_SOURCE_ROOT" "$tool_root/getfattr" >/dev/null
 }
 
 routing_prepare() {
@@ -229,21 +233,24 @@ routing_prepare() {
     --argjson dirty "$source_dirty" --arg source_hash "$ROUTING_FROZEN_SOURCE_HASH" \
     --arg codex_binary_hash "$ROUTING_CODEX_HASH" --arg node_binary_hash "$ROUTING_NODE_HASH" \
     --argjson repetitions "$ROUTING_REPETITIONS" --argjson routing_cases "$routing_cases" --argjson behavior_cases "$behavior_cases" \
-    '{schema:1,contract:"codex-baseline-routing-run/v1",platform:$platform,mode:"live-routing-and-behavior",status:"running",isolation:"os-sandboxed-local-cgroup",model_invoked:true,host_checks_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,repetitions:$repetitions,routing_cases:$routing_cases,behavior_cases:$behavior_cases,auth:"dedicated-api-key-stdin-pipe",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
+    '{schema:2,contract:"codex-baseline-routing-run/v2",platform:$platform,mode:"live-routing-and-behavior",status:"running",execution_profile:"auto-evaluation",isolation:"os-sandboxed-local-cgroup",model_invoked:true,host_checks_executed:true,created:$created,codex:$codex,model:$model,source_revision:$revision,source_dirty:$dirty,source_hash:$source_hash,codex_binary_hash:$codex_binary_hash,codex_identity:"caller-pinned-sha256",node_binary_hash:$node_binary_hash,repetitions:$repetitions,routing_cases:$routing_cases,behavior_cases:$behavior_cases,auth:"dedicated-api-key-stdin-pipe",resource_profile:"user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs"}' \
     >"$ROUTING_OUTPUT/run.json"
   : >"$ROUTING_OUTPUT/results.jsonl"
   : >"$ROUTING_OUTPUT/behavior-results.jsonl"
 }
 
 routing_prepare_worker() {
-  mkdir -p -- "$ROUTING_TEMP/home/.codex" "$ROUTING_TEMP/home/.agents" "$ROUTING_TEMP/repo" "$ROUTING_TEMP/git-home/empty-template"
+  local production_home="$ROUTING_TEMP/home-production" auto_home="$ROUTING_TEMP/home-auto"
+  local overlay="$ROUTING_EVAL_ROOT/benchmarks/auto-execution.overlay.md"
+  mkdir -p -- "$production_home/.codex" "$production_home/.agents" "$ROUTING_TEMP/repo" "$ROUTING_TEMP/git-home/empty-template"
   routing_git "$ROUTING_TEMP/repo" "$ROUTING_TEMP/git-home" init -q
-  HOME="$ROUTING_TEMP/home" CODEX_HOME="$ROUTING_TEMP/home/.codex" AGENTS_HOME="$ROUTING_TEMP/home/.agents" \
-    "$ROUTING_EVAL_ROOT/scripts/codex-baseline.sh" install --acknowledge-unverified-source >"$ROUTING_OUTPUT/install.log"
-  rm -rf -- "$ROUTING_TEMP/home/.codex/codex-baseline/runtime" "$ROUTING_TEMP/home/.local/bin/codex-baseline"
-  cat >"$ROUTING_TEMP/home/.codex/config.toml" <<'EOF'
+  cat >"$production_home/.codex/config.toml" <<'EOF'
 default_permissions = "routing-worker"
 approval_policy = "never"
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 6
 
 [permissions.routing-worker.filesystem]
 ":minimal" = "read"
@@ -259,19 +266,43 @@ enabled = false
 inherit = "core"
 exclude = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_BASELINE_BENCHMARK_API_KEY"]
 EOF
+  HOME="$production_home" CODEX_HOME="$production_home/.codex" AGENTS_HOME="$production_home/.agents" \
+    PATH="$ROUTING_INSTALL_TOOL_ROOT:/usr/bin:/bin" \
+    "$ROUTING_EVAL_ROOT/scripts/codex-baseline.sh" install --acknowledge-unverified-source >"$ROUTING_OUTPUT/install.log"
+  rm -rf -- "$production_home/.codex/codex-baseline/runtime" "$production_home/.local/bin/codex-baseline"
+  [[ -f $overlay && ! -L $overlay && -r $overlay ]] || cb_die 'AUTO evaluation overlay is unsafe'
+  cp -a -- "$production_home" "$auto_home"
+  printf '\n%s\n' "$(<"$overlay")" >>"$auto_home/.codex/AGENTS.md"
+  ROUTING_AUTO_OVERLAY_HASH=$(cb_sha256_file "$overlay")
+  ROUTING_PRODUCTION_GUIDANCE_HASH=$(cb_sha256_file "$production_home/.codex/AGENTS.md")
+  ROUTING_AUTO_GUIDANCE_HASH=$(cb_sha256_file "$auto_home/.codex/AGENTS.md")
+  [[ $ROUTING_PRODUCTION_GUIDANCE_HASH != "$ROUTING_AUTO_GUIDANCE_HASH" ]] ||
+    cb_die 'AUTO evaluation guidance layer was not installed'
+  jq --arg overlay_hash "$ROUTING_AUTO_OVERLAY_HASH" --arg production_hash "$ROUTING_PRODUCTION_GUIDANCE_HASH" \
+    --arg auto_hash "$ROUTING_AUTO_GUIDANCE_HASH" \
+    '. + {auto_overlay_hash:$overlay_hash,production_guidance_hash:$production_hash,auto_guidance_hash:$auto_hash}' \
+    "$ROUTING_OUTPUT/run.json" >"$ROUTING_OUTPUT/run.json.tmp"
+  mv -- "$ROUTING_OUTPUT/run.json.tmp" "$ROUTING_OUTPUT/run.json"
   routing_write_codex_launcher "$ROUTING_TEMP/codex-launch"
   routing_artifact_is_clean "$ROUTING_OUTPUT/install.log"
-  routing_tree_is_clean "$ROUTING_TEMP/home"
+  routing_tree_is_clean "$production_home"
+  routing_tree_is_clean "$auto_home"
 }
 
 routing_invoke() {
   local label=$1 repetition=$2 repository=$3 schema=$4 prompt=$5
-  local codex_path=$6 timeout_path=$7 prlimit_path=$8 bwrap_path=$9 start_ns end_ns
+  local codex_path=$6 timeout_path=$7 prlimit_path=$8 bwrap_path=$9 profile=${10} start_ms end_ms seed_home
   local launcher="$ROUTING_TEMP/codex-launch" worker_status infrastructure_exit
   local -a behavior_mount=()
   [[ $label =~ ^[a-z0-9-]+$ ]] || cb_die "unsafe routing invocation label: $label"
   [[ -d $repository && ! -L $repository ]] || cb_die "unsafe routing fixture repository: $repository"
   [[ -f $schema && ! -L $schema && -r $schema ]] || cb_die "unsafe routing output schema: $schema"
+  case $profile in
+    auto-evaluation) seed_home="$ROUTING_TEMP/home-auto" ;;
+    production-rc) seed_home="$ROUTING_TEMP/home-production" ;;
+    *) cb_die "unsafe routing execution profile: $profile" ;;
+  esac
+  [[ -d $seed_home && ! -L $seed_home ]] || cb_die "unsafe routing guidance home: $profile"
   routing_assert_frozen_source
   ROUTING_LAST="$ROUTING_OUTPUT/$label-r$repetition.json"
   ROUTING_EVENTS="$ROUTING_OUTPUT/$label-r$repetition.jsonl"
@@ -290,7 +321,7 @@ routing_invoke() {
   [[ $(cb_sha256_file "$ROUTING_NODE_PATH") == "$ROUTING_NODE_HASH" ]] || cb_die 'frozen Node executable changed before routing invocation'
   local -a args=(exec --json --ephemeral --strict-config --ignore-rules --skip-git-repo-check --output-schema /response.schema.json)
   [[ -z $ROUTING_MODEL ]] || args+=(-m "$ROUTING_MODEL")
-  start_ns=$(date +%s%N)
+  start_ms=$(eval_monotonic_ms)
   set +e
   EVAL_SECRET_ONE=$ROUTING_INPUT_KEY
   EVAL_SECRET_TWO=''
@@ -304,7 +335,7 @@ routing_invoke() {
     --ro-bind-try /etc/hosts /etc/hosts --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf \
     --proc /proc --dev /dev --size 134217728 --tmpfs /tmp \
     --dir /worker-home --size 268435456 --tmpfs /worker-home --dir /opt --dir /opt/node --dir /eval-lib \
-    --ro-bind "$ROUTING_TEMP/home" /home-seed --ro-bind "$repository" /repo \
+    --ro-bind "$seed_home" /home-seed --ro-bind "$repository" /repo \
     --ro-bind "$codex_path" /opt/codex --ro-bind "$ROUTING_NODE_PATH" /opt/node/node \
     --ro-bind "$schema" /response.schema.json --ro-bind "$launcher" /codex-launch \
     --ro-bind "$ROUTING_EVAL_ROOT/scripts/lib/common.sh" /eval-lib/common.sh \
@@ -324,8 +355,8 @@ routing_invoke() {
   [[ -f $worker_status && ! -L $worker_status ]] || cb_die "missing routing worker status: $label r$repetition"
   IFS= read -r ROUTING_PROCESS_EXIT <"$worker_status" || cb_die "malformed routing worker status: $label r$repetition"
   [[ $ROUTING_PROCESS_EXIT =~ ^[0-9]+$ ]] || cb_die "invalid routing worker status: $label r$repetition"
-  end_ns=$(date +%s%N)
-  ROUTING_ELAPSED_MS=$(((end_ns - start_ns) / 1000000))
+  end_ms=$(eval_monotonic_ms)
+  ROUTING_ELAPSED_MS=$((end_ms - start_ms))
   [[ -s $ROUTING_LAST || -L $ROUTING_LAST ]] ||
     cb_die "missing routing last-message artifact: $label r$repetition"
   [[ -f $ROUTING_LAST && ! -L $ROUTING_LAST ]] ||
@@ -371,30 +402,56 @@ routing_run_behavior_verifier() {
 
 routing_run_case() {
   local case_json=$1 repetition=$2 codex_path=$3 timeout_path=$4 prlimit_path=$5 bwrap_path=$6
-  local id task expected_workflow expected_risk expected_skill prompt pass=false actual
+  local id task expected_workflow expected_risk expected_skill expected_execution expected_profile expected_fanout expected_isolation prompt pass=false actual
   id=$(jq -r '.id' <<<"$case_json")
   task=$(jq -r '.task' <<<"$case_json")
   expected_workflow=$(jq -r '.workflow' <<<"$case_json")
   expected_risk=$(jq -r '.high_risk' <<<"$case_json")
   expected_skill=$(jq -r '.skill // empty' <<<"$case_json")
+  expected_execution=$(jq -r '.execution' <<<"$case_json")
+  expected_profile=$(jq -r '.profile' <<<"$case_json")
+  expected_fanout=$(jq -r '.planned_fanout' <<<"$case_json")
+  expected_isolation=$(jq -r '.write_isolation' <<<"$case_json")
   [[ $id =~ ^[a-z0-9-]+$ ]] || cb_die "unsafe routing case id: $id"
+  [[ $expected_profile == auto-evaluation || $expected_profile == production-rc ]] || cb_die "routing case has an unsafe profile: $id"
   prompt="Classify this hypothetical engineering request under the installed Codex Baseline. Do not perform the task, use tools, read files, or alter the repository. Return only the schema response. Select a baseline skill only if its description directly matches. Request: $task"
   routing_invoke "routing-$id" "$repetition" "$ROUTING_TEMP/repo" "$ROUTING_EVAL_ROOT/tests/routing/output.schema.json" "$prompt" \
-    "$codex_path" "$timeout_path" "$prlimit_path" "$bwrap_path"
+    "$codex_path" "$timeout_path" "$prlimit_path" "$bwrap_path" "$expected_profile"
   if [[ $ROUTING_PROCESS_EXIT -eq 0 && $ROUTING_COMMANDS -eq 0 && $ROUTING_FILE_CHANGES -eq 0 ]] &&
-      jq -e --arg workflow "$expected_workflow" --argjson risk "$expected_risk" --arg skill "$expected_skill" '
+      jq -e --arg workflow "$expected_workflow" --argjson risk "$expected_risk" --arg skill "$expected_skill" \
+        --arg execution "$expected_execution" --arg profile "$expected_profile" --argjson fanout "$expected_fanout" --arg isolation "$expected_isolation" '
     .workflow == $workflow and .high_risk == $risk and
-    (if $skill == "" then (.selected_skills | length) == 0 else (.selected_skills | index($skill)) != null end)
+    (if $skill == "" then (.selected_skills | length) == 0 else (.selected_skills | index($skill)) != null end) and
+    .execution == $execution and .execution_profile == $profile and .planned_fanout == $fanout and
+    (.planned_lanes | length) == $fanout and .write_isolation == $isolation and
+    (.child_limit <= 6) and (.wave_limit <= 4) and
+    ([.planned_lanes[].id] | length == (unique | length)) and
+    ([.planned_lanes[].id] as $ids | all(.planned_lanes[].dependencies[]?; . as $dependency | $ids | index($dependency) != null)) and
+    (if .write_isolation == "verified-worktrees" then true else ([.planned_lanes[] | select(.writer == "child")] | length) <= 1 end)
   ' "$ROUTING_LAST" >/dev/null 2>&1; then
     pass=true
   fi
-  actual=$(jq -c . "$ROUTING_LAST" 2>/dev/null || printf 'null')
+  actual=$(jq -c '.runtime_receipt = {
+      verification:"unverified", actual_fanout:null, available_capacity:null, children:[],
+      depth_intended:(if .execution == "SOLO" then 0 else 1 end), depth_observed:null,
+      depth_verification:"unverified", waves_observed:null, peak_concurrency:null,
+      spawn_failures:null, fallbacks:null, interrupts:null, timeouts:null,
+      write_isolation:{verification:"unverified",value:null},
+      worktree_isolation:{verification:"unverified",value:null},
+      test_isolation:{verification:"unverified",value:null}, conflicts:null,
+      integration_rework_actions:null, handoff_bytes:null, duplicate_context_bytes:null,
+      parent_settings_before:null, parent_settings_after:null, parent_settings_unchanged:null,
+      parent_settings_verification:"unverified"
+    }' "$ROUTING_LAST" 2>/dev/null || printf 'null')
+  printf '%s\n' "$actual" | "$ROUTING_NODE_PATH" "$ROUTING_EVAL_ROOT/scripts/validate-routing-receipt.mjs" - >/dev/null ||
+    cb_die "host routing receipt validation failed: $id r$repetition"
   jq -nc --arg id "$id" --argjson repetition "$repetition" --argjson pass "$pass" --argjson process_exit "$ROUTING_PROCESS_EXIT" \
     --argjson elapsed_ms "$ROUTING_ELAPSED_MS" --argjson turns "$ROUTING_TURNS" --argjson commands "$ROUTING_COMMANDS" --argjson file_changes "$ROUTING_FILE_CHANGES" \
     --argjson input_tokens "$ROUTING_INPUT_TOKENS" --argjson output_tokens "$ROUTING_OUTPUT_TOKENS" \
     --arg expected_workflow "$expected_workflow" --argjson expected_risk "$expected_risk" --arg expected_skill "$expected_skill" \
+    --arg expected_execution "$expected_execution" --arg expected_profile "$expected_profile" --argjson expected_fanout "$expected_fanout" --arg expected_isolation "$expected_isolation" \
     --argjson actual "$actual" --arg source_hash "$ROUTING_FROZEN_SOURCE_HASH" --arg prompt_hash "$ROUTING_PROMPT_HASH" \
-    '{schema:1,contract:"codex-baseline-routing-result/v1",id:$id,repetition:$repetition,pass:$pass,process_exit:$process_exit,elapsed_ms:$elapsed_ms,turns:$turns,commands:$commands,file_changes:$file_changes,input_tokens:$input_tokens,output_tokens:$output_tokens,source_hash:$source_hash,prompt_hash:$prompt_hash,expected:{workflow:$expected_workflow,high_risk:$expected_risk,skill:(if $expected_skill=="" then null else $expected_skill end)},actual:$actual}' \
+    '{schema:2,contract:"codex-baseline-routing-result/v2",id:$id,repetition:$repetition,pass:$pass,process_exit:$process_exit,elapsed_ms:$elapsed_ms,turns:$turns,commands:$commands,file_changes:$file_changes,input_tokens:$input_tokens,output_tokens:$output_tokens,source_hash:$source_hash,prompt_hash:$prompt_hash,expected:{workflow:$expected_workflow,high_risk:$expected_risk,skill:(if $expected_skill=="" then null else $expected_skill end),execution:$expected_execution,execution_profile:$expected_profile,planned_fanout:$expected_fanout,write_isolation:$expected_isolation},actual:$actual}' \
     >>"$ROUTING_OUTPUT/results.jsonl"
   routing_tree_is_clean "$ROUTING_OUTPUT"
   ROUTING_RUN_COUNT=$((ROUTING_RUN_COUNT + 1))
@@ -416,7 +473,7 @@ routing_run_behavior_case() {
   prompt="Follow the installed Codex Baseline for this contained evaluation. First run /behavior-inspect exactly once using the shell tool; this host-owned read-only helper supplies the complete bounded repository evidence. Do not run any other command. Then use the smallest trustworthy workflow and select a baseline skill only when its description directly matches. Return only the response schema with case_id '$id'. Do not expose credentials. Task: $task"
   ROUTING_BEHAVIOR_INSPECTOR="$ROUTING_EVAL_ROOT/tests/behavior/inspect.sh"
   routing_invoke "behavior-$id" "$repetition" "$fixture" "$ROUTING_EVAL_ROOT/tests/behavior/output.schema.json" "$prompt" \
-    "$codex_path" "$timeout_path" "$prlimit_path" "$bwrap_path"
+    "$codex_path" "$timeout_path" "$prlimit_path" "$bwrap_path" auto-evaluation
   ROUTING_BEHAVIOR_INSPECTOR=''
   verifier_log="$ROUTING_OUTPUT/behavior-$id-r$repetition.verifier.log"
   set +e
@@ -428,13 +485,26 @@ routing_run_behavior_case() {
       [[ $ROUTING_FILE_CHANGES -eq 0 ]]; then
     pass=true
   fi
-  actual=$(jq -c . "$ROUTING_LAST" 2>/dev/null || printf 'null')
+  actual=$(jq -c '.runtime_receipt = {
+      verification:"unverified", actual_fanout:null, available_capacity:null, children:[],
+      depth_intended:(if .execution == "SOLO" then 0 else 1 end), depth_observed:null,
+      depth_verification:"unverified", waves_observed:null, peak_concurrency:null,
+      spawn_failures:null, fallbacks:null, interrupts:null, timeouts:null,
+      write_isolation:{verification:"unverified",value:null},
+      worktree_isolation:{verification:"unverified",value:null},
+      test_isolation:{verification:"unverified",value:null}, conflicts:null,
+      integration_rework_actions:null, handoff_bytes:null, duplicate_context_bytes:null,
+      parent_settings_before:null, parent_settings_after:null, parent_settings_unchanged:null,
+      parent_settings_verification:"unverified"
+    }' "$ROUTING_LAST" 2>/dev/null || printf 'null')
+  printf '%s\n' "$actual" | "$ROUTING_NODE_PATH" "$ROUTING_EVAL_ROOT/scripts/validate-routing-receipt.mjs" - >/dev/null ||
+    cb_die "host behavior receipt validation failed: $id r$repetition"
   jq -nc --arg id "$id" --argjson repetition "$repetition" --argjson pass "$pass" \
     --argjson process_exit "$ROUTING_PROCESS_EXIT" --argjson verifier_exit "$verifier_exit" --argjson elapsed_ms "$ROUTING_ELAPSED_MS" \
     --argjson turns "$ROUTING_TURNS" --argjson commands "$ROUTING_COMMANDS" --argjson file_changes "$ROUTING_FILE_CHANGES" \
     --argjson input_tokens "$ROUTING_INPUT_TOKENS" --argjson output_tokens "$ROUTING_OUTPUT_TOKENS" \
     --arg source_hash "$ROUTING_FROZEN_SOURCE_HASH" --arg prompt_hash "$ROUTING_PROMPT_HASH" --argjson actual "$actual" \
-    '{schema:1,contract:"codex-baseline-behavior-result/v1",id:$id,repetition:$repetition,pass:$pass,process_exit:$process_exit,verifier_exit:$verifier_exit,elapsed_ms:$elapsed_ms,turns:$turns,commands:$commands,file_changes:$file_changes,input_tokens:$input_tokens,output_tokens:$output_tokens,source_hash:$source_hash,prompt_hash:$prompt_hash,actual:$actual}' \
+    '{schema:2,contract:"codex-baseline-behavior-result/v2",id:$id,repetition:$repetition,pass:$pass,process_exit:$process_exit,verifier_exit:$verifier_exit,elapsed_ms:$elapsed_ms,turns:$turns,commands:$commands,file_changes:$file_changes,input_tokens:$input_tokens,output_tokens:$output_tokens,source_hash:$source_hash,prompt_hash:$prompt_hash,actual:$actual}' \
     >>"$ROUTING_OUTPUT/behavior-results.jsonl"
   routing_tree_is_clean "$ROUTING_OUTPUT"
   ROUTING_RUN_COUNT=$((ROUTING_RUN_COUNT + 1))
@@ -457,7 +527,7 @@ routing_main() {
   for ((repetition=1; repetition<=ROUTING_REPETITIONS; repetition++)); do
     while IFS= read -r case_json; do
       routing_run_case "$case_json" "$repetition" "$codex_path" "$timeout_path" "$prlimit_path" "$bwrap_path"
-    done < <(jq -c '.cases[]' "$ROUTING_EVAL_ROOT/tests/routing/cases.json")
+    done < <(jq -c '.profile as $profile | .cases[] | .profile //= $profile' "$ROUTING_EVAL_ROOT/tests/routing/cases.json")
     while IFS= read -r case_json; do
       routing_run_behavior_case "$case_json" "$repetition" "$codex_path" "$timeout_path" "$prlimit_path" "$bwrap_path"
     done < <(jq -c '.cases[]' "$ROUTING_EVAL_ROOT/tests/behavior/cases.json")
@@ -469,7 +539,7 @@ routing_main() {
   completed_source_hash=$ROUTING_FROZEN_SOURCE_HASH
   jq -n --arg source_hash "$completed_source_hash" --argjson repetitions "$ROUTING_REPETITIONS" \
     --slurpfile routing "$ROUTING_OUTPUT/results.jsonl" --slurpfile behavior "$ROUTING_OUTPUT/behavior-results.jsonl" \
-    '{schema:1,contract:"codex-baseline-routing-summary/v1",source_hash:$source_hash,repetitions:$repetitions,routing:{runs:($routing|length),passes:($routing|map(select(.pass))|length),by_case:($routing|group_by(.id)|map({id:.[0].id,runs:length,passes:(map(select(.pass))|length)}))},behavior:{runs:($behavior|length),passes:($behavior|map(select(.pass))|length),by_case:($behavior|group_by(.id)|map({id:.[0].id,runs:length,passes:(map(select(.pass))|length)}))}}' \
+    '{schema:2,contract:"codex-baseline-routing-summary/v2",execution_profile:"auto-evaluation",source_hash:$source_hash,repetitions:$repetitions,routing:{runs:($routing|length),passes:($routing|map(select(.pass))|length),by_case:($routing|group_by(.id)|map({id:.[0].id,runs:length,passes:(map(select(.pass))|length)}))},behavior:{runs:($behavior|length),passes:($behavior|map(select(.pass))|length),by_case:($behavior|group_by(.id)|map({id:.[0].id,runs:length,passes:(map(select(.pass))|length)}))}}' \
     >"$ROUTING_OUTPUT/summary.json"
   routing_tree_is_clean "$ROUTING_OUTPUT"
   jq '.status = "completed"' "$ROUTING_OUTPUT/run.json" >"$ROUTING_OUTPUT/run.json.tmp"

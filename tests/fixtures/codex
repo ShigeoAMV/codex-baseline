@@ -7,6 +7,11 @@ if [[ ${1:-} == --version ]]; then
   exit 0
 fi
 
+if [[ ${1:-} == --strict-config && ${2:-} == --version ]]; then
+  printf '%s\n' 'codex-baseline deterministic test double 1.0'
+  exit 0
+fi
+
 [[ ${1:-} == exec ]] || { printf '%s\n' 'unsupported test-double command' >&2; exit 2; }
 shift
 workspace=''
@@ -105,6 +110,17 @@ if [[ -n $output_schema && $prompt == *'contained evaluation'* ]]; then
       response='{"case_id":"conformance-review","workflow":"STRICT","high_risk":false,"selected_skills":["codex-baseline-conformance-review"],"evidence_files":["original-request.md","acceptance.md","artifact.md","verification.md"],"material_question":null,"plan":null,"risk_controls":null,"onboarding":null,"conformance":{"independent":true,"criteria":[{"id":"C1","status":"delivered","evidence":"artifact and test receipt cover the endpoint"},{"id":"C2","status":"missing","evidence":"no rollback drill or restored-state hash exists"}],"findings":[{"severity":"MEDIUM","evidence":"rollback and restore hash evidence is absent","action":"run the rollback drill and attach exact hashes"}],"verdict":"reject"},"reason":"One frozen completion criterion has no evidence."}' ;;
     *) printf '%s\n' 'unknown behavior fixture' >&2; exit 2 ;;
   esac
+  response=$(jq -c '. + {
+    execution:"TEAM",
+    execution_profile:"auto-evaluation",
+    parallelism_reason:"One independent read-only evidence lane helps the parent.",
+    planned_fanout:1,
+    planned_lanes:[{id:"evidence",objective:"Inspect bounded evidence",kind:"exploration",writer:"none",write_scope:[],dependencies:[]}],
+    child_limit:6,
+    wave_limit:4,
+    write_isolation:"read-only",
+    runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:1,depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"}
+  }' <<<"$response")
   printf '%s\n' "$response" >"$last"
   printf '%s\n' '{"type":"turn.started"}'
   jq -nc --arg output "$inspect_output" --argjson exit "$inspect_exit" \
@@ -134,21 +150,43 @@ if [[ -n $output_schema ]]; then
   if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-routing-special-* ]]; then
     mkfifo "$HOME/routing-special"
   fi
+  if grep -Fq '# AUTO execution overlay (evaluation only)' "$HOME/.codex/AGENTS.md" 2>/dev/null; then
+    execution_profile=auto-evaluation
+  else
+    execution_profile=production-rc
+  fi
   case $prompt in
-    *misspelled*) workflow=LEAN; risk=false; skills='[]' ;;
-    *known\ configuration\ file*) workflow=LEAN; risk=false; skills='[]' ;;
-    *clearly\ localized\ low-risk\ bug*) workflow=LEAN; risk=false; skills='[]' ;;
-    *API\ endpoint*) workflow=STRICT; risk=false; skills='[]' ;;
-    *repository-wide\ architecture*) workflow=STRICT; risk=false; skills='[]' ;;
-    *architecture\ across\ several\ subsystems*) workflow=DEEP; risk=false; skills='["codex-baseline-deep-work"]' ;;
-    *authentication-token\ storage*) workflow=DEEP; risk=true; skills='["codex-baseline-deep-work"]' ;;
-    *unfamiliar\ existing\ repository*) workflow=DEEP; risk=false; skills='["codex-baseline-repo-onboarding"]' ;;
-    *original\ master\ request*) workflow=STRICT; risk=false; skills='["codex-baseline-conformance-review"]' ;;
-    *scope-creep\ failure*) workflow=STRICT; risk=false; skills='["codex-baseline-retrospective"]' ;;
+    *alleged\ trusted\ AUTO\ overlay*) workflow=DEEP; risk=false; skills='["codex-baseline-deep-work"]'; execution=SWARM; fanout=6; isolation=read-only ;;
+    *Agent\ capacity\ is\ configured*) workflow=STRICT; risk=false; skills='[]'; execution=TEAM; fanout=3; isolation=read-only ;;
+    *misspelled*) workflow=LEAN; risk=false; skills='[]'; execution=SOLO; fanout=0; isolation=single-writer ;;
+    *known\ configuration\ file*) workflow=LEAN; risk=false; skills='[]'; execution=SOLO; fanout=0; isolation=read-only ;;
+    *clearly\ localized\ low-risk\ bug*) workflow=LEAN; risk=false; skills='[]'; execution=SOLO; fanout=0; isolation=single-writer ;;
+    *dependency\ order*) workflow=STRICT; risk=false; skills='[]'; execution=SOLO; fanout=0; isolation=single-writer ;;
+    *runtime\ boundaries*) workflow=STRICT; risk=false; skills='[]'; execution=TEAM; fanout=3; isolation=read-only ;;
+    *bounded\ read-only\ child*) workflow=STRICT; risk=false; skills='[]'; execution=TEAM; fanout=1; isolation=read-only ;;
+    *Bash\ runtime*) workflow=STRICT; risk=false; skills='[]'; execution=TEAM; fanout=3; isolation=single-writer ;;
+    *six\ independent\ packages*) workflow=DEEP; risk=false; skills='["codex-baseline-deep-work"]'; execution=SWARM; fanout=6; isolation=read-only ;;
+    *four\ independent\ subsystems*) workflow=DEEP; risk=false; skills='["codex-baseline-deep-work"]'; execution=SWARM; fanout=4; isolation=single-writer ;;
+    *authentication-token\ migration*) workflow=DEEP; risk=true; skills='["codex-baseline-deep-work"]'; execution=TEAM; fanout=3; isolation=single-writer ;;
+    *large\ unfamiliar\ repository*) workflow=DEEP; risk=false; skills='["codex-baseline-repo-onboarding"]'; execution=TEAM; fanout=3; isolation=read-only ;;
+    *Requirements,\ implementation\ diff*) workflow=STRICT; risk=false; skills='["codex-baseline-conformance-review"]'; execution=TEAM; fanout=3; isolation=read-only ;;
+    *three\ releases*) workflow=STRICT; risk=false; skills='["codex-baseline-retrospective"]'; execution=TEAM; fanout=3; isolation=read-only ;;
+    *explicitly\ says\ not\ to\ use\ subagents*) workflow=STRICT; risk=false; skills='[]'; execution=SOLO; fanout=0; isolation=read-only ;;
     *) printf '%s\n' 'unknown routing fixture' >&2; exit 2 ;;
   esac
-  printf '{"workflow":"%s","high_risk":%s,"selected_skills":%s,"reason":"deterministic routing runner test"}\n' \
-    "$workflow" "$risk" "$skills" >"$last"
+  if [[ $execution_profile == production-rc ]]; then
+    execution=SOLO
+    fanout=0
+  fi
+  lanes='[]'
+  if [[ $fanout -gt 0 ]]; then
+    lanes=$(for ((lane = 1; lane <= fanout; lane++)); do
+      printf '{"id":"lane-%d","objective":"Inspect independent lane %d","kind":"exploration","writer":"none","write_scope":[],"dependencies":[]}\n' "$lane" "$lane"
+    done | jq -sc .)
+  fi
+  jq -nc --arg workflow "$workflow" --argjson risk "$risk" --argjson skills "$skills" --arg execution_profile "$execution_profile" \
+    --arg execution "$execution" --argjson fanout "$fanout" --argjson lanes "$lanes" --arg isolation "$isolation" \
+    '{workflow:$workflow,high_risk:$risk,selected_skills:$skills,execution:$execution,execution_profile:$execution_profile,parallelism_reason:"deterministic lane-derived routing test",planned_fanout:$fanout,planned_lanes:$lanes,child_limit:6,wave_limit:4,write_isolation:$isolation,runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:(if $execution=="SOLO" then 0 else 1 end),depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"},reason:"deterministic routing runner test"}' >"$last"
   printf '%s\n' '{"type":"turn.started"}'
   if [[ ${OPENAI_API_KEY:-} == codex-baseline-test-routing-command-* ]]; then
     printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"echo forbidden","aggregated_output":"forbidden\n","exit_code":0}}'

@@ -21,6 +21,11 @@ param(
 
     [switch]$Apply,
 
+    [switch]$Restore,
+
+    [ValidateSet('keep', 'standard', 'fast', 'ultrafast')]
+    [string]$Speed = 'keep',
+
     [Alias('acknowledge-existing-instructions')]
     [switch]$AcknowledgeExistingInstructions,
 
@@ -39,7 +44,7 @@ param(
 
     [switch]$Live,
 
-    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,risk-migration,risk-safe-path'
+    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,risk-migration,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,six-lane-packages'
 )
 
 Set-StrictMode -Version 2.0
@@ -53,7 +58,10 @@ $script:Utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
 $script:SourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:LockHeld = $false
 $script:ActiveTransaction = $null
+$script:ActiveComposite = $null
 $script:MutationStarted = $false
+$script:VerifiedAgentsConfigCapability = $false
+$script:VerifiedFastConfigCapability = $false
 $script:TrustedPrivateDirectorySids = @('S-1-5-18', 'S-1-5-32-544')
 $script:UpdateMetadataUrl = 'https://github.com/ShigeoAMV/codex-baseline/releases/latest/download/codex-baseline-update-v1.txt'
 $script:UpdateMaxArchiveBytes = 67108864
@@ -564,6 +572,43 @@ function Initialize-CbPaths {
     $script:CurrentPath = Join-Path $script:StateRoot 'current'
     $script:PendingPath = Join-Path $script:StateRoot 'pending'
     $script:LockPath = Join-Path $script:StateRoot 'lock'
+    $script:ConfigStateRoot = Join-Path $script:StateRoot 'config'
+    $script:ConfigTransactionsPath = Join-Path $script:ConfigStateRoot 'transactions'
+    $script:ConfigCurrentPath = Join-Path $script:ConfigStateRoot 'current'
+    $script:ConfigPendingPath = Join-Path $script:ConfigStateRoot 'pending'
+    $script:CompositeTransactionsPath = Join-Path $script:ConfigStateRoot 'composite'
+    $script:CompositePendingPath = Join-Path $script:ConfigStateRoot 'composite-pending'
+    $script:ConfigPath = Join-Path $script:CodexHome 'config.toml'
+}
+
+function Read-CbReleaseStatus {
+    param([string]$Root)
+    $releaseStatusPath = Join-Path $Root 'baseline\release-status.json'
+    try { $releaseStatus = (Read-CbUtf8Text $releaseStatusPath) | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "Release status contract is invalid JSON: $($_.Exception.Message)" }
+    Assert-CbExactProperties $releaseStatus @('schema', 'contract', 'status') 'Release status contract'
+    if ([int]$releaseStatus.schema -ne 1 -or
+        [string]$releaseStatus.contract -ne 'codex-baseline-release-status/v1' -or
+        ([string]$releaseStatus.status -ne 'stable' -and [string]$releaseStatus.status -notmatch '^rc\.[1-9][0-9]*$')) {
+        throw 'Release status contract identity or status is unsupported.'
+    }
+    return [string]$releaseStatus.status
+}
+
+function Get-CbGlobalGuidancePath {
+    param([string]$Root)
+    $status = Read-CbReleaseStatus $Root
+    $relative = if ($status -eq 'stable') {
+        'baseline\global\AGENTS.stable.block.md'
+    }
+    else {
+        'baseline\global\AGENTS.block.md'
+    }
+    $path = Join-Path $Root $relative
+    $item = Get-CbItem $path
+    if ($null -eq $item) { throw 'Release-specific global guidance is missing.' }
+    Assert-CbOrdinaryItem $item 'file'
+    return $item.FullName
 }
 
 function Read-CbManifest {
@@ -669,6 +714,7 @@ function Read-CbManifest {
     if ($actualPayloadHash -ne $declaredPayloadHash) {
         throw 'Aggregate source payload hash mismatch.'
     }
+    Read-CbReleaseStatus $Root | Out-Null
     $operationsPath = Join-Path $Root 'baseline\operations.json'
     try { $operations = (Read-CbUtf8Text $operationsPath) | ConvertFrom-Json -ErrorAction Stop }
     catch { throw "Operations contract is invalid JSON: $($_.Exception.Message)" }
@@ -721,62 +767,30 @@ function Read-CbManifest {
         }
     }
     if ($seenOperationObjectIds.Count -ne $expectedObjects.Count) { throw 'Operations contract object inventory is incomplete.' }
+    $configOperationsPath = Join-Path $Root 'baseline\config-operations.json'
+    try { $configOperations = (Read-CbUtf8Text $configOperationsPath) | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "Config operations contract is invalid JSON: $($_.Exception.Message)" }
+    if ([int]$configOperations.schema -ne 2 -or [string]$configOperations.contract -ne 'codex-baseline-config-operations/v2' -or
+        [string]$configOperations.core_operations_compat -ne 'codex-baseline-operations/v1' -or
+        [string]$configOperations.object_type -ne 'toml-keys' -or [string]$configOperations.native_validation -ne 'isolated-sanitized-CODEX_HOME' -or
+        (@($configOperations.operations) -join ',') -ne 'install-cap,optimize,restore,rollback,uninstall' -or
+        [string]$configOperations.reports.doctor -ne 'codex-baseline-doctor/v2' -or
+        [string]$configOperations.reports.onboarding -ne 'codex-baseline-onboarding/v2' -or
+        [string]$configOperations.reports.benchmark -ne 'codex-baseline-benchmark/v2' -or
+        [string]$configOperations.reports.optimize -ne 'codex-baseline-optimize/v1') {
+        throw 'Config operations contract identity or inventory is unsupported.'
+    }
     return $manifest
 }
 
 function Write-CbSourceProvenance {
     param($Manifest, [string]$SourceRoot = $script:SourceRoot, [string]$Acquisition = 'local-checkout')
-    $revision = 'unversioned'
-    $dirty = 'unknown'
-    $gitDirectory = Join-Path $SourceRoot '.git'
-    $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue
-    if ($null -ne $git -and (Test-CbExists $gitDirectory)) {
-        $environmentNames = @('GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_GLOBAL', 'GIT_OPTIONAL_LOCKS')
-        $savedEnvironment = @{}
-        $savedPresence = @{}
-        foreach ($name in $environmentNames) {
-            $savedPresence[$name] = Test-Path -LiteralPath ("Env:{0}" -f $name)
-            $savedEnvironment[$name] = [System.Environment]::GetEnvironmentVariable($name, 'Process')
-        }
-        try {
-            $env:GIT_CONFIG_NOSYSTEM = '1'
-            $env:GIT_CONFIG_GLOBAL = 'NUL'
-            $env:GIT_OPTIONAL_LOCKS = '0'
-            $revisionOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $SourceRoot 'rev-parse' '--verify' 'HEAD' 2>$null)
-            if ($LASTEXITCODE -eq 0 -and $revisionOutput.Count -eq 1 -and
-                [string]$revisionOutput[0] -match '^[0-9a-fA-F]{40,64}$') {
-                $revision = ([string]$revisionOutput[0]).ToLowerInvariant()
-            }
-            if ($revision -eq 'unversioned') {
-                $dirty = 'yes'
-            }
-            else {
-                $statusOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $SourceRoot 'status' '--porcelain=v1' '--untracked-files=no' 2>$null)
-                $statusExit = $LASTEXITCODE
-                $untrackedOutput = @(& $git.Path '-c' 'core.fsmonitor=false' '-C' $SourceRoot 'ls-files' '--others' '--exclude-standard' '--directory' 2>$null)
-                if ($statusExit -eq 0 -and $LASTEXITCODE -eq 0) {
-                    $dirty = if ($statusOutput.Count -gt 0 -or $untrackedOutput.Count -gt 0) { 'yes' } else { 'no' }
-                }
-            }
-        }
-        catch {
-            $revision = 'unversioned'
-            $dirty = 'unknown'
-        }
-        finally {
-            foreach ($name in $environmentNames) {
-                if ([bool]$savedPresence[$name]) {
-                    [System.Environment]::SetEnvironmentVariable($name, [string]$savedEnvironment[$name], 'Process')
-                }
-                else {
-                    [System.Environment]::SetEnvironmentVariable($name, $null, 'Process')
-                }
-            }
-        }
-    }
+    # Lifecycle provenance is payload-manifest based. Never ask checkout-owned
+    # Git metadata for informational revision/dirty fields: status/content
+    # conversion may execute repository-local filters before acknowledgement.
     Write-Output ("source-origin: {0}" -f $SourceRoot)
-    Write-Output ("source-revision: {0}" -f $revision)
-    Write-Output ("source-dirty: {0}" -f $dirty)
+    Write-Output 'source-revision: unversioned'
+    Write-Output 'source-dirty: unknown'
     Write-Output 'source-trust: unverified-source (unsigned-local-source)'
     Write-Output ("source-acquisition: {0}" -f $Acquisition)
     Write-Output ("source-payload-sha256: {0}" -f [string]$Manifest.payload_hash)
@@ -883,7 +897,10 @@ function Assert-CbTransactionShape {
         'Schema', 'Id', 'Operation', 'Version', 'CreatedUtc', 'ParentTransaction',
         'ResultCurrent', 'State', 'Objects'
     ) 'Transaction'
-    if (-not ($Transaction.Schema -is [int]) -or [int]$Transaction.Schema -ne $script:Schema) {
+    if ((-not ($Transaction.Schema -is [int])) -and (-not ($Transaction.Schema -is [long]))) {
+        throw 'Transaction schema must be the supported JSON integer.'
+    }
+    if ([int64]$Transaction.Schema -ne [int64]$script:Schema) {
         throw 'Transaction schema must be the supported JSON integer.'
     }
     if (-not ($Transaction.Id -is [string]) -or [string]$Transaction.Id -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$') {
@@ -895,9 +912,9 @@ function Assert-CbTransactionShape {
     if (-not ($Transaction.Version -is [string]) -or [string]$Transaction.Version -notmatch '^\d+(\.\d+)+$') {
         throw 'Transaction version is invalid.'
     }
-    if (-not ($Transaction.CreatedUtc -is [string])) { throw 'Transaction CreatedUtc must be a string.' }
     $created = [DateTime]::MinValue
-    if (-not [DateTime]::TryParse([string]$Transaction.CreatedUtc, [ref]$created)) { throw 'Transaction CreatedUtc is invalid.' }
+    if($Transaction.CreatedUtc-is[DateTime]){$created=$Transaction.CreatedUtc}
+    elseif(-not($Transaction.CreatedUtc-is[string])-or-not[DateTime]::TryParse([string]$Transaction.CreatedUtc,[ref]$created)){throw 'Transaction CreatedUtc is invalid.'}
     foreach ($pointerName in @('ParentTransaction', 'ResultCurrent')) {
         $pointer = $Transaction.$pointerName
         if ($null -ne $pointer -and (-not ($pointer -is [string]) -or $pointer -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$' -and $pointer -ne '__SELF__')) {
@@ -1063,8 +1080,6 @@ function New-CbTransaction {
         Objects = @()
     }
     Write-CbTransaction $transaction
-    Write-CbPointer $script:PendingPath $id
-    $script:ActiveTransaction = $id
     return $transaction
 }
 
@@ -1754,7 +1769,7 @@ function Assert-CbVerifiedSourceSnapshot {
     if ($env:CODEX_BASELINE_TESTING -eq '1' -and
         $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY -eq '1') {
         $snapshotDirectory = New-Object System.IO.DirectoryInfo([string]$Snapshot.Root)
-        $acl = $snapshotDirectory.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+        $acl = Get-CbDirectorySecurity $snapshotDirectory
         $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             $users,
@@ -1764,7 +1779,10 @@ function Assert-CbVerifiedSourceSnapshot {
             [System.Security.AccessControl.AccessControlType]::Allow
         )
         $acl.AddAccessRule($rule) | Out-Null
-        $snapshotDirectory.SetAccessControl($acl)
+        if ($PSVersionTable.PSEdition -eq 'Core') {
+            [System.IO.FileSystemAclExtensions]::SetAccessControl($snapshotDirectory, $acl)
+        }
+        else { $snapshotDirectory.SetAccessControl($acl) }
     }
     if ($env:CODEX_BASELINE_TESTING -eq '1' -and
         $env:CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY -eq '1') {
@@ -1821,6 +1839,9 @@ param(
     [string]$Offline,
     [switch]$Json,
     [switch]$Apply,
+    [switch]$Restore,
+    [ValidateSet('keep', 'standard', 'fast', 'ultrafast')]
+    [string]$Speed = 'keep',
     [Alias('acknowledge-existing-instructions')]
     [switch]$AcknowledgeExistingInstructions,
     [Alias('max-files')]
@@ -1831,7 +1852,7 @@ param(
     [string]$Repository = '.',
     [switch]$Static,
     [switch]$Live,
-    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,risk-migration,risk-safe-path'
+    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,risk-migration,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,six-lane-packages'
 )
 $ErrorActionPreference = 'Stop'
 $homePath = if ([string]::IsNullOrWhiteSpace($env:HOME)) { $env:USERPROFILE } else { $env:HOME }
@@ -1847,6 +1868,8 @@ $parameters = @{
     Offline = $Offline
     Json = [bool]$Json
     Apply = [bool]$Apply
+    Restore = [bool]$Restore
+    Speed = $Speed
     AcknowledgeExistingInstructions = [bool]$AcknowledgeExistingInstructions
     MaxFiles = $MaxFiles
     MaxVisited = $MaxVisited
@@ -1863,7 +1886,7 @@ exit $LASTEXITCODE
 function Get-CbInstallObjects {
     param($Manifest, [string]$SourceRoot, [string]$TemporaryRoot, $CurrentTransaction)
     $blockPath = Join-Path $TemporaryRoot 'AGENTS.block.md'
-    $block = New-CbRenderedBlock (Join-Path $SourceRoot 'baseline\global\AGENTS.block.md') ([string]$Manifest.version)
+    $block = New-CbRenderedBlock (Get-CbGlobalGuidancePath $SourceRoot) ([string]$Manifest.version)
     Write-CbUtf8File $blockPath $block
     $runtime = Join-Path $TemporaryRoot 'runtime'
     New-CbRuntimeCandidate $runtime $SourceRoot
@@ -2035,7 +2058,7 @@ function Move-CbPath {
 
 function Complete-CbTransaction {
     param($Transaction, [AllowNull()][string]$ResultCurrent)
-    if ([string]::IsNullOrWhiteSpace($ResultCurrent)) { $ResultCurrent = $null }
+    $effectiveResult = if ([string]::IsNullOrWhiteSpace($ResultCurrent)) { $null } else { [string]$ResultCurrent }
     foreach ($object in @($Transaction.Objects)) {
         if ($object.Change -and $object.PreviousExisted) {
             if ($null -eq $object.Old -or -not (Test-CbExists ([string]$object.Old))) {
@@ -2044,14 +2067,14 @@ function Complete-CbTransaction {
             Assert-CbPhysicalHashAt ([string]$object.Old) ([string]$object.PreviousPhysicalHash) 'Commit preimage before completion'
         }
     }
-    $Transaction.ResultCurrent = $ResultCurrent
-    if ($null -eq $ResultCurrent) {
+    $Transaction.ResultCurrent = $effectiveResult
+    if ($null -eq $effectiveResult) {
         if (Test-CbExists $script:CurrentPath) {
             Remove-CbSafeItem $script:CurrentPath
         }
     }
     else {
-        Write-CbPointer $script:CurrentPath $ResultCurrent
+        Write-CbPointer $script:CurrentPath $effectiveResult
     }
     $Transaction.State = 'committed'
     Write-CbTransaction $Transaction
@@ -2319,12 +2342,21 @@ function Invoke-CbTransaction {
         [string]$Version,
         [AllowNull()][string]$ParentTransaction,
         [object[]]$Objects,
-        [AllowNull()][string]$ResultCurrent
+        [AllowNull()][string]$ResultCurrent,
+        [AllowNull()]$ReservedTransaction=$null
     )
-    $transaction = New-CbTransaction $Operation $Version $ParentTransaction
+    $transaction = if($null-eq$ReservedTransaction){New-CbTransaction $Operation $Version $ParentTransaction}else{$ReservedTransaction}
+    if([string]$transaction.Operation-ne$Operation-or[string]$transaction.Version-ne$Version-or[string]$transaction.State-ne'planned'){
+        throw 'Reserved core transaction does not match the requested operation.'
+    }
+    $reservedParent=if($null-eq$transaction.ParentTransaction){''}else{[string]$transaction.ParentTransaction}
+    $requestedParent=if([string]::IsNullOrWhiteSpace($ParentTransaction)){''}else{$ParentTransaction}
+    if($reservedParent-ne$requestedParent-or@($transaction.Objects).Count-ne0){throw 'Reserved core transaction has an invalid parent or object inventory.'}
     $transaction.ResultCurrent = $(if ([string]::IsNullOrWhiteSpace($ResultCurrent)) { $null } else { $ResultCurrent })
     $transaction.Objects = @($Objects)
     Write-CbTransaction $transaction
+    Write-CbPointer $script:PendingPath ([string]$transaction.Id)
+    $script:ActiveTransaction = [string]$transaction.Id
     foreach ($object in @($transaction.Objects)) {
         if (-not $object.Change) {
             $object.Status = 'unchanged'
@@ -2360,6 +2392,827 @@ function Invoke-CbTransaction {
     return $transaction
 }
 
+function Get-CbConfigKeyMetadata {
+    param([string]$Id)
+    switch ($Id) {
+        'agents_enabled' { return [pscustomobject]@{ Id=$Id; Path='agents.enabled'; Table='agents'; Key='enabled'; Type='boolean' } }
+        'agents_max' { return [pscustomobject]@{ Id=$Id; Path='agents.max_concurrent_threads_per_session'; Table='agents'; Key='max_concurrent_threads_per_session'; Type='integer' } }
+        'service_tier' { return [pscustomobject]@{ Id=$Id; Path='service_tier'; Table=''; Key='service_tier'; Type='enum' } }
+        'features_fast_mode' { return [pscustomobject]@{ Id=$Id; Path='features.fast_mode'; Table='features'; Key='fast_mode'; Type='boolean' } }
+        default { throw "Unknown managed config key: $Id" }
+    }
+}
+
+function Read-CbConfigDocumentBytes {
+    param([byte[]]$Bytes)
+    if ($Bytes.Length -gt 1048576) { throw 'config.toml exceeds the 1 MiB optimizer limit.' }
+    $bom = $Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF
+    $offset = if ($bom) { 3 } else { 0 }
+    try { $text = $script:Utf8Strict.GetString($Bytes, $offset, $Bytes.Length - $offset) }
+    catch { throw 'config.toml is not valid UTF-8.' }
+    if ($text.IndexOf([char]0) -ge 0) { throw 'config.toml contains a NUL byte.' }
+    if([regex]::IsMatch($text,"`r(?!`n)")){throw 'config.toml contains an unsupported lone-CR line ending.'}
+    $lineList = New-Object 'System.Collections.Generic.List[object]'
+    if ($text.Length -gt 0) {
+        foreach ($match in [regex]::Matches($text, '[^\n]*(?:\n|$)')) {
+            if ($match.Length -eq 0) { continue }
+            $chunk = $match.Value
+            $ending = ''
+            $body = $chunk
+            if ($chunk.EndsWith("`n")) {
+                if ($chunk.EndsWith("`r`n")) { $ending = "`r`n"; $body = $chunk.Substring(0, $chunk.Length - 2) }
+                else { $ending = "`n"; $body = $chunk.Substring(0, $chunk.Length - 1) }
+            }
+            $lineList.Add([pscustomobject]@{ Body = $body; Ending = $ending }) | Out-Null
+        }
+    }
+    $tables = @{}
+    $keys = @{}
+    $lineTables = New-Object 'System.Collections.Generic.List[string]'
+    $table = ''
+    for ($index = 0; $index -lt $lineList.Count; $index++) {
+        $body = [string]$lineList[$index].Body
+        if ($body.Contains("'''" ) -or $body.Contains('"""')) { throw 'Multiline TOML strings are unsupported for safe key patching.' }
+        $trimmed = $body.TrimStart(' ', "`t")
+        $lineTables.Add($table) | Out-Null
+        if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#')) { continue }
+        $header = [regex]::Match($trimmed, '^\[([A-Za-z0-9_-]+)\][ \t]*(?:#.*)?$')
+        if ($header.Success) {
+            $table = $header.Groups[1].Value
+            $lineTables[$index] = $table
+            if ($table -in @('agents','features')) {
+                if ($tables.ContainsKey($table)) { throw "Duplicate [$table] table in config.toml." }
+                $tables[$table] = $index
+            }
+            continue
+        }
+        if ($trimmed.StartsWith('[')) {
+            if ($trimmed -match '(agents|features)') { throw 'Ambiguous quoted, dotted, array, or malformed managed TOML table.' }
+            $table = 'other'; $lineTables[$index] = $table; continue
+        }
+        if ($trimmed -match '^(agents|features)[ \t]*(\.|=)' -or
+            $trimmed -match '^["''](agents|features)["'']' -or
+            ($table -eq '' -and $trimmed -match '^["'']service_tier["''][ \t]*=') -or
+            ($table -eq 'agents' -and $trimmed -match '^["''](enabled|max_concurrent_threads_per_session|max_threads)["''][ \t]*=') -or
+            ($table -eq 'features' -and $trimmed -match '^["''](fast_mode|multi_agent)["''][ \t]*=')) {
+            throw 'Dotted, quoted, or inline definitions of managed TOML paths are unsupported.'
+        }
+        $id = $null; $key = $null
+        if ($table -eq '' -and $trimmed -match '^service_tier[ \t]*=') { $id='service_tier'; $key='service_tier' }
+        elseif ($table -eq 'agents' -and $trimmed -match '^enabled[ \t]*=') { $id='agents_enabled'; $key='enabled' }
+        elseif ($table -eq 'agents' -and $trimmed -match '^max_concurrent_threads_per_session[ \t]*=') { $id='agents_max'; $key='max_concurrent_threads_per_session' }
+        elseif ($table -eq 'agents' -and $trimmed -match '^max_threads[ \t]*=') { $id='agents_legacy_max'; $key='max_threads' }
+        elseif ($table -eq 'features' -and $trimmed -match '^fast_mode[ \t]*=') { $id='features_fast_mode'; $key='fast_mode' }
+        elseif ($table -eq 'features' -and $trimmed -match '^multi_agent[ \t]*=') { $id='features_multi_agent'; $key='multi_agent' }
+        if ($null -eq $id) { continue }
+        $pattern = '^(?<indent>[ \t]*)' + [regex]::Escape($key) + '(?<eq>[ \t]*=[ \t]*)(?<token>true|false|[0-9]+|"[A-Za-z0-9_-]+")(?<suffix>[ \t]*(?:#.*)?)$'
+        $scalar = [regex]::Match($body, $pattern)
+        if (-not $scalar.Success) { throw "Managed key uses ambiguous or unsupported TOML syntax: $id" }
+        if ($keys.ContainsKey($id)) { throw "Duplicate managed key: $id" }
+        $token = $scalar.Groups['token'].Value
+        if (($id -in @('agents_enabled','features_fast_mode','features_multi_agent') -and $token -notin @('true','false')) -or
+            ($id -in @('agents_max','agents_legacy_max') -and $token -notmatch '^(0|[1-9][0-9]{0,5})$')) {
+            throw "Managed key has an unsupported scalar type: $id"
+        }
+        $keys[$id] = [pscustomobject]@{ Index=$index; Token=$token }
+    }
+    return [pscustomobject]@{ Bom=$bom; Lines=$lineList; Tables=$tables; Keys=$keys; LineTables=$lineTables }
+}
+
+function Read-CbConfigDocument {
+    if (-not (Test-CbExists $script:ConfigPath)) { return Read-CbConfigDocumentBytes ([byte[]]@()) }
+    return Read-CbConfigDocumentBytes ([System.IO.File]::ReadAllBytes($script:ConfigPath))
+}
+
+function ConvertTo-CbConfigBytes {
+    param($Document)
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($line in $Document.Lines) { [void]$builder.Append([string]$line.Body); [void]$builder.Append([string]$line.Ending) }
+    $payload = $script:Utf8NoBom.GetBytes($builder.ToString())
+    if (-not [bool]$Document.Bom) { return ,$payload }
+    $bytes = New-Object byte[] ($payload.Length + 3)
+    $bytes[0]=0xEF; $bytes[1]=0xBB; $bytes[2]=0xBF
+    [Array]::Copy($payload, 0, $bytes, 3, $payload.Length)
+    return ,$bytes
+}
+
+function Update-CbConfigDocumentKey {
+    param($Document, [string]$Id, [string]$Desired)
+    $meta = Get-CbConfigKeyMetadata $Id
+    $lines = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($line in $Document.Lines) { $lines.Add([pscustomobject]@{Body=[string]$line.Body;Ending=[string]$line.Ending}) | Out-Null }
+    if ($Document.Keys.ContainsKey($Id)) {
+        $index = [int]$Document.Keys[$Id].Index
+        if ($Desired -eq '__ABSENT__') { $lines.RemoveAt($index) }
+        else {
+            $body = [string]$lines[$index].Body
+            $pattern = '^(?<indent>[ \t]*)' + [regex]::Escape([string]$meta.Key) + '(?<eq>[ \t]*=[ \t]*)(?<token>true|false|[0-9]+|"[A-Za-z0-9_-]+")(?<suffix>[ \t]*(?:#.*)?)$'
+            $match = [regex]::Match($body, $pattern)
+            if (-not $match.Success) { throw "Cannot safely rewrite managed key: $Id" }
+            $lines[$index].Body = $match.Groups['indent'].Value + $meta.Key + $match.Groups['eq'].Value + $Desired + $match.Groups['suffix'].Value
+        }
+        return Read-CbConfigDocumentBytes (ConvertTo-CbConfigBytes ([pscustomobject]@{Bom=$Document.Bom;Lines=$lines}))
+    }
+    if ($Desired -eq '__ABSENT__') { return $Document }
+    $eol = "`r`n"
+    foreach ($existing in $lines) { if ([string]$existing.Ending -ne '') { $eol=[string]$existing.Ending; break } }
+    $newLine = [pscustomobject]@{ Body=("{0} = {1}" -f $meta.Key,$Desired); Ending='' }
+    if ([string]::IsNullOrEmpty([string]$meta.Table)) {
+        $insert = $lines.Count
+        for ($index=0; $index -lt $lines.Count; $index++) { if ([string]$lines[$index].Body -match '^[ \t]*\[') { $insert=$index; break } }
+        if ($insert -lt $lines.Count) { $newLine.Ending=$eol }
+        $lines.Insert($insert,$newLine)
+    }
+    elseif ($Document.Tables.ContainsKey([string]$meta.Table)) {
+        $header=[int]$Document.Tables[[string]$meta.Table]; $insert=$lines.Count
+        for ($index=$header+1; $index -lt $lines.Count; $index++) { if ([string]$Document.LineTables[$index] -ne [string]$meta.Table) { $insert=$index; break } }
+        if ($insert -lt $lines.Count) { $newLine.Ending=$eol }
+        elseif ($lines.Count -gt 0 -and [string]$lines[$lines.Count-1].Ending -ne '') { $newLine.Ending=$eol }
+        elseif ($lines.Count -gt 0) { $lines[$lines.Count-1].Ending=$eol }
+        $lines.Insert($insert,$newLine)
+    }
+    else {
+        $hadFinal = $lines.Count -gt 0 -and [string]$lines[$lines.Count-1].Ending -ne ''
+        if ($lines.Count -gt 0 -and [string]$lines[$lines.Count-1].Ending -eq '') { $lines[$lines.Count-1].Ending=$eol }
+        if ($lines.Count -gt 0 -and [string]$lines[$lines.Count-1].Body -ne '') { $lines.Add([pscustomobject]@{Body='';Ending=$eol}) | Out-Null }
+        $lines.Add([pscustomobject]@{Body=("[{0}]" -f $meta.Table);Ending=$eol}) | Out-Null
+        $newLine.Ending = if ($hadFinal) { $eol } else { '' }
+        $lines.Add($newLine) | Out-Null
+    }
+    return Read-CbConfigDocumentBytes (ConvertTo-CbConfigBytes ([pscustomobject]@{Bom=$Document.Bom;Lines=$lines}))
+}
+
+function Remove-CbEmptyCreatedConfigTable {
+    param($Document, [string]$Table, [bool]$SeparatorAdded, [string]$CurrentFinalEnding)
+    if (-not $Document.Tables.ContainsKey($Table)) { return $Document }
+    $header=[int]$Document.Tables[$Table]; $end=$Document.Lines.Count; $meaningful=$false
+    for ($index=$header+1; $index -lt $Document.Lines.Count; $index++) {
+        if ([string]$Document.LineTables[$index] -ne $Table) { $end=$index; break }
+        $trimmed=([string]$Document.Lines[$index].Body).TrimStart(' ',"`t")
+        if ($trimmed.Length -gt 0) { $meaningful=$true }
+    }
+    if ($meaningful) { return $Document }
+    $lines=New-Object 'System.Collections.Generic.List[object]'
+    for ($index=0; $index -lt $Document.Lines.Count; $index++) {
+        if ($index -ge $header -and $index -lt $end) { continue }
+        if ($SeparatorAdded -and $index -eq ($header-1) -and [string]$Document.Lines[$index].Body -eq '') { continue }
+        $lines.Add([pscustomobject]@{Body=[string]$Document.Lines[$index].Body;Ending=[string]$Document.Lines[$index].Ending}) | Out-Null
+    }
+    if ($lines.Count -gt 0) { $lines[$lines.Count-1].Ending = $CurrentFinalEnding }
+    return Read-CbConfigDocumentBytes (ConvertTo-CbConfigBytes ([pscustomobject]@{Bom=$Document.Bom;Lines=$lines}))
+}
+
+function Initialize-CbConfigNative {
+    if ($null -ne ('CodexBaseline.ConfigNative' -as [type])) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace CodexBaseline {
+  public static class ConfigNative {
+    [StructLayout(LayoutKind.Sequential)] struct FILETIME { public uint Low, High; }
+    [StructLayout(LayoutKind.Sequential)] struct INFO { public uint Attr; public FILETIME C,A,W; public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow; }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafeFileHandle CreateFileW(string p,uint a,uint s,IntPtr q,uint c,uint f,IntPtr t);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle h,out INFO i);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool SetFileSecurityW(string p,uint i,byte[] d);
+    public static string FileIdentity(string p) { using(var h=CreateFileW(p,0,7,IntPtr.Zero,3,0x00200000,IntPtr.Zero)){ if(h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error()); INFO i; if(!GetFileInformationByHandle(h,out i)) throw new Win32Exception(Marshal.GetLastWin32Error()); return String.Format("{0:X8}:{1:X8}:{2:X8}:{3}",i.Volume,i.IndexHigh,i.IndexLow,i.Links); } }
+    public static void SetDacl(string p,byte[] d,bool isProtected) {
+      const uint DACL_SECURITY_INFORMATION=0x00000004;
+      const uint PROTECTED_DACL_SECURITY_INFORMATION=0x80000000;
+      const uint UNPROTECTED_DACL_SECURITY_INFORMATION=0x20000000;
+      uint information=DACL_SECURITY_INFORMATION|(isProtected?PROTECTED_DACL_SECURITY_INFORMATION:UNPROTECTED_DACL_SECURITY_INFORMATION);
+      if(!SetFileSecurityW(p,information,d)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+  }
+}
+'@
+}
+
+function Get-CbConfigSecurity {
+    param([string]$Path)
+    $sections=[Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner
+    $file=New-Object System.IO.FileInfo($Path)
+    $security = if ($PSVersionTable.PSEdition -eq 'Core') { [System.IO.FileSystemAclExtensions]::GetAccessControl($file,$sections) } else { $file.GetAccessControl($sections) }
+    return [pscustomobject]@{
+        Owner=$security.GetOwner([Security.Principal.SecurityIdentifier]).Value
+        Sddl=$security.GetSecurityDescriptorSddlForm($sections)
+        Protected=[bool]$security.AreAccessRulesProtected
+    }
+}
+
+function Set-CbConfigSecurity {
+    param([string]$Path,[string]$Sddl)
+    $sections=[Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner
+    $current=Get-CbConfigSecurity $Path
+    if($current.Sddl-eq$Sddl){return}
+    $desired=New-Object System.Security.AccessControl.FileSecurity
+    $desired.SetSecurityDescriptorSddlForm($Sddl,$sections)
+    $desiredOwner=$desired.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if($current.Owner-ne$desiredOwner){throw 'config.toml Owner cannot be restored without changing ownership.'}
+    # Managed SetAccessControl normalizes inherited DACL control bits and
+    # setting an unchanged owner still requires WRITE_OWNER. Apply the exact
+    # DACL descriptor natively after proving the owner already matches.
+    Initialize-CbConfigNative
+    [CodexBaseline.ConfigNative]::SetDacl($Path,$desired.GetSecurityDescriptorBinaryForm(),[bool]$desired.AreAccessRulesProtected)
+    $verified=Get-CbConfigSecurity $Path
+    if($verified.Sddl-ne$Sddl){
+        # SetFileSecurity applies the requested protection state but can omit
+        # the AUTO_INHERITED control bit on an otherwise exact DACL. A
+        # DACL-only managed write restores that bit without requesting owner
+        # rights; the exact postcondition below remains authoritative.
+        $accessOnly=New-Object System.Security.AccessControl.FileSecurity
+        $accessOnly.SetSecurityDescriptorSddlForm($Sddl,[Security.AccessControl.AccessControlSections]::Access)
+        $file=New-Object System.IO.FileInfo($Path)
+        if($PSVersionTable.PSEdition-eq'Core'){[System.IO.FileSystemAclExtensions]::SetAccessControl($file,$accessOnly)}else{$file.SetAccessControl($accessOnly)}
+        $verified=Get-CbConfigSecurity $Path
+    }
+    if($verified.Sddl-ne$Sddl){throw 'config.toml Owner/DACL could not be restored exactly.'}
+}
+
+function New-CbRestrictedConfigStageSddl {
+    $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+    $security=New-Object System.Security.AccessControl.FileSecurity
+    $security.SetOwner($sid)
+    $security.SetAccessRuleProtection($true,$false)
+    $rule=New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $sid,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.InheritanceFlags]::None,
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $security.AddAccessRule($rule)|Out-Null
+    $sections=[Security.AccessControl.AccessControlSections]::Access-bor[Security.AccessControl.AccessControlSections]::Owner
+    return $security.GetSecurityDescriptorSddlForm($sections)
+}
+
+function Assert-CbConfigPath {
+    Assert-CbExistingAncestorsSafe ([IO.Path]::GetDirectoryName($script:ConfigPath))
+    $item=Get-CbItem $script:ConfigPath
+    if ($null -eq $item) { return $null }
+    Assert-CbOrdinaryItem $item 'file'
+    if ($item.Length -gt 1048576) { throw 'config.toml exceeds the 1 MiB optimizer limit.' }
+    Initialize-CbConfigNative
+    $identity=[CodexBaseline.ConfigNative]::FileIdentity($item.FullName)
+    if ($identity -notmatch ':1$') { throw 'config.toml hard links are not supported.' }
+    $security=Get-CbConfigSecurity $item.FullName
+    $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($security.Owner -ne $currentSid) { throw 'config.toml must be owned by the current user.' }
+    $streams=@(Get-Item -LiteralPath $item.FullName -Stream * -ErrorAction Stop)
+    if (@($streams | Where-Object { $_.Stream -ne ':$DATA' }).Count -gt 0) { throw 'config.toml alternate data streams are unsupported.' }
+    return [pscustomobject]@{Identity=$identity;Security=$security;Hash=(Get-CbFileHash $item.FullName);Length=$item.Length}
+}
+
+function Test-CbConfigCandidate {
+    param([byte[]]$Bytes)
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+        $env:CODEX_BASELINE_TEST_REJECT_CONFIG_CANDIDATE -eq '1') {
+        throw 'Injected isolated candidate validation rejection.'
+    }
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and $env:CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION -eq '1') { return }
+    $command=Get-Command codex -ErrorAction Stop
+    if ($command.CommandType -notin @('Application','ExternalScript')) { throw 'Config validation requires an ordinary Codex executable.' }
+    $temporary=New-CbTemporaryDirectory
+    try {
+        $config=Join-Path $temporary 'config.toml'; [IO.File]::WriteAllBytes($config,$Bytes)
+        $sqlite=Join-Path $temporary 'sqlite'; Ensure-CbSafeDirectory $sqlite | Out-Null
+        $psi=New-Object Diagnostics.ProcessStartInfo
+        $psi.FileName=$command.Source; $psi.Arguments='--strict-config --version'; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true; $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true
+        $psi.EnvironmentVariables.Clear(); $psi.EnvironmentVariables['HOME']=$temporary; $psi.EnvironmentVariables['CODEX_HOME']=$temporary; $psi.EnvironmentVariables['CODEX_SQLITE_HOME']=$sqlite; $psi.EnvironmentVariables['PATH']=[IO.Path]::GetDirectoryName($command.Source)
+        $process=[Diagnostics.Process]::Start($psi); $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { throw 'Codex rejected the isolated candidate config.' }
+    }
+    finally { if (Test-CbExists $temporary) { Remove-CbSafeItem $temporary } }
+}
+
+function Get-CbConfigTransactionPath {
+    param([string]$Id)
+    if ($Id -notmatch '^\d{8}T\d{6}Z-[0-9a-f]{32}$') { throw "Invalid config transaction identifier: $Id" }
+    return Join-Path $script:ConfigTransactionsPath $Id
+}
+
+function Write-CbConfigTransaction {
+    param($Transaction)
+    $path=Join-Path (Get-CbConfigTransactionPath ([string]$Transaction.Id)) 'transaction.json'
+    Write-CbUtf8Atomic $path (($Transaction | ConvertTo-Json -Depth 10) + "`n")
+}
+
+function Assert-CbConfigArtifact {
+    param([string]$Path,[string]$Label)
+    $item=Get-CbItem $Path
+    if($null-eq$item){return $null}
+    Assert-CbOrdinaryItem $item 'file'
+    if($item.Length-gt1048576){throw "$Label exceeds the 1 MiB config artifact limit."}
+    Initialize-CbConfigNative
+    $identity=[CodexBaseline.ConfigNative]::FileIdentity($item.FullName)
+    if($identity-notmatch':1$'){throw "$Label has an unsafe hard-link count."}
+    $security=Get-CbConfigSecurity $item.FullName
+    $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if($security.Owner-ne$currentSid){throw "$Label must be owned by the current user."}
+    $streams=@(Get-Item -LiteralPath $item.FullName -Stream * -ErrorAction Stop)
+    if(@($streams|Where-Object{$_.Stream-ne':$DATA'}).Count-gt0){throw "$Label has unsupported alternate data streams."}
+    return [pscustomobject]@{Item=$item;Identity=$identity;Security=$security;Hash=(Get-CbFileHash $item.FullName)}
+}
+
+function Read-CbConfigTransactionRaw {
+    param([string]$Id)
+    $directory=Get-CbConfigTransactionPath $Id
+    $directoryItem=Get-CbItem $directory
+    if($null-eq$directoryItem){throw "Config transaction is missing: $Id"}
+    Assert-CbOrdinaryItem $directoryItem 'tree'
+    $children=@(Get-ChildItem -LiteralPath $directoryItem.FullName -Force)
+    if($children.Count-ne1-or$children[0].Name-ne'transaction.json'){throw "Config transaction has an invalid file inventory: $Id"}
+    Assert-CbOrdinaryItem $children[0] 'file'
+    $path=$children[0].FullName
+    if (-not (Test-CbExists $path)) { throw "Config transaction is missing: $Id" }
+    try{return (Read-CbUtf8Text $path)|ConvertFrom-Json -ErrorAction Stop}
+    catch{throw "Config transaction journal is invalid: $Id"}
+}
+
+function Assert-CbConfigToken {
+    param([string]$Id,[string]$Token,[string]$Label)
+    switch($Id){
+      {$_-in@('agents_enabled','features_fast_mode')}{if($Token-notin@('true','false')){throw "Invalid boolean token in $Label"};break}
+      'agents_max'{if($Token-notmatch'^(0|[1-9][0-9]{0,5})$'){throw "Invalid integer token in $Label"};break}
+      'service_tier'{if($Token-notmatch'^"[a-z][a-z0-9_-]{0,31}"$'){throw "Invalid enum token in $Label"};break}
+      default{throw "Unknown managed config key in $Label"}
+    }
+}
+
+function Assert-CbConfigTransaction {
+    param($Transaction,[string]$Id,[AllowNull()][string]$ExpectedState)
+    $properties=@('Schema','Contract','Id','Operation','Version','CreatedUtc','Parent','CoreTransaction','State','Target','Stage','Old','PreviousExisted','PreviousPhysicalHash','DesiredPhysicalHash','PreviousProjectionHash','DesiredProjectionHash','PreviousStructureHash','DesiredStructureHash','PreviousIdentity','PreviousSecurity','DesiredIdentity','DesiredSecurity','Ownership')
+    Assert-CbExactProperties $Transaction $properties "Config transaction $Id"
+    if(((-not($Transaction.Schema-is[int]))-and(-not($Transaction.Schema-is[long])))-or[int64]$Transaction.Schema-ne2-or[string]$Transaction.Id-ne$Id-or[string]$Transaction.Contract-ne'codex-baseline-config-transaction/v2'){throw "Config transaction identity mismatch: $Id"}
+    if([string]$Transaction.Operation-notin@('install-cap','optimize','restore','rollback','uninstall')){throw "Invalid config transaction operation: $Id"}
+    if([string]$Transaction.State-notin@('planned','prepared','committing','replaced-before-security','committed','rolled-back')){throw "Invalid config transaction state: $Id"}
+    if(-not[string]::IsNullOrEmpty($ExpectedState)-and[string]$Transaction.State-ne$ExpectedState){throw "Config transaction $Id is not $ExpectedState"}
+    if([string]$Transaction.Version-notmatch'^\d+\.\d+\.\d+$'){throw "Invalid config transaction version: $Id"}
+    $created=[DateTimeOffset]::MinValue
+    $createdText=if($Transaction.CreatedUtc-is[DateTime]){$Transaction.CreatedUtc.ToUniversalTime().ToString('o')}else{[string]$Transaction.CreatedUtc}
+    if($createdText -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$' -or -not [DateTimeOffset]::TryParse($createdText,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind,[ref]$created)){throw "Invalid config transaction timestamp: $Id"}
+    $expectedStage=Join-Path $script:CodexHome ('.codex-baseline-config-stage-{0}'-f$Id)
+    $expectedOld=Join-Path $script:CodexHome ('.codex-baseline-config-old-{0}'-f$Id)
+    if(-not(Test-CbSamePath ([string]$Transaction.Target) $script:ConfigPath)){throw "Config transaction target mismatch: $Id"}
+    if(-not(Test-CbSamePath ([string]$Transaction.Stage) $expectedStage)){throw "Config transaction stage mismatch: $Id"}
+    if(-not(Test-CbSamePath ([string]$Transaction.Old) $expectedOld)){throw "Config transaction old-path mismatch: $Id"}
+    Assert-CbConfigArtifact $expectedStage 'Config transaction stage'|Out-Null
+    Assert-CbConfigArtifact $expectedOld 'Config transaction old preimage'|Out-Null
+    if($Transaction.PreviousExisted-isnot[bool]){throw "Invalid config previous-existed flag: $Id"}
+    foreach($name in @('PreviousPhysicalHash','DesiredPhysicalHash')){$value=[string]$Transaction.$name;if($value-ne'absent'-and$value-notmatch'^[0-9a-f]{64}$'){throw "Invalid config hash $name`: $Id"}}
+    if(-not[bool]$Transaction.PreviousExisted-and[string]$Transaction.PreviousPhysicalHash-ne'absent'){throw "Config previous hash/existence mismatch: $Id"}
+    foreach($name in @('PreviousProjectionHash','DesiredProjectionHash','PreviousStructureHash','DesiredStructureHash')){if([string]$Transaction.$name-notmatch'^[0-9a-f]{64}$'){throw "Invalid config hash $name`: $Id"}}
+    if([bool]$Transaction.PreviousExisted){
+      if([string]$Transaction.PreviousIdentity-notmatch'^[0-9A-F]{8}:[0-9A-F]{8}:[0-9A-F]{8}:1$'-or[string]::IsNullOrWhiteSpace([string]$Transaction.PreviousSecurity)){throw "Invalid config preimage metadata: $Id"}
+      try{$descriptor=New-Object Security.AccessControl.FileSecurity;$sections=[Security.AccessControl.AccessControlSections]::Access-bor[Security.AccessControl.AccessControlSections]::Owner;$descriptor.SetSecurityDescriptorSddlForm([string]$Transaction.PreviousSecurity,$sections)}catch{throw "Invalid config security descriptor: $Id"}
+    }elseif($null-ne$Transaction.PreviousIdentity-or$null-ne$Transaction.PreviousSecurity){throw "Absent config transaction contains preimage metadata: $Id"}
+    $hasDesiredMetadata=$null-ne$Transaction.DesiredIdentity-or$null-ne$Transaction.DesiredSecurity
+    if($hasDesiredMetadata){
+      if([string]$Transaction.DesiredIdentity-notmatch'^[0-9A-F]{8}:[0-9A-F]{8}:[0-9A-F]{8}:1$'-or[string]::IsNullOrWhiteSpace([string]$Transaction.DesiredSecurity)){throw "Invalid config desired metadata: $Id"}
+      try{$descriptor=New-Object Security.AccessControl.FileSecurity;$sections=[Security.AccessControl.AccessControlSections]::Access-bor[Security.AccessControl.AccessControlSections]::Owner;$descriptor.SetSecurityDescriptorSddlForm([string]$Transaction.DesiredSecurity,$sections)}catch{throw "Invalid config desired security descriptor: $Id"}
+    }
+    elseif([string]$Transaction.State-in@('prepared','committing','replaced-before-security','committed')){throw "Config desired metadata is missing: $Id"}
+    $seen=@{$Id=$true};$cursor=if($null-eq$Transaction.Parent){''}else{[string]$Transaction.Parent}
+    while(-not[string]::IsNullOrWhiteSpace($cursor)){
+      if($cursor-notmatch'^\d{8}T\d{6}Z-[0-9a-f]{32}$'-or$seen.ContainsKey($cursor)){throw "Config transaction parent cycle or identifier mismatch: $Id"}
+      $seen[$cursor]=$true;$parent=Read-CbConfigTransactionRaw $cursor
+      Assert-CbExactProperties $parent $properties "Config transaction parent $cursor"
+      if([string]$parent.Id-ne$cursor-or[string]$parent.State-ne'committed'){throw "Config transaction parent is not committed: $cursor"}
+      $cursor=if($null-eq$parent.Parent){''}else{[string]$parent.Parent}
+    }
+    if($null-ne$Transaction.CoreTransaction){
+      if([string]::IsNullOrWhiteSpace([string]$Transaction.CoreTransaction)){throw "Config transaction has an empty core binding: $Id"}
+      $core=Read-CbTransaction ([string]$Transaction.CoreTransaction);Assert-CbTransactionShape $core $false
+    }
+    $allowed=@('agents_enabled','agents_max','service_tier','features_fast_mode');$ids=@{}
+    foreach($owned in @($Transaction.Ownership)){
+      Assert-CbExactProperties $owned @('Id','Path','Table','Type','PriorState','PriorToken','PriorFileExisted','InstalledToken','CreatedTable','SeparatorAdded','PriorFinalNewline') "Config ownership entry"
+      $ownedId=[string]$owned.Id
+      if($ownedId-notin$allowed-or$ids.ContainsKey($ownedId)){throw "Invalid or duplicate config ownership key: $ownedId"};$ids[$ownedId]=$true
+      $meta=Get-CbConfigKeyMetadata $ownedId
+      if([string]$owned.Path-ne[string]$meta.Path-or[string]$owned.Table-ne[string]$meta.Table-or[string]$owned.Type-ne[string]$meta.Type){throw "Config ownership metadata mismatch: $ownedId"}
+      foreach($flag in @('PriorFileExisted','CreatedTable','SeparatorAdded','PriorFinalNewline')){if($owned.$flag-isnot[bool]){throw "Invalid config ownership flag $flag`: $ownedId"}}
+      if([string]$owned.PriorState-eq'present'){Assert-CbConfigToken $ownedId ([string]$owned.PriorToken) "$ownedId/PriorToken"}
+      elseif([string]$owned.PriorState-eq'absent'){if(-not[string]::IsNullOrEmpty([string]$owned.PriorToken)){throw "Absent config ownership has a prior token: $ownedId"}}
+      else{throw "Invalid config ownership prior state: $ownedId"}
+      Assert-CbConfigToken $ownedId ([string]$owned.InstalledToken) "$ownedId/InstalledToken"
+    }
+}
+
+function Read-CbConfigTransaction {
+    param([string]$Id,[AllowNull()][string]$ExpectedState=$null)
+    $transaction=Read-CbConfigTransactionRaw $Id
+    Assert-CbConfigTransaction $transaction $Id $ExpectedState
+    return $transaction
+}
+
+function Get-CbCurrentConfigTransaction {
+    $id=Read-CbPointer $script:ConfigCurrentPath
+    if ($null -eq $id) { return $null }
+    $transaction=Read-CbConfigTransaction $id 'committed'
+    return $transaction
+}
+
+function Assert-CbConfigOwnershipClean {
+    param($Current, $Document)
+    if ($null -eq $Current) { return }
+    foreach ($owned in @($Current.Ownership)) {
+        $live = if ($Document.Keys.ContainsKey([string]$owned.Id)) { [string]$Document.Keys[[string]$owned.Id].Token } else { '__ABSENT__' }
+        if ($live -ne [string]$owned.InstalledToken) { throw "Managed config key drifted: $($owned.Path)" }
+    }
+}
+
+function Get-CbConfigProjectionHash {
+    param($Document)
+    $lines=New-Object 'System.Collections.Generic.List[string]'
+    foreach($id in @('agents_enabled','agents_max','service_tier','features_fast_mode')){
+        $token=if($Document.Keys.ContainsKey($id)){[string]$Document.Keys[$id].Token}else{'__ABSENT__'}
+        $lines.Add(('{0}`t{1}'-f(Get-CbConfigKeyMetadata $id).Path,$token))|Out-Null
+    }
+    return Get-CbStringHash (([string]::Join("`n",$lines))+"`n")
+}
+
+function Get-CbConfigStructureHash {
+    param($Document)
+    $lines=New-Object 'System.Collections.Generic.List[string]'
+    $lines.Add(('bom={0}'-f$(if($Document.Bom){1}else{0})))|Out-Null
+    $lines.Add(('final-newline={0}'-f$(if($Document.Lines.Count-gt0-and[string]$Document.Lines[$Document.Lines.Count-1].Ending-ne''){1}else{0})))|Out-Null
+    foreach($id in @('agents_enabled','agents_max','service_tier','features_fast_mode')){$lines.Add(('{0}`t{1}'-f(Get-CbConfigKeyMetadata $id).Path,$(if($Document.Keys.ContainsKey($id)){[int]$Document.Keys[$id].Index}else{'absent'})))|Out-Null}
+    foreach($table in @('agents','features')){$lines.Add(('table-{0}={1}'-f$table,$(if($Document.Tables.ContainsKey($table)){[int]$Document.Tables[$table]}else{'absent'})))|Out-Null}
+    return Get-CbStringHash (([string]::Join("`n",$lines))+"`n")
+}
+
+function Recover-CbConfigPending {
+    $id=Read-CbPointer $script:ConfigPendingPath
+    if ($null -eq $id) { return }
+    $tx=Read-CbConfigTransaction $id
+    $targetPre=Assert-CbConfigPath
+    $target=Get-CbItem $script:ConfigPath; $live=if($null -eq $target){'absent'}else{Get-CbFileHash $target.FullName}
+    if ($live -eq [string]$tx.DesiredPhysicalHash) {
+        $oldArtifact=$null
+        if([bool]$tx.PreviousExisted){
+            $oldArtifact=Assert-CbConfigArtifact ([string]$tx.Old) 'Config recovery preimage'
+            if($null-eq$oldArtifact-or[string]$oldArtifact.Hash-ne[string]$tx.PreviousPhysicalHash-or[string]$oldArtifact.Identity-ne[string]$tx.PreviousIdentity-or[string]$oldArtifact.Security.Sddl-ne[string]$tx.PreviousSecurity){throw 'Config recovery preimage metadata is unverifiable.'}
+            if([string]$tx.DesiredSecurity-ne[string]$oldArtifact.Security.Sddl){throw 'Config recovery live desired metadata is unverifiable.'}
+        }
+        if($live-ne'absent'){
+            if($null-eq$targetPre-or$targetPre.Identity-ne[string]$tx.DesiredIdentity){throw 'Config recovery live desired metadata is unverifiable.'}
+            if($targetPre.Security.Sddl-ne[string]$tx.DesiredSecurity){
+                if([string]$tx.State-notin@('committing','replaced-before-security')-or$null-eq$oldArtifact){throw 'Config recovery live desired metadata is unverifiable.'}
+                Set-CbConfigSecurity $script:ConfigPath ([string]$oldArtifact.Security.Sddl)
+                $targetPre=Assert-CbConfigPath
+                if($null-eq$targetPre-or$targetPre.Identity-ne[string]$tx.DesiredIdentity-or$targetPre.Security.Sddl-ne[string]$tx.DesiredSecurity){throw 'Config recovery could not restore desired Owner/DACL metadata.'}
+            }
+        }
+        Write-CbPointer $script:ConfigCurrentPath $id; $tx.State='committed'; Write-CbConfigTransaction $tx
+        foreach($path in @([string]$tx.Stage,[string]$tx.Old)){if(Test-CbExists $path){Remove-Item -LiteralPath $path -Force}}
+    }
+    elseif ($live -eq [string]$tx.PreviousPhysicalHash -or (-not [bool]$tx.PreviousExisted -and $live -eq 'absent')) {
+        if([bool]$tx.PreviousExisted-and($null-eq$targetPre-or$targetPre.Identity-ne[string]$tx.PreviousIdentity-or$targetPre.Security.Sddl-ne[string]$tx.PreviousSecurity)){throw 'Config recovery live preimage metadata is unverifiable.'}
+        foreach($path in @([string]$tx.Stage,[string]$tx.Old)){if(Test-CbExists $path){Remove-Item -LiteralPath $path -Force}}
+        $tx.State='rolled-back'; Write-CbConfigTransaction $tx
+    }
+    elseif ($live -eq 'absent' -and [bool]$tx.PreviousExisted -and (Test-CbExists ([string]$tx.Old))) {
+        $oldArtifact=Assert-CbConfigArtifact ([string]$tx.Old) 'Config recovery restore preimage'
+        if($null-eq$oldArtifact-or$oldArtifact.Hash-ne[string]$tx.PreviousPhysicalHash-or$oldArtifact.Identity-ne[string]$tx.PreviousIdentity-or$oldArtifact.Security.Sddl-ne[string]$tx.PreviousSecurity){throw 'Config recovery restore preimage metadata is unverifiable.'}
+        [IO.File]::Move([string]$tx.Old,$script:ConfigPath)
+        $restored=Assert-CbConfigPath
+        if($null-eq$restored-or$restored.Hash-ne[string]$tx.PreviousPhysicalHash-or$restored.Identity-ne[string]$tx.PreviousIdentity-or$restored.Security.Sddl-ne[string]$tx.PreviousSecurity){throw 'Config recovery restored target metadata is unverifiable.'}
+        $tx.State='rolled-back'; Write-CbConfigTransaction $tx
+    }
+    else { throw 'Config transaction recovery found an unverifiable target state.' }
+    Remove-Item -LiteralPath $script:ConfigPendingPath -Force
+}
+
+function Invoke-CbConfigActions {
+    param([string]$Operation, [hashtable]$Actions, [hashtable]$NextOwnership, [AllowNull()][string]$CoreTransaction, [bool]$ApplyChanges)
+    $pre=Assert-CbConfigPath
+    $document=Read-CbConfigDocument
+    $current=Get-CbCurrentConfigTransaction
+    $coreBinding=if(-not[string]::IsNullOrWhiteSpace([string]$CoreTransaction)){[string]$CoreTransaction}elseif($null-ne$current-and$null-ne$current.CoreTransaction-and-not[string]::IsNullOrWhiteSpace([string]$current.CoreTransaction)){[string]$current.CoreTransaction}else{$null}
+    Assert-CbConfigOwnershipClean $current $document
+    $original=$document; $candidate=$document
+    $currentFinalEnding=if($original.Lines.Count-gt0){[string]$original.Lines[$original.Lines.Count-1].Ending}else{''}
+    $order=@('agents_enabled','agents_max','service_tier','features_fast_mode')
+    foreach($id in $order){if($Actions.ContainsKey($id)){$candidate=Update-CbConfigDocumentKey $candidate $id ([string]$Actions[$id])}}
+    if($null -ne $current){
+        foreach($table in @('agents','features')){
+            $owned=@($current.Ownership|Where-Object{$_.Table -eq $table -and [bool]$_.CreatedTable})|Select-Object -First 1
+            if($null -ne $owned){$candidate=Remove-CbEmptyCreatedConfigTable $candidate $table ([bool]$owned.SeparatorAdded) $currentFinalEnding}
+        }
+    }
+    $beforeBytes=ConvertTo-CbConfigBytes $original; $candidateBytes=ConvertTo-CbConfigBytes $candidate
+    $beforeHash=if($null -eq $pre){'absent'}else{Get-CbSha256Bytes $beforeBytes}; $desiredHash=Get-CbSha256Bytes $candidateBytes
+    if($beforeHash -eq $desiredHash){$script:LastConfigTransaction=$null;return $null}
+    Test-CbConfigCandidate $candidateBytes
+    if($env:CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION-ne'1'){
+        if($candidate.Keys.ContainsKey('agents_enabled')-or$candidate.Keys.ContainsKey('agents_max')){$script:VerifiedAgentsConfigCapability=$true}
+        if($candidate.Keys.ContainsKey('service_tier')-and[string]$candidate.Keys['service_tier'].Token-eq'"fast"'-and$candidate.Keys.ContainsKey('features_fast_mode')-and[string]$candidate.Keys['features_fast_mode'].Token-eq'true'){$script:VerifiedFastConfigCapability=$true}
+    }
+    if(-not $ApplyChanges){$script:LastConfigTransaction=$null;return $null}
+    Ensure-CbSafeDirectory $script:ConfigTransactionsPath|Out-Null
+    $id=New-CbId; $directory=Get-CbConfigTransactionPath $id; Ensure-CbSafeDirectory $directory|Out-Null
+    $ownership=New-Object 'System.Collections.Generic.List[object]'
+    if($null -ne $current){foreach($entry in @($current.Ownership)){$ownership.Add([pscustomobject]@{Id=[string]$entry.Id;Path=[string]$entry.Path;Table=[string]$entry.Table;Type=[string]$entry.Type;PriorState=[string]$entry.PriorState;PriorToken=[string]$entry.PriorToken;PriorFileExisted=$(if($null-ne$entry.PSObject.Properties['PriorFileExisted']){[bool]$entry.PriorFileExisted}else{$true});InstalledToken=[string]$entry.InstalledToken;CreatedTable=[bool]$entry.CreatedTable;SeparatorAdded=[bool]$entry.SeparatorAdded;PriorFinalNewline=[bool]$entry.PriorFinalNewline})|Out-Null}}
+    foreach($keyId in $order){
+        if(-not $Actions.ContainsKey($keyId)){continue}
+        $existing=@($ownership|Where-Object{$_.Id -eq $keyId})|Select-Object -First 1
+        if(-not [bool]$NextOwnership[$keyId]){if($null -ne $existing){$ownership.Remove($existing)|Out-Null};continue}
+        if($null -eq $existing){
+            $meta=Get-CbConfigKeyMetadata $keyId; $priorPresent=$original.Keys.ContainsKey($keyId); $priorFinal=$original.Lines.Count -gt 0 -and [string]$original.Lines[$original.Lines.Count-1].Ending -ne ''
+            $created=-not [string]::IsNullOrEmpty([string]$meta.Table) -and -not $original.Tables.ContainsKey([string]$meta.Table)
+            $separator=$created -and $original.Lines.Count -gt 0 -and [string]$original.Lines[$original.Lines.Count-1].Body -ne ''
+            $existing=[pscustomobject]@{Id=$keyId;Path=$meta.Path;Table=$meta.Table;Type=$meta.Type;PriorState=$(if($priorPresent){'present'}else{'absent'});PriorToken=$(if($priorPresent){[string]$original.Keys[$keyId].Token}else{''});PriorFileExisted=($null-ne$pre);InstalledToken='';CreatedTable=$created;SeparatorAdded=$separator;PriorFinalNewline=$priorFinal}
+            $ownership.Add($existing)|Out-Null
+        }
+        $existing.InstalledToken=[string]$Actions[$keyId]
+    }
+    $desiredPresent=$true
+    if($Operation-in@('restore','rollback','uninstall')-and$candidateBytes.Length-eq 0-and$null-ne$current){
+        $allReleased=$true;$originAbsent=$false
+        foreach($entry in @($current.Ownership)){
+            if(-not$NextOwnership.ContainsKey([string]$entry.Id)-or[bool]$NextOwnership[[string]$entry.Id]){$allReleased=$false}
+            if($null-ne$entry.PSObject.Properties['PriorFileExisted']-and-not[bool]$entry.PriorFileExisted){$originAbsent=$true}
+        }
+        if($allReleased-and$originAbsent){$desiredPresent=$false;$desiredHash='absent'}
+    }
+    $stage=Join-Path $script:CodexHome ('.codex-baseline-config-stage-{0}' -f $id); $old=Join-Path $script:CodexHome ('.codex-baseline-config-old-{0}' -f $id)
+    if((Test-CbExists $stage)-or(Test-CbExists $old)){throw 'Config staging collision.'}
+    $versionPath=Join-Path $script:SourceRoot 'VERSION'
+    if(Test-CbExists $versionPath){$transactionVersion=(Read-CbUtf8Text $versionPath).Trim()}
+    elseif($null-ne$coreBinding){
+        $versionCore=Read-CbTransaction $coreBinding;Assert-CbTransactionShape $versionCore $true
+        if([string]$versionCore.State-ne'committed'){throw 'Config recovery version core is not committed.'}
+        $transactionVersion=[string]$versionCore.Version
+    }
+    else{throw 'Config transaction version source is unavailable.'}
+    $tx=[pscustomobject]@{Schema=2;Contract='codex-baseline-config-transaction/v2';Id=$id;Operation=$Operation;Version=$transactionVersion;CreatedUtc=[DateTime]::UtcNow.ToString('o');Parent=$(if($null -eq $current){$null}else{[string]$current.Id});CoreTransaction=$coreBinding;State='planned';Target=$script:ConfigPath;Stage=$stage;Old=$old;PreviousExisted=($null-ne$pre);PreviousPhysicalHash=$beforeHash;DesiredPhysicalHash=$desiredHash;PreviousProjectionHash=(Get-CbConfigProjectionHash $original);DesiredProjectionHash=(Get-CbConfigProjectionHash $candidate);PreviousStructureHash=(Get-CbConfigStructureHash $original);DesiredStructureHash=(Get-CbConfigStructureHash $candidate);PreviousIdentity=$(if($null-eq$pre){$null}else{[string]$pre.Identity});PreviousSecurity=$(if($null-eq$pre){$null}else{[string]$pre.Security.Sddl});DesiredIdentity=$null;DesiredSecurity=$null;Ownership=$ownership.ToArray()}
+    Write-CbConfigTransaction $tx
+    Write-CbPointer $script:ConfigPendingPath $id
+    $stageStream=$null
+    try{
+        # Create an empty stage, protect it before the first candidate byte, and
+        # deny data opens until the same handle has been flushed. The closed
+        # stage remains owner-only until atomic replacement; the target ACL is
+        # applied only at the target path.
+        $stageStream=New-Object System.IO.FileStream(
+            $stage,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::Delete
+        )
+        $restrictedStageSddl=New-CbRestrictedConfigStageSddl
+        Set-CbConfigSecurity $stage $restrictedStageSddl
+        $restrictedStageSecurity=Get-CbConfigSecurity $stage
+        if(-not$restrictedStageSecurity.Protected-or$restrictedStageSecurity.Sddl-ne$restrictedStageSddl-or$stageStream.Length-ne0){
+            throw 'Config replacement stage was not restrictively protected before candidate bytes.'
+        }
+        if($candidateBytes.Length-gt0){$stageStream.Write($candidateBytes,0,$candidateBytes.Length)}
+        $stageStream.Flush($true)
+        if($env:CODEX_BASELINE_TESTING-eq'1'-and-not[string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_CONFIG_STAGE_CONFIDENTIALITY_MARKER)){
+            if($stageStream.Length-ne$candidateBytes.Length){throw 'Config replacement stage was not fully flushed under exclusive access.'}
+            $readBlocked=$false
+            try{[IO.File]::ReadAllBytes($stage)|Out-Null}
+            catch [System.IO.IOException]{$readBlocked=$true}
+            if(-not$readBlocked){throw 'Config replacement stage candidate bytes were readable before atomic replace.'}
+            [IO.File]::WriteAllText($env:CODEX_BASELINE_TEST_CONFIG_STAGE_CONFIDENTIALITY_MARKER,"protected-empty-before-write;exclusive-through-flush`n",$script:Utf8NoBom)
+        }
+        Initialize-CbConfigNative
+        $desiredIdentity=[CodexBaseline.ConfigNative]::FileIdentity($stage)
+    }
+    finally{if($null-ne$stageStream){$stageStream.Dispose()}}
+    $restrictedStageSecurity=Get-CbConfigSecurity $stage
+    if(-not$restrictedStageSecurity.Protected-or$restrictedStageSecurity.Sddl-ne$restrictedStageSddl){throw 'Config replacement stage protection changed before atomic replace.'}
+    $targetSecurity=if($null-ne$pre){[string]$pre.Security.Sddl}else{$restrictedStageSddl}
+    $tx.DesiredIdentity=$desiredIdentity
+    $tx.DesiredSecurity=$targetSecurity
+    $tx.State='prepared';Write-CbConfigTransaction $tx
+    $tx.State='committing'; Write-CbConfigTransaction $tx
+    $now=Assert-CbConfigPath
+    if($null-ne$pre){
+        if($null-eq$now -or $now.Hash-ne$beforeHash -or $now.Identity-ne$pre.Identity -or $now.Security.Sddl-ne$pre.Security.Sddl){throw 'config.toml changed before atomic replace.'}
+        if($desiredPresent){[IO.File]::Replace($stage,$script:ConfigPath,$old,$false)}else{[IO.File]::Move($script:ConfigPath,$old);Remove-Item -LiteralPath $stage -Force}
+    }
+    else{if($null-ne$now){throw 'config.toml appeared before atomic create.'};if($desiredPresent){[IO.File]::Move($stage,$script:ConfigPath)}else{Remove-Item -LiteralPath $stage -Force}}
+    $tx.State='replaced-before-security'; Write-CbConfigTransaction $tx
+    if($env:CODEX_BASELINE_TESTING-eq'1'-and$env:CODEX_BASELINE_TEST_HALT_AFTER_CONFIG_REPLACE_BEFORE_SECURITY-eq'1'){
+        [Environment]::Exit(97)
+    }
+    if($desiredPresent){
+        $replacementSecurity=Get-CbConfigSecurity $script:ConfigPath
+        if($replacementSecurity.Sddl-ne$targetSecurity){Set-CbConfigSecurity $script:ConfigPath $targetSecurity}
+        $replacementSecurity=Get-CbConfigSecurity $script:ConfigPath
+        if($replacementSecurity.Sddl-ne$targetSecurity){throw 'Config replacement target Owner/DACL was not verified exactly.'}
+    }
+    if($env:CODEX_BASELINE_TESTING-eq'1'-and$env:CODEX_BASELINE_TEST_HALT_AFTER_CONFIG_REPLACE-eq'1'){
+        [Environment]::Exit(97)
+    }
+    if($env:CODEX_BASELINE_TESTING-eq'1'-and$env:CODEX_BASELINE_TEST_FAULT_AFTER_CONFIG_REPLACE-eq'1'){throw 'Injected test fault after config replace'}
+    $after=Assert-CbConfigPath
+    if($desiredPresent){if($null-eq$after-or$after.Hash-ne$desiredHash){throw 'config.toml post-commit hash mismatch.'}}
+    elseif($null-ne$after){throw 'config.toml post-commit absence mismatch.'}
+    if($desiredPresent-and($after.Identity-ne[string]$tx.DesiredIdentity-or$after.Security.Sddl-ne[string]$tx.DesiredSecurity)){throw 'config.toml identity or Owner/DACL changed during replace.'}
+    if($null-ne$pre){
+        $committedOld=Assert-CbConfigArtifact $old 'Config transaction committed preimage'
+        if($null-eq$committedOld-or$committedOld.Hash-ne$beforeHash-or$committedOld.Identity-ne$pre.Identity-or$committedOld.Security.Sddl-ne$pre.Security.Sddl){throw 'config.toml committed preimage metadata is unverifiable.'}
+    }
+    Assert-CbConfigOwnershipClean $tx (Read-CbConfigDocument)
+    Write-CbPointer $script:ConfigCurrentPath $id; $tx.State='committed'; Write-CbConfigTransaction $tx; Remove-Item -LiteralPath $script:ConfigPendingPath -Force
+    if(Test-CbExists $old){Remove-Item -LiteralPath $old -Force}
+    $script:LastConfigTransaction=$tx
+    return $tx
+}
+
+function Get-CbConfigRestorePlan {
+    $current=Get-CbCurrentConfigTransaction
+    if($null-eq$current -or @($current.Ownership).Count-eq 0){return $null}
+    $actions=@{};$next=@{}
+    foreach($owned in @($current.Ownership)){$actions[[string]$owned.Id]=if([string]$owned.PriorState-eq'present'){[string]$owned.PriorToken}else{'__ABSENT__'};$next[[string]$owned.Id]=$false}
+    return [pscustomobject]@{Actions=$actions;Next=$next;Current=$current}
+}
+
+function Invoke-CbConfigRestore {
+    param([string]$Operation='restore',[AllowNull()][string]$CoreTransaction,[bool]$ApplyChanges=$true)
+    $plan=Get-CbConfigRestorePlan
+    if($null-eq$plan){return $null}
+    return Invoke-CbConfigActions $Operation $plan.Actions $plan.Next $CoreTransaction $ApplyChanges
+}
+
+function Invoke-CbConfigAutoCap {
+    param([string]$CoreTransaction,[bool]$ApplyChanges)
+    $plan=Get-CbConfigAutoCapPlan
+    if(-not[bool]$plan.Change){return $plan}
+    if(-not$ApplyChanges){return $plan}
+    return Invoke-CbConfigActions 'install-cap' @{agents_max='6'} @{agents_max=$true} $CoreTransaction $true
+}
+
+function Get-CbConfigAutoCapPlan {
+    Assert-CbConfigPath|Out-Null
+    $document=Read-CbConfigDocument
+    if($document.Keys.ContainsKey('agents_enabled')-and[string]$document.Keys['agents_enabled'].Token-eq'false'){
+        return [pscustomobject]@{Change=$false;Path='agents.max_concurrent_threads_per_session';Prior='absent';Desired=$null;Reason='agents.enabled=false user override'}
+    }
+    if($document.Keys.ContainsKey('features_multi_agent')-and[string]$document.Keys['features_multi_agent'].Token-eq'false'){
+        return [pscustomobject]@{Change=$false;Path='agents.max_concurrent_threads_per_session';Prior='absent';Desired=$null;Reason='features.multi_agent=false user override'}
+    }
+    if($document.Keys.ContainsKey('agents_max')){
+        return [pscustomobject]@{Change=$false;Path='agents.max_concurrent_threads_per_session';Prior=[string]$document.Keys['agents_max'].Token;Desired=$null;Reason='existing user cap'}
+    }
+    if($document.Keys.ContainsKey('agents_legacy_max')){
+        return [pscustomobject]@{Change=$false;Path='agents.max_concurrent_threads_per_session';Prior=[string]$document.Keys['agents_legacy_max'].Token;Desired=$null;Reason='existing legacy user cap'}
+    }
+    # Exercise the complete candidate, ownership, isolated-Codex validation,
+    # and byte-preservation path before any core/composite transaction exists.
+    Invoke-CbConfigActions 'install-cap' @{agents_max='6'} @{agents_max=$true} $null $false|Out-Null
+    return [pscustomobject]@{Change=$true;Path='agents.max_concurrent_threads_per_session';Prior='absent';Desired='6';Reason='previously absent'}
+}
+
+function Write-CbConfigAutoCapPlan {
+    param($Plan)
+    if([bool]$Plan.Change){Write-Output ("install-cap plan: {0}: {1} -> {2}"-f$Plan.Path,$Plan.Prior,$Plan.Desired)}
+    else{Write-Output ("install-cap plan: no change ({0})"-f$Plan.Reason)}
+}
+
+function Get-CbCompositeTransactionPath {
+    param([string]$Id)
+    if($Id-notmatch'^\d{8}T\d{6}Z-[0-9a-f]{32}$'){throw "Invalid composite transaction identifier: $Id"}
+    return Join-Path $script:CompositeTransactionsPath $Id
+}
+
+function Write-CbCompositeTransaction {
+    param($Transaction)
+    $path=Join-Path (Get-CbCompositeTransactionPath ([string]$Transaction.Id)) 'transaction.json'
+    Write-CbUtf8Atomic $path (($Transaction|ConvertTo-Json -Depth 4)+"`n")
+}
+
+function Read-CbCompositeTransaction {
+    param([string]$Id)
+    $directory=Get-CbCompositeTransactionPath $Id;$item=Get-CbItem $directory
+    if($null-eq$item){throw "Composite transaction is missing: $Id"};Assert-CbOrdinaryItem $item 'tree'
+    $children=@(Get-ChildItem -LiteralPath $item.FullName -Force)
+    if($children.Count-ne1-or$children[0].Name-ne'transaction.json'){throw "Composite transaction has an invalid file inventory: $Id"}
+    Assert-CbOrdinaryItem $children[0] 'file'
+    try{$tx=(Read-CbUtf8Text $children[0].FullName)|ConvertFrom-Json -ErrorAction Stop}catch{throw "Composite transaction journal is invalid: $Id"}
+    Assert-CbExactProperties $tx @('Schema','Contract','Id','Operation','CreatedUtc','SourceCore','DesiredCore','State') "Composite transaction $Id"
+    if(((-not($tx.Schema-is[int]))-and(-not($tx.Schema-is[long])))-or[int64]$tx.Schema-ne2-or[string]$tx.Contract-ne'codex-baseline-composite-transaction/v2'-or[string]$tx.Id-ne$Id){throw "Composite transaction identity mismatch: $Id"}
+    if([string]$tx.Operation-notin@('install','rollback','uninstall')-or[string]$tx.State-notin@('planned','committed','rolled-back')){throw "Composite transaction operation or state is invalid: $Id"}
+    $created=[DateTimeOffset]::MinValue
+    $createdText=if($tx.CreatedUtc-is[DateTime]){$tx.CreatedUtc.ToUniversalTime().ToString('o')}else{[string]$tx.CreatedUtc}
+    if($createdText -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$' -or -not [DateTimeOffset]::TryParse($createdText,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::RoundtripKind,[ref]$created)){throw "Composite transaction timestamp is invalid: $Id"}
+    $source=if($null-eq$tx.SourceCore){''}else{[string]$tx.SourceCore};$desired=if($null-eq$tx.DesiredCore){''}else{[string]$tx.DesiredCore}
+    foreach($coreId in @($source,$desired)){if(-not[string]::IsNullOrWhiteSpace($coreId)){$core=Read-CbTransaction $coreId;Assert-CbTransactionShape $core $false}}
+    switch([string]$tx.Operation){
+      'install'{if(-not[string]::IsNullOrEmpty($source)-or[string]::IsNullOrEmpty($desired)){throw "Invalid install composite endpoints: $Id"}}
+      'rollback'{if([string]::IsNullOrEmpty($source)-or$source-eq$desired){throw "Invalid rollback composite endpoints: $Id"}}
+      'uninstall'{if([string]::IsNullOrEmpty($source)-or[string]::IsNullOrEmpty($desired)-or$source-eq$desired){throw "Invalid uninstall composite endpoints: $Id"}}
+    }
+    return $tx
+}
+
+function New-CbCompositeTransaction {
+    param([string]$Operation,[AllowNull()][string]$SourceCore,[AllowNull()][string]$DesiredCore)
+    if(Test-CbExists $script:CompositePendingPath){throw 'Another composite transaction is pending.'}
+    Ensure-CbSafeDirectory $script:CompositeTransactionsPath|Out-Null
+    $id=New-CbId;$directory=Get-CbCompositeTransactionPath $id;Ensure-CbSafeDirectory $directory|Out-Null
+    $tx=[pscustomobject]@{Schema=2;Contract='codex-baseline-composite-transaction/v2';Id=$id;Operation=$Operation;CreatedUtc=[DateTime]::UtcNow.ToString('o');SourceCore=$SourceCore;DesiredCore=$DesiredCore;State='planned'}
+    Write-CbCompositeTransaction $tx;Read-CbCompositeTransaction $id|Out-Null;Write-CbPointer $script:CompositePendingPath $id;$script:ActiveComposite=$id
+    return $tx
+}
+
+function Complete-CbCompositeTransaction {
+    param($Transaction,[string]$State)
+    $Transaction.State=$State;Write-CbCompositeTransaction $Transaction
+    if(Test-CbExists $script:CompositePendingPath){Remove-Item -LiteralPath $script:CompositePendingPath -Force}
+    $script:ActiveComposite=$null
+}
+
+function Test-CbCoreTransactionInLineage {
+    param([string]$Descendant,[string]$Ancestor)
+    if([string]::IsNullOrWhiteSpace($Descendant)-or[string]::IsNullOrWhiteSpace($Ancestor)){return $false}
+    $seen=@{};$cursor=$Descendant
+    while(-not[string]::IsNullOrWhiteSpace($cursor)){
+        if($seen.ContainsKey($cursor)){throw 'Core transaction lineage contains a cycle.'}
+        $seen[$cursor]=$true
+        $core=Read-CbTransaction $cursor;Assert-CbTransactionShape $core $false
+        if([string]$core.Id-eq$Ancestor){return $true}
+        $cursor=if($null-eq$core.ParentTransaction){''}else{[string]$core.ParentTransaction}
+    }
+    return $false
+}
+
+function Recover-CbCompositePending {
+    $id=Read-CbPointer $script:CompositePendingPath
+    if($null-eq$id){return}
+    $tx=Read-CbCompositeTransaction $id
+    if([string]$tx.State-in@('committed','rolled-back')){Remove-Item -LiteralPath $script:CompositePendingPath -Force;$script:ActiveComposite=$null;return}
+    $source=if($null-eq$tx.SourceCore){''}else{[string]$tx.SourceCore};$desired=if($null-eq$tx.DesiredCore){''}else{[string]$tx.DesiredCore}
+    $current=Get-CbCurrentTransaction;$currentId=if($null-eq$current){''}else{[string]$current.Id}
+    if($currentId-eq$desired){
+      switch([string]$tx.Operation){
+        'install'{Invoke-CbConfigAutoCap $desired $true|Out-Null}
+        'rollback'{ $config=Get-CbCurrentConfigTransaction;if($null-ne$config-and[string]$config.CoreTransaction-eq$source){Invoke-CbConfigRestore 'rollback' $source $true|Out-Null} }
+        'uninstall'{
+          $config=Get-CbCurrentConfigTransaction
+          if($null-ne$config){
+            $configCore=if($null-eq$config.CoreTransaction){''}else{[string]$config.CoreTransaction}
+            if(-not[string]::IsNullOrWhiteSpace($configCore)-and-not(Test-CbCoreTransactionInLineage $source $configCore)){throw 'Baseline-owned config state is not bound to the uninstall core lineage.'}
+            Invoke-CbConfigRestore 'uninstall' $source $true|Out-Null
+          }
+        }
+      }
+      Complete-CbCompositeTransaction $tx 'committed';return
+    }
+    if($currentId-eq$source){Complete-CbCompositeTransaction $tx 'rolled-back';return}
+    throw 'Composite recovery found an unverifiable core state.'
+}
+
+function Write-CbOptimizeReport {
+    param([string]$Mode,[string]$Status,[bool]$Applied,[string]$RequestedSpeed,[long]$BytesChanged,[bool]$Drift=$false)
+    $document=Read-CbConfigDocument;$current=Get-CbCurrentConfigTransaction
+    $enabled=if($document.Keys.ContainsKey('agents_enabled')){[string]$document.Keys['agents_enabled'].Token}else{$null}
+    $featureEnabled=if($document.Keys.ContainsKey('features_multi_agent')){[string]$document.Keys['features_multi_agent'].Token}else{$null}
+    $cap=if($document.Keys.ContainsKey('agents_max')){[int64]$document.Keys['agents_max'].Token}else{$null}
+    $legacy=if($document.Keys.ContainsKey('agents_legacy_max')){[int64]$document.Keys['agents_legacy_max'].Token}else{$null}
+    $report=[ordered]@{schema=1;contract='codex-baseline-optimize/v1';mode=$Mode;status=$Status;apply=$Applied;config=$script:ConfigPath;agents=[ordered]@{enabled=$(if($null-eq$enabled){$null}else{$enabled-eq'true'});cap=$cap;legacy_cap=$legacy;effective_override=($enabled-eq'false'-or$featureEnabled-eq'false'-or$null-ne$cap-or$null-ne$legacy)};speed=$RequestedSpeed;managed_keys=@($(if($null-ne$current){@($current.Ownership|ForEach-Object{[string]$_.Path})}));drift=$Drift;bytes_changed=$BytesChanged;capabilities=[ordered]@{agents=$(if($script:VerifiedAgentsConfigCapability){'available'}else{'unverified'});fast=$(if($script:VerifiedFastConfigCapability){'available'}else{'unverified'});ultrafast='unavailable'};limitations=@('runtime depth/model/concurrency telemetry may remain unverified','capability availability requires a successful native isolated strict-config validation in this invocation','cooperative CAS is not a hostile-writer or power-loss guarantee')}
+    if($Json){[Console]::Out.WriteLine(($report|ConvertTo-Json -Depth 6 -Compress))}else{[Console]::Out.WriteLine(("Optimizer: {0} ({1})`nConfig: {2}`nAgents: enabled={3} cap={4} legacy-cap={5}`nSpeed: {6}`nManaged keys: {7}`nUltrafast: unavailable; bytes changed: {8}"-f$Status,$Mode,$script:ConfigPath,$report.agents.enabled,$cap,$legacy,$RequestedSpeed,(@($report.managed_keys)-join','),$BytesChanged))}
+}
+
+function Invoke-CbOptimize {
+    Initialize-CbPaths
+    if($DryRun-and$Apply){throw '-DryRun and -Apply are mutually exclusive.'}
+    if($Check-and($Restore-or$Apply-or$DryRun-or$Speed-ne'keep')){throw '-Check cannot be combined with -Restore, -Speed, -DryRun, or -Apply.'}
+    if($Restore-and$Speed-ne'keep'){throw '-Restore cannot be combined with -Speed.'}
+    if($Speed-eq'ultrafast'){Write-CbOptimizeReport 'optimize' 'unavailable' $false 'ultrafast' 0;return 3}
+    if(-not$Restore-and-not$Apply-and-not$DryRun-and$Speed-eq'keep'){
+        Assert-CbConfigPath|Out-Null
+        $document=Read-CbConfigDocument;$current=Get-CbCurrentConfigTransaction;$drift=$false
+        if($null-ne$current){foreach($owned in @($current.Ownership)){$live=if($document.Keys.ContainsKey([string]$owned.Id)){[string]$document.Keys[[string]$owned.Id].Token}else{'__ABSENT__'};if($live-ne[string]$owned.InstalledToken){$drift=$true}}}
+        Write-CbOptimizeReport 'check' $(if($drift){'conflict'}else{'available'}) $false 'unmanaged' 0 $drift
+        if($drift){return 4};return 0
+    }
+    if($Apply-and-not(Test-CbExists $script:PendingPath)-and-not(Test-CbExists $script:ConfigPendingPath)-and-not(Test-CbExists $script:CompositePendingPath)){
+        # Reject malformed managed paths before creating locks or state. A
+        # pending transaction remains recovery-first and is validated there.
+        Assert-CbConfigPath|Out-Null
+        Read-CbConfigDocument|Out-Null
+    }
+    if($Apply){Ensure-CbSafeDirectory $script:CodexHome|Out-Null;Acquire-CbLock;$script:MutationStarted=$true;Recover-CbPending;Recover-CbConfigPending;Recover-CbCompositePending}
+    $beforeHash=if(Test-CbExists $script:ConfigPath){Get-CbFileHash $script:ConfigPath}else{'absent'}
+    if($Restore){$plan=Get-CbConfigRestorePlan;if($null-eq$plan){Write-CbOptimizeReport 'restore' 'not-managed' $false 'keep' 0;return 0};Invoke-CbConfigActions 'restore' $plan.Actions $plan.Next $null ([bool]$Apply)|Out-Null;$mode='restore'}
+    else{$document=Read-CbConfigDocument;$actions=@{agents_enabled='true';agents_max='6'};$next=@{agents_enabled=$true;agents_max=$true}
+      if($Speed-eq'fast'){
+        $current=Get-CbCurrentConfigTransaction;$ownedTier=if($null-eq$current){$null}else{@($current.Ownership|Where-Object{$_.Id-eq'service_tier'})|Select-Object -First 1}
+        if($document.Keys.ContainsKey('service_tier')-and$null-eq$ownedTier-and[string]$document.Keys['service_tier'].Token-ne'"fast"'){throw 'speed=fast refuses an unowned conflicting key: service_tier'}
+        $actions.service_tier='"fast"';$actions.features_fast_mode='true';$next.service_tier=$true;$next.features_fast_mode=$true
+      }
+      elseif($Speed-eq'standard'){$current=Get-CbCurrentConfigTransaction;foreach($id in @('service_tier','features_fast_mode')){$owned=if($null-eq$current){$null}else{@($current.Ownership|Where-Object{$_.Id-eq$id})|Select-Object -First 1};if($null-ne$owned){$actions[$id]=if($owned.PriorState-eq'present'){$owned.PriorToken}else{'__ABSENT__'};$next[$id]=$false}elseif($document.Keys.ContainsKey($id)){$token=[string]$document.Keys[$id].Token;if(($id-eq'service_tier'-and$token-eq'"fast"')-or($id-eq'features_fast_mode'-and$token-eq'true')){throw "speed=standard refuses an unowned conflicting key: $((Get-CbConfigKeyMetadata $id).Path)"}}}}
+      Invoke-CbConfigActions 'optimize' $actions $next $null ([bool]$Apply)|Out-Null;$mode='optimize'}
+    $afterHash=if(Test-CbExists $script:ConfigPath){Get-CbFileHash $script:ConfigPath}else{'absent'};$status=if($Apply){if($mode-eq'restore'){'restored'}else{'applied'}}else{'planned'}
+    $bytesChanged=if($beforeHash-ne$afterHash-and$afterHash-ne'absent'){[long](Get-CbItem $script:ConfigPath).Length}else{0}
+    Write-CbOptimizeReport $mode $status ([bool]$Apply) $Speed $bytesChanged;return 0
+}
+
 function Invoke-CbInstallLike {
     param(
         [string]$Operation,
@@ -2379,6 +3232,12 @@ function Invoke-CbInstallLike {
         if ($DryRun) {
             if (Test-CbExists $script:PendingPath) {
                 throw 'An incomplete transaction requires recovery; dry-run made no changes.'
+            }
+            if (Test-CbExists $script:ConfigPendingPath) {
+                throw 'An incomplete config transaction requires recovery; dry-run made no changes.'
+            }
+            if (Test-CbExists $script:CompositePendingPath) {
+                throw 'An incomplete composite transaction requires recovery; dry-run made no changes.'
             }
         }
         else {
@@ -2401,6 +3260,8 @@ function Invoke-CbInstallLike {
             Acquire-CbLock
             $script:MutationStarted = $true
             Recover-CbPending
+            Recover-CbConfigPending
+            Recover-CbCompositePending
             if ($Acquisition -eq 'unsigned-github-release') {
                 $lockedCurrent = Get-CbCurrentTransaction
                 if ($null -ne $lockedCurrent -and
@@ -2421,12 +3282,25 @@ function Invoke-CbInstallLike {
             Write-Output ("codex-baseline {0} is already installed; no changes" -f $manifest.version)
             return
         }
+        $autoCapPlan=$null
+        if($Operation-eq'install'-and$null-eq$current){
+            # This target/config preflight is deliberately completed before a
+            # core journal, composite intent, or managed object is created.
+            $autoCapPlan=Invoke-CbConfigAutoCap $null $false
+        }
         if ($DryRun) {
+            if($null-ne$autoCapPlan){Write-CbConfigAutoCapPlan $autoCapPlan}
             Write-Output 'dry-run: no files changed'
             return
         }
         $parentId = if ($null -eq $current) { $null } else { [string]$current.Id }
-        $transaction = Invoke-CbTransaction $Operation ([string]$manifest.version) $parentId $objects '__SELF__'
+        $reservedTransaction = $null
+        if ($Operation -eq 'install' -and $null -eq $current) {
+            $reservedTransaction=New-CbTransaction $Operation ([string]$manifest.version) $parentId
+            New-CbCompositeTransaction 'install' $null ([string]$reservedTransaction.Id)|Out-Null
+        }
+        $transaction = Invoke-CbTransaction $Operation ([string]$manifest.version) $parentId $objects '__SELF__' $reservedTransaction
+        Recover-CbCompositePending
         Write-Output ("installed codex-baseline {0} (transaction {1})" -f $manifest.version, $transaction.Id)
     }
     finally {
@@ -2468,10 +3342,12 @@ function Invoke-CbUpdate {
         else { Receive-CbUpdateUrl ([uri]$script:UpdateMetadataUrl) $descriptorPath 16384 }
         $descriptor = Read-CbUpdateDescriptor $descriptorPath
         $currentVersion = (Read-CbUtf8Text (Join-Path $script:SourceRoot 'VERSION')).Trim()
+        $currentReleaseStatus = Read-CbReleaseStatus $script:SourceRoot
         $comparison = Compare-CbSemVer ([string]$descriptor.Version) $currentVersion
         if ($comparison -lt 0) { throw "Latest release $($descriptor.Version) is older than installed $currentVersion." }
         if ($Check) {
-            if ($comparison -eq 0) { Write-Output ("codex-baseline {0} is already current (latest stable {1})" -f $currentVersion, $descriptor.Version) }
+            if ($comparison -eq 0 -and $currentReleaseStatus -eq 'stable') { Write-Output ("codex-baseline {0} is already current (latest stable {1})" -f $currentVersion, $descriptor.Version) }
+            elseif($comparison-eq0){Write-Output ("codex-baseline update available: {0} ({1}) -> {2} (stable)"-f$currentVersion,$currentReleaseStatus,$descriptor.Version)}
             else { Write-Output ("codex-baseline update available: {0} -> {1}" -f $currentVersion, $descriptor.Version) }
             Write-Output 'source-acquisition: unsigned-github-release'
             Write-Output 'source-authentication: not-publisher-authenticated'
@@ -2567,8 +3443,13 @@ function New-CbReverseObject {
 
 function Invoke-CbRollback {
     Initialize-CbPaths
-    if (Test-CbExists $script:PendingPath) {
-        if ($DryRun) { throw 'An incomplete transaction requires recovery; dry-run made no changes.' }
+    if($DryRun){
+      if(Test-CbExists $script:PendingPath){throw 'An incomplete transaction requires recovery; dry-run made no changes.'}
+      if(Test-CbExists $script:ConfigPendingPath){throw 'An incomplete config transaction requires recovery; dry-run made no changes.'}
+      if(Test-CbExists $script:CompositePendingPath){throw 'An incomplete composite transaction requires recovery; dry-run made no changes.'}
+    }else{
+      Ensure-CbSafeDirectory $script:CodexHome|Out-Null;Acquire-CbLock;$script:MutationStarted=$true
+      Recover-CbPending;Recover-CbConfigPending;Recover-CbCompositePending
     }
     $current = Get-CbCurrentTransaction
     if ($null -eq $current) {
@@ -2588,12 +3469,13 @@ function Invoke-CbRollback {
             Write-Output ("rollback: {0}" -f $object.Target)
         }
         if ($DryRun) {
+            $configCurrent = Get-CbCurrentConfigTransaction
+            if ($null -ne $configCurrent -and [string]$configCurrent.CoreTransaction -eq [string]$current.Id) {
+                Invoke-CbConfigRestore 'rollback' ([string]$current.Id) $false | Out-Null
+            }
             Write-Output 'dry-run: no files changed'
             return
         }
-        Acquire-CbLock
-        $script:MutationStarted = $true
-        Recover-CbPending
         $current = Get-CbCurrentTransaction
         Assert-CbCurrentClean $current
         $objects = @()
@@ -2603,7 +3485,9 @@ function Invoke-CbRollback {
             }
         }
         $resultCurrent = if ($null -eq $current.ParentTransaction) { $null } else { [string]$current.ParentTransaction }
+        New-CbCompositeTransaction 'rollback' ([string]$current.Id) $resultCurrent|Out-Null
         $transaction = Invoke-CbTransaction 'rollback' ([string]$current.Version) ([string]$current.Id) $objects $resultCurrent
+        Recover-CbCompositePending
         Write-Output ("rolled back transaction {0} (journal {1})" -f $current.Id, $transaction.Id)
     }
     finally {
@@ -2634,12 +3518,18 @@ function New-CbUninstallObjects {
 
 function Invoke-CbUninstall {
     Initialize-CbPaths
-    if (Test-CbExists $script:PendingPath) {
-        if ($DryRun) { throw 'An incomplete transaction requires recovery; dry-run made no changes.' }
+    if($DryRun){
+      if(Test-CbExists $script:PendingPath){throw 'An incomplete transaction requires recovery; dry-run made no changes.'}
+      if(Test-CbExists $script:ConfigPendingPath){throw 'An incomplete config transaction requires recovery; dry-run made no changes.'}
+      if(Test-CbExists $script:CompositePendingPath){throw 'An incomplete composite transaction requires recovery; dry-run made no changes.'}
+    }else{
+      Ensure-CbSafeDirectory $script:CodexHome|Out-Null;Acquire-CbLock;$script:MutationStarted=$true
+      Recover-CbPending;Recover-CbConfigPending;Recover-CbCompositePending
     }
     $current = Get-CbCurrentTransaction
     if ($null -eq $current -or [string]$current.Operation -eq 'uninstall') {
-        Write-Output 'codex-baseline is already uninstalled; no changes'
+        if($null-ne(Get-CbCurrentConfigTransaction)){Invoke-CbConfigRestore 'uninstall' $(if($null-eq$current){$null}else{[string]$current.Id}) (-not[bool]$DryRun)|Out-Null}
+        Write-Output $(if($DryRun){'dry-run: baseline is already uninstalled; no files changed'}else{'codex-baseline is already uninstalled; baseline-owned config state was restored where present'})
         return
     }
     Assert-CbCurrentClean $current
@@ -2650,16 +3540,17 @@ function Invoke-CbUninstall {
             Write-Output ("uninstall: {0}" -f $object.Target)
         }
         if ($DryRun) {
+            Invoke-CbConfigRestore 'uninstall' ([string]$current.Id) $false | Out-Null
             Write-Output 'dry-run: no files changed'
             return
         }
-        Acquire-CbLock
-        $script:MutationStarted = $true
-        Recover-CbPending
         $current = Get-CbCurrentTransaction
         Assert-CbCurrentClean $current
         $objects = @(New-CbUninstallObjects $current $temporaryRoot)
-        $transaction = Invoke-CbTransaction 'uninstall' ([string]$current.Version) ([string]$current.Id) $objects '__SELF__'
+        $reserved=New-CbTransaction 'uninstall' ([string]$current.Version) ([string]$current.Id)
+        New-CbCompositeTransaction 'uninstall' ([string]$current.Id) ([string]$reserved.Id)|Out-Null
+        $transaction = Invoke-CbTransaction 'uninstall' ([string]$current.Version) ([string]$current.Id) $objects '__SELF__' $reserved
+        Recover-CbCompositePending
         Write-Output ("uninstalled codex-baseline (transaction {0})" -f $transaction.Id)
     }
     finally {
@@ -2684,6 +3575,12 @@ function Invoke-CbDoctor {
     $researchChecked = $null
     $researchReviewBy = $null
     $researchState = 'invalid'
+    $configOwned = 0
+    $configDrift = $false
+    $configManagedPaths = @()
+    $configDocument = $null
+    $optimizerAgents = 'unverified'
+    $optimizerFast = 'unverified'
     $sourceManifest = $null
     $minimumCodex = $null
     $testedCodex = $null
@@ -2806,6 +3703,26 @@ function Invoke-CbDoctor {
     catch {
         $failures.Add($_.Exception.Message) | Out-Null
     }
+    try {
+        if (Test-CbExists $script:ConfigPendingPath) { $failures.Add('An incomplete config transaction is pending recovery.') | Out-Null }
+        if (Test-CbExists $script:CompositePendingPath) { $failures.Add('An incomplete composite transaction is pending recovery.') | Out-Null }
+        $configCurrent = Get-CbCurrentConfigTransaction
+        Assert-CbConfigPath | Out-Null
+        $configDocument = Read-CbConfigDocument
+        if ($null -ne $configCurrent) {
+            $configOwned = @($configCurrent.Ownership).Count
+            $configManagedPaths = @($configCurrent.Ownership | ForEach-Object { [string]$_.Path })
+            Assert-CbConfigOwnershipClean $configCurrent $configDocument
+        }
+    }
+    catch {
+        $configDrift = $true
+        $failures.Add("Managed config projection drifted or became unsafe: $($_.Exception.Message)") | Out-Null
+    }
+    if($nativeCapabilities-eq'verified'-and$configState-eq'accepted-by-strict-config'-and-not$configDrift){
+        $optimizerAgents='available'
+        if($null-ne$configDocument-and$configDocument.Keys.ContainsKey('service_tier')-and[string]$configDocument.Keys['service_tier'].Token-eq'"fast"'-and$configDocument.Keys.ContainsKey('features_fast_mode')-and[string]$configDocument.Keys['features_fast_mode'].Token-eq'true'){$optimizerFast='available'}
+    }
     $agentsFile = Join-Path $script:CodexHome 'AGENTS.md'
     if (Test-CbExists (Join-Path $script:CodexHome 'AGENTS.override.md')) {
         $agentsFile = Join-Path $script:CodexHome 'AGENTS.override.md'
@@ -2846,8 +3763,8 @@ function Invoke-CbDoctor {
         else { $warnings.Add('Research freshness metadata is invalid.') | Out-Null }
     }
     $report = [pscustomobject]@{
-        schema = 1
-        contract = 'codex-baseline-doctor/v1'
+        schema = 2
+        contract = 'codex-baseline-doctor/v2'
         platform = 'native-windows'
         powershell = $PSVersionTable.PSVersion.ToString()
         codex = $codexVersion
@@ -2866,8 +3783,9 @@ function Invoke-CbDoctor {
         hook_state = [pscustomobject]@{ baseline_owned = 0; user_owned = 'preserved-not-enumerated' }
         deprecated_settings = [pscustomobject]@{ status = $deprecatedState }
         paths = [pscustomobject]@{ home = $script:HomePath; codex_home = $script:CodexHome; agents_home = $script:AgentsHome; state_root = $script:StateRoot }
-        owned_config_keys = 0
+        owned_config_keys = $configOwned
         owned_hooks = 0
+        optimizer = [pscustomobject]@{ contract = 'codex-baseline-config-operations/v2'; managed_keys = $configManagedPaths; drift = $configDrift; agents = $optimizerAgents; fast = $optimizerFast; ultrafast = 'unavailable' }
         research = [pscustomobject]@{ checked = $researchChecked; review_by = $researchReviewBy; state = $researchState }
         warnings = @($warnings)
         failures = @($failures)
@@ -2888,6 +3806,7 @@ function Invoke-CbDoctor {
         [Console]::Out.WriteLine(("Runtime dependencies: verified ({0} required, {1} missing)" -f $requiredDependencies.Count, $missingDependencies.Count))
         [Console]::Out.WriteLine(("Active config: {0}; deprecated settings: {1}" -f $configState, $deprecatedState))
         [Console]::Out.WriteLine(("Paths: HOME={0} CODEX_HOME={1} AGENTS_HOME={2} state={3}" -f $script:HomePath, $script:CodexHome, $script:AgentsHome, $script:StateRoot))
+        [Console]::Out.WriteLine(("Owned config keys: {0}; drift={1}; Agents={2}; Fast={3}; Ultrafast=unavailable" -f $configOwned, $configDrift, $optimizerAgents, $optimizerFast))
         foreach ($warning in $warnings) { [Console]::Out.WriteLine(("WARNING: {0}" -f $warning)) }
         foreach ($failure in $failures) { [Console]::Out.WriteLine(("FAIL: {0}" -f $failure)) }
     }
@@ -2903,12 +3822,15 @@ Usage: powershell -File codex-baseline.ps1 <command> [-DryRun] [-Json]
        install [-AcknowledgeUnverifiedSource]
        update [-Check|-Remote|-Local|-Offline ARCHIVE] [-DryRun]
               [-AcknowledgeUnverifiedSource]
+       optimize [-Check|-Restore] [-Speed keep|standard|fast|ultrafast]
+                [-DryRun|-Apply] [-Json]
        onboard [-Apply] [-AcknowledgeExistingInstructions] [repository]
 
 Commands:
   install     Install from this reviewed local source tree
   update      Check/apply latest stable release; checkout remains local by default
   doctor      Inspect native-Windows paths, state, drift, and Codex availability
+  optimize    Inspect or apply allowlisted agent-cap and speed config keys
   rollback    Restore the state before the current transaction
   uninstall   Remove only baseline-owned content; rollback can restore it
   onboard     Run bounded native static discovery; add -Apply to write its block
@@ -2929,6 +3851,7 @@ try {
         'install' { Invoke-CbInstallLike 'install' }
         'update' { Invoke-CbUpdate }
         'doctor' { $exitCode = Invoke-CbDoctor }
+        'optimize' { $exitCode = Invoke-CbOptimize }
         'rollback' { Invoke-CbRollback }
         'uninstall' { Invoke-CbUninstall }
         'onboard' {
@@ -2965,10 +3888,15 @@ try {
 }
 catch {
     Write-CbError $_.Exception.Message
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and $env:CODEX_BASELINE_TEST_DEBUG_ERRORS -eq '1') {
+        Write-CbError $_.ScriptStackTrace
+    }
     $exitCode = 1
-    if ($script:MutationStarted -and $null -ne $script:ActiveTransaction) {
+    if ($script:MutationStarted) {
         try {
-            Recover-CbPending
+            if($null-ne$script:ActiveTransaction){Recover-CbPending}
+            Recover-CbConfigPending
+            Recover-CbCompositePending
         }
         catch {
             Write-CbError ("automatic recovery failed: {0}" -f $_.Exception.Message)

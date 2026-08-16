@@ -3,7 +3,7 @@ param(
     [switch]$Static,
     [switch]$Live,
     [switch]$Json,
-    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,risk-migration,risk-safe-path'
+    [string]$Tasks = 'small-js-bug,small-config-timeout,small-doc-port,risk-migration,medium-js-feature,medium-dedup-reproduction,medium-id-refactor,large-architecture,large-feature-flags,six-lane-packages'
 )
 
 Set-StrictMode -Version 2.0
@@ -65,11 +65,11 @@ function Read-BenchManifest {
     $path = Join-Path $script:BenchmarkRoot 'manifest.json'
     try { $manifest = (Read-BenchText $path) | ConvertFrom-Json -ErrorAction Stop }
     catch { throw "Benchmark manifest is invalid JSON: $($_.Exception.Message)" }
-    if ([int]$manifest.schema -ne 1) { throw "Unsupported benchmark manifest schema: $($manifest.schema)" }
-    if ([string]$manifest.suite -ne 'codex-baseline-core') { throw 'Unexpected benchmark suite identity.' }
+    if ([int]$manifest.schema -ne 2) { throw "Unsupported benchmark manifest schema: $($manifest.schema)" }
+    if ([string]$manifest.suite -ne 'codex-baseline-autonomous-execution') { throw 'Unexpected benchmark suite identity.' }
     if ([int]$manifest.default_repetitions -lt 1) { throw 'Benchmark repetitions must be positive.' }
     if ([string]$manifest.isolation.local_label -ne 'os-sandboxed-local-cgroup') { throw 'Benchmark local isolation label is invalid.' }
-    $requiredMetrics = @('task_pass', 'verifier_exit', 'process_exit', 'elapsed_ms', 'turns', 'commands', 'file_changes', 'subagent_events', 'input_tokens', 'output_tokens')
+    $requiredMetrics = @('task_pass', 'first_pass', 'user_interventions', 'safety_violation', 'authority_violation', 'scope_violation', 'verifier_exit', 'process_exit', 'elapsed_ms', 'turns', 'commands', 'file_changes', 'raw_subagent_events', 'input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_tokens', 'cost_usd', 'planned_fanout', 'actual_fanout', 'peak_concurrency')
     foreach ($metric in $requiredMetrics) {
         if ($metric -notin @($manifest.metrics)) { throw "Benchmark metric is missing: $metric" }
     }
@@ -172,8 +172,8 @@ try {
         }
     }
     $report = [pscustomobject]@{
-        schema = 1
-        contract = 'codex-baseline-benchmark/v1'
+        schema = 2
+        contract = 'codex-baseline-benchmark/v2'
         platform = 'native-windows'
         mode = 'static-contract-only'
         status = 'completed'

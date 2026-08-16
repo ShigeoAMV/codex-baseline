@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-baseline.invalid/contracts/release-status-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "contract", "status"],
+  "properties": {
+    "schema": {"const": 1},
+    "contract": {"const": "codex-baseline-release-status/v1"},
+    "status": {"type": "string", "pattern": "^(stable|rc\\.[1-9][0-9]*)$"}
+  }
+}
