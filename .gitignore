@@ -1,3 +1,5 @@
 /benchmark-results/
 /behavior-results/
 /.codebase-memory/
+__pycache__/
+*.py[cod]

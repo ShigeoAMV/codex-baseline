@@ -41,13 +41,15 @@ live files changed after planning, and network content are untrusted.
   `-LiteralPath`, raw local-drive validation, and Junction/reparse tests.
 - Every installable source file is pinned by path, byte length, and SHA-256 plus
   an aggregate digest. Unsigned local source is labelled and requires explicit
-  acknowledgement; Windows creates the verified snapshot under the local,
-  reparse-free HOME rather than a potentially shared `%TEMP%`; HOME and every
-  exchange-relevant ancestor reject untrusted owner/ACL mutation rights,
-  with a protected child DACL owned by the caller and limited to caller/SYSTEM/
-  Administrators. Parent owner/DACL plus child identity/owner/DACL, manifest,
-  and every payload hash are checked again immediately before candidate
-  construction.
+  acknowledgement. Windows creates each verified snapshot in a random,
+  protected child directly under the OS-derived system-volume root, avoiding
+  mutable `%HOME%`/`%TEMP%` ancestry exposed to sandbox accounts. Root identity
+  and owner/DACL are checked before and after creation; the child is limited to
+  caller/SYSTEM/Administrators, rejects direct and inherit-only untrusted write
+  rights, and is removed only through an identity-bound receipt. Systems that
+  forbid safe root-level creation fail closed instead of falling back to a
+  shared path. Manifest and every payload hash are checked again immediately
+  before candidate construction.
 - Remote update uses a fixed unsigned GitHub descriptor contract and locally
   derived version-pinned asset URL. HTTPS scheme/redirect hosts, redirects,
   connection/request time, compressed/uncompressed bytes, entry count/depth/

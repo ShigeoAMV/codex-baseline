@@ -1286,7 +1286,8 @@ function Assert-CbPrivatePathComponent {
         [System.Security.AccessControl.FileSystemRights]$UntrustedRights,
         [switch]$RequireProtected,
         [switch]$RequireCurrentUserOwner,
-        [switch]$RequireCurrentUserFullControl
+        [switch]$RequireCurrentUserFullControl,
+        [switch]$EvaluateInheritOnly
     )
     $item = Get-CbItem $Path
     if ($null -eq $item) { throw "Private temporary path is missing: $Path" }
@@ -1307,12 +1308,13 @@ function Assert-CbPrivatePathComponent {
     $accessRules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
     foreach ($rule in @($accessRules)) {
         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-        if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+        $inheritOnly = ($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0
+        if ($inheritOnly -and -not $EvaluateInheritOnly) { continue }
         $sid = Get-CbAclRuleSid $rule
         if ($sid -notin $TrustedAccessSids -and ($rule.FileSystemRights -band $UntrustedRights) -ne 0) {
             throw "Private temporary path grants mutation rights to an untrusted SID: $($item.FullName) ($sid)"
         }
-        if ($sid -eq $currentSid -and
+        if (-not $inheritOnly -and $sid -eq $currentSid -and
             ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
                 [System.Security.AccessControl.FileSystemRights]::FullControl) {
             $currentHasFullControl = $true
@@ -1327,12 +1329,13 @@ function Assert-CbPrivateDirectory {
     param([string]$Path)
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $trustedSids = @($currentSid) + $script:TrustedPrivateDirectorySids
-    $mutationRights = [System.Security.AccessControl.FileSystemRights]::Delete -bor
+    $mutationRights = [System.Security.AccessControl.FileSystemRights]::Write -bor
+        [System.Security.AccessControl.FileSystemRights]::Delete -bor
         [System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
         [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
         [System.Security.AccessControl.FileSystemRights]::TakeOwnership
     Assert-CbExistingAncestorsSafe $Path
-    Assert-CbPrivatePathComponent $Path $trustedSids $trustedSids $mutationRights -RequireProtected -RequireCurrentUserOwner -RequireCurrentUserFullControl
+    Assert-CbPrivatePathComponent $Path $trustedSids $trustedSids $mutationRights -RequireProtected -RequireCurrentUserOwner -RequireCurrentUserFullControl -EvaluateInheritOnly
 }
 
 function Assert-CbPrivateTemporaryRoot {
@@ -1365,17 +1368,58 @@ function Assert-CbPrivateTemporaryRoot {
 }
 
 function New-CbTemporaryDirectory {
-    $temporaryRoot = if (-not [string]::IsNullOrWhiteSpace($env:HOME)) { $env:HOME } else { $env:USERPROFILE }
+    $temporaryRoot = if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+        -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT)) {
+        $env:CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT
+    }
+    else {
+        [System.IO.Path]::GetPathRoot([Environment]::SystemDirectory)
+    }
     Assert-CbRawLocalRootPath $temporaryRoot 'Windows private staging root'
     $temporaryRoot = Get-CbFullPath $temporaryRoot
     $temporaryRootItem = Get-CbItem $temporaryRoot
     if ($null -eq $temporaryRootItem) { throw "Windows private staging root is missing: $temporaryRoot" }
     Assert-CbOrdinaryItem $temporaryRootItem 'tree'
     Assert-CbPrivateTemporaryRoot $temporaryRoot
+    $parentIdentity = Get-CbDirectoryIdentity $temporaryRoot
     $path = Join-Path $temporaryRoot ('codex-baseline-{0}' -f [guid]::NewGuid().ToString('N'))
+    if (Test-CbExists $path) { throw "Private temporary directory collision: $path" }
     New-CbPrivateDirectory $path (New-CbPrivateDirectorySecurity) | Out-Null
+    $identity = Get-CbDirectoryIdentity $path
+    if ((Get-CbDirectoryIdentity $temporaryRoot) -ne $parentIdentity) {
+        throw "Private temporary parent identity changed; directory left for safe inspection: $path"
+    }
+    Assert-CbPrivateTemporaryRoot $temporaryRoot
     Assert-CbPrivateDirectory $path
-    return $path
+    return [pscustomobject]@{
+        Path = $path
+        Identity = $identity
+        Parent = $temporaryRoot
+        ParentIdentity = $parentIdentity
+    }
+}
+
+function Remove-CbTemporaryDirectory {
+    param($Receipt)
+    if ($null -eq $Receipt) { return }
+    $path = Get-CbFullPath ([string]$Receipt.Path)
+    $parent = Get-CbFullPath ([string]$Receipt.Parent)
+    $leaf = [System.IO.Path]::GetFileName($path)
+    $actualParent = [System.IO.Directory]::GetParent($path)
+    if ($null -eq $actualParent -or -not (Test-CbSamePath $actualParent.FullName $parent) -or
+        $leaf -notmatch '^codex-baseline-[0-9a-f]{32}$') {
+        throw "Refusing unsafe private temporary cleanup target: $path"
+    }
+    if ((Get-CbDirectoryIdentity $parent) -ne [string]$Receipt.ParentIdentity) {
+        throw "Refusing private temporary cleanup after parent identity change: $parent"
+    }
+    Assert-CbPrivateTemporaryRoot $parent
+    if (-not (Test-CbExists $path)) { return }
+    if ((Get-CbDirectoryIdentity $path) -ne [string]$Receipt.Identity) {
+        throw "Refusing private temporary cleanup after directory identity change: $path"
+    }
+    Assert-CbPrivateDirectory $path
+    Remove-CbSafeItem $path
 }
 
 function Test-CbUpdateUriAllowed {
@@ -1687,7 +1731,8 @@ function Assert-CbUpdateSourceInventory {
 
 function Get-CbPreparedUpdateSource {
     param([string]$ArchiveInput, [string]$ExpectedVersion = '', $Descriptor = $null, [bool]$RemoteSource = $false)
-    $temporary = New-CbTemporaryDirectory
+    $temporaryReceipt = New-CbTemporaryDirectory
+    $temporary = [string]$temporaryReceipt.Path
     try {
         $archive = Join-Path $temporary 'release.zip'
         if ($RemoteSource -and $env:CODEX_BASELINE_TESTING -ne '1') {
@@ -1705,10 +1750,10 @@ function Get-CbPreparedUpdateSource {
         if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and [string]$manifest.version -ne $ExpectedVersion) {
             throw 'Update descriptor and source manifest version disagree.'
         }
-        return [pscustomobject]@{ Temporary = $temporary; Root = [string]$expanded.Root; Manifest = $manifest }
+        return [pscustomobject]@{ Temporary = $temporary; TemporaryReceipt = $temporaryReceipt; Root = [string]$expanded.Root; Manifest = $manifest }
     }
     catch {
-        if (Test-CbExists $temporary) { Remove-CbSafeItem $temporary }
+        Remove-CbTemporaryDirectory $temporaryReceipt
         throw
     }
 }
@@ -1719,7 +1764,8 @@ function New-CbVerifiedSourceSnapshot {
     $expectedManifestHash = Get-CbFileHash $sourceManifestPath
     $expectedPayloadHash = [string]$OriginalManifest.payload_hash
     $expectedVersion = [string]$OriginalManifest.version
-    $snapshot = New-CbTemporaryDirectory
+    $snapshotReceipt = New-CbTemporaryDirectory
+    $snapshot = [string]$snapshotReceipt.Path
     try {
         if ($env:CODEX_BASELINE_TESTING -eq '1' -and
             $env:CODEX_BASELINE_TEST_MUTATE_SOURCE_AFTER_VERIFY -eq '1') {
@@ -1752,6 +1798,7 @@ function New-CbVerifiedSourceSnapshot {
         }
         return [pscustomobject]@{
             Root = $snapshot
+            StagingReceipt = $snapshotReceipt
             Manifest = $snapshotManifest
             DirectoryIdentity = Get-CbDirectoryIdentity $snapshot
             ManifestHash = $expectedManifestHash
@@ -1760,7 +1807,7 @@ function New-CbVerifiedSourceSnapshot {
         }
     }
     catch {
-        if (Test-CbExists $snapshot) { Remove-CbSafeItem $snapshot }
+        Remove-CbTemporaryDirectory $snapshotReceipt
         throw
     }
 }
@@ -1768,15 +1815,20 @@ function New-CbVerifiedSourceSnapshot {
 function Assert-CbVerifiedSourceSnapshot {
     param($Snapshot)
     if ($env:CODEX_BASELINE_TESTING -eq '1' -and
-        $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY -eq '1') {
+        ($env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY -eq '1' -or
+            $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_INHERIT_ONLY_ACL_AFTER_VERIFY -eq '1')) {
         $snapshotDirectory = New-Object System.IO.DirectoryInfo([string]$Snapshot.Root)
         $acl = Get-CbDirectorySecurity $snapshotDirectory
         $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+        $inheritOnly = $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_INHERIT_ONLY_ACL_AFTER_VERIFY -eq '1'
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
             $users,
-            [System.Security.AccessControl.FileSystemRights]::Modify,
-            [System.Security.AccessControl.InheritanceFlags]::None,
-            [System.Security.AccessControl.PropagationFlags]::None,
+            $(if ($inheritOnly) { [System.Security.AccessControl.FileSystemRights]::Write } else { [System.Security.AccessControl.FileSystemRights]::Modify }),
+            $(if ($inheritOnly) {
+                [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                    [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+            } else { [System.Security.AccessControl.InheritanceFlags]::None }),
+            $(if ($inheritOnly) { [System.Security.AccessControl.PropagationFlags]::InheritOnly } else { [System.Security.AccessControl.PropagationFlags]::None }),
             [System.Security.AccessControl.AccessControlType]::Allow
         )
         $acl.AddAccessRule($rule) | Out-Null
@@ -2674,7 +2726,8 @@ function Test-CbConfigCandidate {
     if ($env:CODEX_BASELINE_TESTING -eq '1' -and $env:CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION -eq '1') { return }
     $command=Get-Command codex -ErrorAction Stop
     if ($command.CommandType -notin @('Application','ExternalScript')) { throw 'Config validation requires an ordinary Codex executable.' }
-    $temporary=New-CbTemporaryDirectory
+    $temporaryReceipt=New-CbTemporaryDirectory
+    $temporary=[string]$temporaryReceipt.Path
     try {
         $config=Join-Path $temporary 'config.toml'; [IO.File]::WriteAllBytes($config,$Bytes)
         $sqlite=Join-Path $temporary 'sqlite'; Ensure-CbSafeDirectory $sqlite | Out-Null
@@ -2684,7 +2737,7 @@ function Test-CbConfigCandidate {
         $process=[Diagnostics.Process]::Start($psi); $process.WaitForExit()
         if ($process.ExitCode -ne 0) { throw 'Codex rejected the isolated candidate config.' }
     }
-    finally { if (Test-CbExists $temporary) { Remove-CbSafeItem $temporary } }
+    finally { Remove-CbTemporaryDirectory $temporaryReceipt }
 }
 
 function Get-CbConfigTransactionPath {
@@ -3226,6 +3279,7 @@ function Invoke-CbInstallLike {
         throw 'Unsigned local source requires -AcknowledgeUnverifiedSource before mutation.'
     }
     $sourceSnapshot = New-CbVerifiedSourceSnapshot $manifest $SourceRoot
+    $temporaryReceipt = $null
     $temporaryRoot = $null
     try {
         $manifest = Assert-CbVerifiedSourceSnapshot $sourceSnapshot
@@ -3271,7 +3325,8 @@ function Invoke-CbInstallLike {
                 }
             }
         }
-        $temporaryRoot = New-CbTemporaryDirectory
+        $temporaryReceipt = New-CbTemporaryDirectory
+        $temporaryRoot = [string]$temporaryReceipt.Path
         $manifest = Assert-CbVerifiedSourceSnapshot $sourceSnapshot
         $current = Get-CbCurrentTransaction
         $objects = @(Get-CbInstallObjects $manifest $sourceSnapshot.Root $temporaryRoot $current)
@@ -3305,12 +3360,8 @@ function Invoke-CbInstallLike {
         Write-Output ("installed codex-baseline {0} (transaction {1})" -f $manifest.version, $transaction.Id)
     }
     finally {
-        if ($null -ne $temporaryRoot -and (Test-CbExists $temporaryRoot)) {
-            Remove-CbSafeItem $temporaryRoot
-        }
-        if ($null -ne $sourceSnapshot -and (Test-CbExists ([string]$sourceSnapshot.Root))) {
-            Remove-CbSafeItem ([string]$sourceSnapshot.Root)
-        }
+        Remove-CbTemporaryDirectory $temporaryReceipt
+        if ($null -ne $sourceSnapshot) { Remove-CbTemporaryDirectory $sourceSnapshot.StagingReceipt }
     }
 }
 
@@ -3323,7 +3374,7 @@ function Invoke-CbUpdate {
     if (-not [string]::IsNullOrWhiteSpace($Offline)) {
         $prepared = Get-CbPreparedUpdateSource $Offline
         try { Invoke-CbInstallLike 'update' ([string]$prepared.Root) 'offline-archive' }
-        finally { if ($null -ne $prepared -and (Test-CbExists ([string]$prepared.Temporary))) { Remove-CbSafeItem ([string]$prepared.Temporary) } }
+        finally { if ($null -ne $prepared) { Remove-CbTemporaryDirectory $prepared.TemporaryReceipt } }
         return
     }
     $installedRuntime = Test-CbSamePath $script:SourceRoot $script:RuntimePath
@@ -3332,7 +3383,8 @@ function Invoke-CbUpdate {
         return
     }
 
-    $temporary = New-CbTemporaryDirectory
+    $temporaryReceipt = New-CbTemporaryDirectory
+    $temporary = [string]$temporaryReceipt.Path
     $prepared = $null
     try {
         $descriptorPath = Join-Path $temporary 'codex-baseline-update-v1.txt'
@@ -3363,8 +3415,8 @@ function Invoke-CbUpdate {
         Invoke-CbInstallLike 'update' ([string]$prepared.Root) 'unsigned-github-release'
     }
     finally {
-        if ($null -ne $prepared -and (Test-CbExists ([string]$prepared.Temporary))) { Remove-CbSafeItem ([string]$prepared.Temporary) }
-        if (Test-CbExists $temporary) { Remove-CbSafeItem $temporary }
+        if ($null -ne $prepared) { Remove-CbTemporaryDirectory $prepared.TemporaryReceipt }
+        Remove-CbTemporaryDirectory $temporaryReceipt
     }
 }
 
@@ -3458,7 +3510,8 @@ function Invoke-CbRollback {
         return
     }
     Assert-CbCurrentClean $current
-    $temporaryRoot = New-CbTemporaryDirectory
+    $temporaryReceipt = New-CbTemporaryDirectory
+    $temporaryRoot = [string]$temporaryReceipt.Path
     try {
         $objects = @()
         foreach ($sourceObject in @($current.Objects)) {
@@ -3492,7 +3545,7 @@ function Invoke-CbRollback {
         Write-Output ("rolled back transaction {0} (journal {1})" -f $current.Id, $transaction.Id)
     }
     finally {
-        if (Test-CbExists $temporaryRoot) { Remove-CbSafeItem $temporaryRoot }
+        Remove-CbTemporaryDirectory $temporaryReceipt
     }
 }
 
@@ -3534,7 +3587,8 @@ function Invoke-CbUninstall {
         return
     }
     Assert-CbCurrentClean $current
-    $temporaryRoot = New-CbTemporaryDirectory
+    $temporaryReceipt = New-CbTemporaryDirectory
+    $temporaryRoot = [string]$temporaryReceipt.Path
     try {
         $objects = @(New-CbUninstallObjects $current $temporaryRoot)
         foreach ($object in @($objects | Where-Object { $_.Change })) {
@@ -3555,7 +3609,7 @@ function Invoke-CbUninstall {
         Write-Output ("uninstalled codex-baseline (transaction {0})" -f $transaction.Id)
     }
     finally {
-        if (Test-CbExists $temporaryRoot) { Remove-CbSafeItem $temporaryRoot }
+        Remove-CbTemporaryDirectory $temporaryReceipt
     }
 }
 

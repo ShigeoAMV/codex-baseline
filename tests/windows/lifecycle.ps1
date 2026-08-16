@@ -849,7 +849,54 @@ function Set-TestEnvironment {
     $env:HOME = $testHome
     $env:CODEX_HOME = Join-Path $testHome 'custom-codex'
     $env:AGENTS_HOME = Join-Path $testHome 'custom-agents'
+    $env:CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT = $testHome
     return $testHome
+}
+
+function Test-ProductionStagingIgnoresMutableHomeEngine {
+    param([string]$Engine, [string]$Label)
+    $savedHome = $env:HOME
+    $savedCodexHome = $env:CODEX_HOME
+    $savedAgentsHome = $env:AGENTS_HOME
+    $savedOverride = [Environment]::GetEnvironmentVariable('CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT')
+    $root = Join-Path $script:TestRoot ("production-staging-{0}" -f $Label)
+    try {
+        $safeHome = Set-TestEnvironment $root
+        $mutableHome = Join-Path $root 'mutable-user-home'
+        [System.IO.Directory]::CreateDirectory($mutableHome) | Out-Null
+        $directory = New-Object System.IO.DirectoryInfo($mutableHome)
+        $acl = $directory.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+        $users = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $users,
+            [System.Security.AccessControl.FileSystemRights]::Modify,
+            ([System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [System.Security.AccessControl.InheritanceFlags]::ObjectInherit),
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $acl.AddAccessRule($rule) | Out-Null
+        $directory.SetAccessControl($acl)
+        $env:HOME = $mutableHome
+        Remove-Item Env:\CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT -ErrorAction SilentlyContinue
+        $env:CODEX_BASELINE_TESTING = '1'
+        $env:CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION = '1'
+        $systemRoot = [System.IO.Path]::GetPathRoot([Environment]::SystemDirectory)
+        $before = @([System.IO.Directory]::EnumerateDirectories($systemRoot, 'codex-baseline-*') | Sort-Object)
+        $output = Invoke-EngineBaseline $Engine @('install', '-DryRun', '-AcknowledgeUnverifiedSource')
+        $after = @([System.IO.Directory]::EnumerateDirectories($systemRoot, 'codex-baseline-*') | Sort-Object)
+        Assert-True ($output -match 'dry-run: no files changed' -and $output -notmatch 'untrusted SID') ("{0}: production staging must ignore a mutable HOME ancestry: {1}" -f $Label, $output)
+        Assert-True ([string]::Join("`n", $before) -eq [string]::Join("`n", $after)) ("{0}: production staging must leave no system-root GUID directory" -f $Label)
+    }
+    finally {
+        Remove-Item Env:\CODEX_BASELINE_TESTING -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION -ErrorAction SilentlyContinue
+        $env:HOME = $savedHome
+        $env:CODEX_HOME = $savedCodexHome
+        $env:AGENTS_HOME = $savedAgentsHome
+        if ($null -eq $savedOverride) { Remove-Item Env:\CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT -ErrorAction SilentlyContinue }
+        else { $env:CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT = $savedOverride }
+    }
 }
 
 function Remove-TestRoot {
@@ -1047,6 +1094,8 @@ Assert-True ($productionScript -match 'PROTECTED_DACL_SECURITY_INFORMATION=0x800
     $productionScript -match 'SetDacl\(\$Path,\$desired\.GetSecurityDescriptorBinaryForm\(\),\[bool\]\$desired\.AreAccessRulesProtected\)') 'config ACL writes must set the native protected or unprotected DACL control flag explicitly'
 
 New-PrivateTestRoot $script:TestRoot
+Test-ProductionStagingIgnoresMutableHomeEngine $script:PowerShell 'ps51'
+if ($null -ne $script:PowerShellCore) { Test-ProductionStagingIgnoresMutableHomeEngine $script:PowerShellCore 'ps7' }
 if ($env:CODEX_BASELINE_WINDOWS_TEST_GROUP -eq 'lifecycle-provenance') {
     try {
         Test-LifecycleProvenanceDoesNotInvokeGit $script:PowerShell 'ps51'
@@ -1142,15 +1191,26 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'source-race rejection must not create AGENTS_HOME'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) 'source-race rejection must not mutate state'
 
-    Set-TestEnvironment (Join-Path $script:TestRoot 'snapshot-acl-home') | Out-Null
-    $env:CODEX_BASELINE_TESTING = '1'
-    $env:CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY = '1'
-    $snapshotAclOutput = Invoke-Baseline @('install') 1
-    Remove-Item Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY
-    Remove-Item Env:\CODEX_BASELINE_TESTING
-    Assert-True ($snapshotAclOutput -match 'untrusted SID') ("verified source snapshot must reject a broadened DACL before mutation; output: {0}" -f $snapshotAclOutput)
-    Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'snapshot ACL rejection must not create AGENTS_HOME'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) 'snapshot ACL rejection must not create baseline state'
+    $snapshotAclEngines = @([pscustomobject]@{ Engine = $script:PowerShell; Label = 'ps51' })
+    if ($null -ne $script:PowerShellCore) { $snapshotAclEngines += [pscustomobject]@{ Engine = $script:PowerShellCore; Label = 'ps7' } }
+    foreach ($case in $snapshotAclEngines) {
+        foreach ($fixture in @(
+            [pscustomobject]@{ Variable = 'CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY'; Label = 'direct-write' },
+            [pscustomobject]@{ Variable = 'CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_INHERIT_ONLY_ACL_AFTER_VERIFY'; Label = 'inherit-only-write' }
+        )) {
+            Set-TestEnvironment (Join-Path $script:TestRoot ("snapshot-acl-{0}-{1}" -f $case.Label, $fixture.Label)) | Out-Null
+            $env:CODEX_BASELINE_TESTING = '1'
+            [Environment]::SetEnvironmentVariable([string]$fixture.Variable, '1')
+            try { $snapshotAclOutput = Invoke-EngineBaseline ([string]$case.Engine) @('install', '-AcknowledgeUnverifiedSource') 1 }
+            finally {
+                [Environment]::SetEnvironmentVariable([string]$fixture.Variable, $null)
+                Remove-Item Env:\CODEX_BASELINE_TESTING -ErrorAction SilentlyContinue
+            }
+            Assert-True ($snapshotAclOutput -match 'untrusted SID') ("{0}/{1}: verified source snapshot must reject broadened descendant-write ACLs: {2}" -f $case.Label, $fixture.Label, $snapshotAclOutput)
+            Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) ("{0}/{1}: snapshot ACL rejection must not create AGENTS_HOME" -f $case.Label, $fixture.Label)
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline'))) ("{0}/{1}: snapshot ACL rejection must not create baseline state" -f $case.Label, $fixture.Label)
+        }
+    }
 
     Set-TestEnvironment (Join-Path $script:TestRoot 'snapshot-content-home') | Out-Null
     $env:CODEX_BASELINE_TESTING = '1'
@@ -1162,6 +1222,7 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'snapshot content rejection must occur before managed-home mutation'
 
     $sharedStagingHome = Set-TestEnvironment (Join-Path $script:TestRoot 'shared-staging-root')
+    $env:CODEX_BASELINE_TESTING = '1'
     $sharedStagingDirectory = New-Object System.IO.DirectoryInfo($sharedStagingHome)
     $sharedStagingAcl = $sharedStagingDirectory.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
     $usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
@@ -1203,6 +1264,7 @@ try {
     $deleteChildStagingOutput = Invoke-Baseline @('install') 1
     Assert-True ($deleteChildStagingOutput -match 'mutation rights\s+to an untrusted SID') ("installer must reject untrusted DeleteChild rights directly on the private staging root; output: {0}" -f $deleteChildStagingOutput)
     Assert-True (-not (Test-Path -LiteralPath $env:AGENTS_HOME)) 'staging-root DeleteChild rejection must precede managed-home mutation'
+    Remove-Item Env:\CODEX_BASELINE_TESTING -ErrorAction SilentlyContinue
 
     $duplicateOperationsSource = Join-Path $script:TestRoot 'duplicate-operation-source'
     [System.IO.Directory]::CreateDirectory($duplicateOperationsSource) | Out-Null
@@ -1650,11 +1712,17 @@ finally {
     if (Test-Path Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY) {
         Remove-Item Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_ACL_AFTER_VERIFY
     }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_INHERIT_ONLY_ACL_AFTER_VERIFY) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_WEAKEN_SNAPSHOT_INHERIT_ONLY_ACL_AFTER_VERIFY
+    }
     if (Test-Path Env:\CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY) {
         Remove-Item Env:\CODEX_BASELINE_TEST_MUTATE_SNAPSHOT_AFTER_VERIFY
     }
     if (Test-Path Env:\CODEX_BASELINE_TESTING) {
         Remove-Item Env:\CODEX_BASELINE_TESTING
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_PRIVATE_TEMP_ROOT
     }
     if (Test-Path Env:\CODEX_BASELINE_TEST_UPDATE_METADATA_PATH) {
         Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_METADATA_PATH
