@@ -1776,15 +1776,11 @@ function New-CbVerifiedSourceSnapshot {
             )
         }
 
-        Ensure-CbSafeDirectory (Join-Path $snapshot 'scripts\lib') | Out-Null
-        Copy-CbFileSafe (Join-Path $SourceRoot 'VERSION') (Join-Path $snapshot 'VERSION')
-        Copy-CbTreeSafe (Join-Path $SourceRoot 'baseline') (Join-Path $snapshot 'baseline')
-        foreach ($scriptName in @('codex-baseline.sh', 'codex-baseline.ps1', 'onboard.sh', 'onboard.ps1', 'benchmark.sh', 'benchmark.ps1')) {
-            Copy-CbFileSafe (Join-Path $SourceRoot ("scripts\{0}" -f $scriptName)) (Join-Path $snapshot ("scripts\{0}" -f $scriptName))
+        Copy-CbFileSafe $sourceManifestPath (Join-Path $snapshot 'baseline\manifest.json')
+        foreach ($entry in @($OriginalManifest.payload)) {
+            $relativePath = ([string]$entry.path).Replace('/', '\')
+            Copy-CbFileSafe (Join-Path $SourceRoot $relativePath) (Join-Path $snapshot $relativePath)
         }
-        Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\common.sh') (Join-Path $snapshot 'scripts\lib\common.sh')
-        Copy-CbFileSafe (Join-Path $SourceRoot 'scripts\lib\evaluation.sh') (Join-Path $snapshot 'scripts\lib\evaluation.sh')
-        Copy-CbTreeSafe (Join-Path $SourceRoot 'benchmarks') (Join-Path $snapshot 'benchmarks')
 
         $snapshotManifest = Read-CbManifest $snapshot
         if ((Get-CbFileHash (Join-Path $snapshot 'baseline\manifest.json')) -ne $expectedManifestHash) {
@@ -2717,6 +2713,66 @@ function Assert-CbConfigPath {
     return [pscustomobject]@{Identity=$identity;Security=$security;Hash=(Get-CbFileHash $item.FullName);Length=$item.Length}
 }
 
+function Get-CbCodexCliProbe {
+    $command = @(Get-Command codex -ErrorAction SilentlyContinue)[0]
+    if ($null -eq $command) {
+        return [pscustomobject]@{ Status = 'absent'; Command = $null; Output = ''; Error = $null }
+    }
+    if ($command.CommandType -notin @('Application', 'ExternalScript')) {
+        return [pscustomobject]@{
+            Status = 'unusable'
+            Command = $command
+            Output = ''
+            Error = 'Codex command is not an ordinary executable.'
+        }
+    }
+    try {
+        $output = (& $command.Source --version 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -eq 0) {
+            return [pscustomobject]@{ Status = 'usable'; Command = $command; Output = $output; Error = $null }
+        }
+        return [pscustomobject]@{
+            Status = 'unusable'
+            Command = $command
+            Output = $output
+            Error = 'Codex version probe returned a nonzero exit code.'
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Status = 'unusable'
+            Command = $command
+            Output = ''
+            Error = $_.Exception.Message
+        }
+    }
+}
+
+function Get-CbWindowsDesktopApp {
+    if ($env:CODEX_BASELINE_TESTING -eq '1' -and
+        -not [string]::IsNullOrWhiteSpace($env:CODEX_BASELINE_TEST_DESKTOP_APP_VERSION)) {
+        return [pscustomobject]@{
+            Version = [string]$env:CODEX_BASELINE_TEST_DESKTOP_APP_VERSION
+            PackageFullName = 'OpenAI.Codex_test_x64__2p2nqsd0c76g0'
+            Status = 'Ok'
+        }
+    }
+    $appxCommand = Get-Command Get-AppxPackage -CommandType Cmdlet -ErrorAction SilentlyContinue
+    if ($null -eq $appxCommand) { return $null }
+    try {
+        $packages = @(& $appxCommand -Name 'OpenAI.Codex' -ErrorAction Stop | Where-Object {
+            [string]$_.Status -eq 'Ok'
+        } | Sort-Object Version -Descending)
+        if ($packages.Count -eq 0) { return $null }
+        return [pscustomobject]@{
+            Version = [string]$packages[0].Version
+            PackageFullName = [string]$packages[0].PackageFullName
+            Status = [string]$packages[0].Status
+        }
+    }
+    catch { return $null }
+}
+
 function Test-CbConfigCandidate {
     param([byte[]]$Bytes)
     if ($env:CODEX_BASELINE_TESTING -eq '1' -and
@@ -3102,6 +3158,12 @@ function Invoke-CbConfigAutoCap {
 }
 
 function Get-CbConfigAutoCapPlan {
+    if(-not($env:CODEX_BASELINE_TESTING-eq'1'-and$env:CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION-eq'1')){
+        $codexProbe=Get-CbCodexCliProbe
+        if([string]$codexProbe.Status-ne'usable'){
+            return [pscustomobject]@{Change=$false;Path='agents.max_concurrent_threads_per_session';Prior='absent';Desired=$null;Reason='Codex CLI unavailable; config remains user-owned'}
+        }
+    }
     Assert-CbConfigPath|Out-Null
     $document=Read-CbConfigDocument
     if($document.Keys.ContainsKey('agents_enabled')-and[string]$document.Keys['agents_enabled'].Token-eq'false'){
@@ -3669,62 +3731,74 @@ function Invoke-CbDoctor {
     catch {
         $failures.Add("Source/research manifest check failed: $($_.Exception.Message)") | Out-Null
     }
-    $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
-    if ($null -ne $codexCommand) {
+    $codexProbe = Get-CbCodexCliProbe
+    $desktopApp = Get-CbWindowsDesktopApp
+    if ([string]$codexProbe.Status -eq 'usable') {
         try {
-            $codexVersion = (& codex --version 2>&1 | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0) {
-                $codexVerification = 'executed-native-windows'
-                $versionMatch = [regex]::Match($codexVersion, '(?<!\d)(\d+\.\d+\.\d+)(?!\d)')
-                if (-not $versionMatch.Success) {
-                    $failures.Add('Native Codex version output does not contain a semantic version.') | Out-Null
-                }
-                else {
-                    $detectedCodex = [version]$versionMatch.Groups[1].Value
-                    if ($null -ne $minimumCodex -and $detectedCodex -lt $minimumCodex) {
-                        $failures.Add("Native Codex is older than the supported minimum version $minimumCodex.") | Out-Null
-                    }
-                }
-                & codex --strict-config --version *> $null
-                if ($LASTEXITCODE -eq 0) {
-                    $configState = 'accepted-by-strict-config'
-                    $deprecatedState = 'none-reported-by-strict-config'
-                }
-                else {
-                    $configState = 'rejected-by-strict-config'
-                    $deprecatedState = 'unverified-config-rejected'
-                    $failures.Add('Native Codex strict-config version probe failed.') | Out-Null
-                }
-                $featuresOutput = (& codex features list 2>&1 | Out-String)
-                $featuresExit = $LASTEXITCODE
-                $stableFeatures = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
-                foreach ($featureMatch in [regex]::Matches($featuresOutput, '(?m)^\s*(goals|multi_agent|skill_search)\s+stable\s+true(?:\s|$)')) {
-                    $stableFeatures.Add($featureMatch.Groups[1].Value) | Out-Null
-                }
-                if ($featuresExit -eq 0 -and $stableFeatures.Count -eq 3) {
-                    $nativeCapabilities = 'verified'
-                }
-                else {
-                    $nativeCapabilities = 'degraded'
-                    $warnings.Add('Native Codex capability probe is degraded.') | Out-Null
-                }
-                if ($versionMatch.Success -and $null -ne $testedCodex -and
-                    ([version]$versionMatch.Groups[1].Value) -gt $testedCodex) {
-                    $nativeCapabilities = 'unverified-future-version'
-                    $warnings.Add(("Native Codex {0} is newer than the tested version {1}; volatile capabilities remain unverified." -f
-                        $versionMatch.Groups[1].Value, $testedCodex)) | Out-Null
-                }
+            $codexVersion = [string]$codexProbe.Output
+            $codexVerification = 'executed-native-windows'
+            $versionMatch = [regex]::Match($codexVersion, '(?<!\d)(\d+\.\d+\.\d+)(?!\d)')
+            if (-not $versionMatch.Success) {
+                $failures.Add('Native Codex version output does not contain a semantic version.') | Out-Null
             }
             else {
-                $failures.Add('Native Codex version probe failed.') | Out-Null
+                $detectedCodex = [version]$versionMatch.Groups[1].Value
+                if ($null -ne $minimumCodex -and $detectedCodex -lt $minimumCodex) {
+                    $failures.Add("Native Codex is older than the supported minimum version $minimumCodex.") | Out-Null
+                }
+            }
+            & $codexProbe.Command.Source --strict-config --version *> $null
+            if ($LASTEXITCODE -eq 0) {
+                $configState = 'accepted-by-strict-config'
+                $deprecatedState = 'none-reported-by-strict-config'
+            }
+            else {
+                $configState = 'rejected-by-strict-config'
+                $deprecatedState = 'unverified-config-rejected'
+                $failures.Add('Native Codex strict-config version probe failed.') | Out-Null
+            }
+            $featuresOutput = (& $codexProbe.Command.Source features list 2>&1 | Out-String)
+            $featuresExit = $LASTEXITCODE
+            $stableFeatures = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+            foreach ($featureMatch in [regex]::Matches($featuresOutput, '(?m)^\s*(goals|multi_agent|skill_search)\s+stable\s+true(?:\s|$)')) {
+                $stableFeatures.Add($featureMatch.Groups[1].Value) | Out-Null
+            }
+            if ($featuresExit -eq 0 -and $stableFeatures.Count -eq 3) {
+                $nativeCapabilities = 'verified'
+            }
+            else {
+                $nativeCapabilities = 'degraded'
+                $warnings.Add('Native Codex capability probe is degraded.') | Out-Null
+            }
+            if ($versionMatch.Success -and $null -ne $testedCodex -and
+                ([version]$versionMatch.Groups[1].Value) -gt $testedCodex) {
+                $nativeCapabilities = 'unverified-future-version'
+                $warnings.Add(("Native Codex {0} is newer than the tested version {1}; volatile capabilities remain unverified." -f
+                    $versionMatch.Groups[1].Value, $testedCodex)) | Out-Null
             }
         }
         catch {
             $failures.Add("Native Codex probe failed: $($_.Exception.Message)") | Out-Null
         }
     }
+    elseif ($null -ne $desktopApp) {
+        $codexVersion = "desktop-app $([string]$desktopApp.Version)"
+        $codexVerification = 'detected-windows-desktop-app'
+        $nativeCapabilities = 'unverified-desktop-app-only'
+        $configState = 'unverified-desktop-app-only'
+        $deprecatedState = 'unverified-desktop-app-only'
+        if ([string]$codexProbe.Status -eq 'unusable') {
+            $warnings.Add('Codex CLI command is not executable; using healthy Windows desktop-app detection.') | Out-Null
+        }
+        else {
+            $warnings.Add('Windows Codex desktop app detected without a standalone Codex CLI; CLI-specific checks are unverified.') | Out-Null
+        }
+    }
+    elseif ([string]$codexProbe.Status -eq 'unusable') {
+        $failures.Add(("Native Codex CLI probe failed: {0}" -f [string]$codexProbe.Error)) | Out-Null
+    }
     else {
-        $warnings.Add('Native Windows Codex is not installed; Codex behavior is unverified on this host.') | Out-Null
+        $warnings.Add('Neither a standalone Codex CLI nor the Windows Codex desktop app was detected; Codex behavior is unverified on this host.') | Out-Null
     }
     $state = 'not-installed'
     $currentId = $null

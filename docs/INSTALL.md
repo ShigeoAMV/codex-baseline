@@ -64,7 +64,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-baseline
 
 The script uses literal paths, .NET byte APIs, UTF-8 without BOM, reparse-point
 checks, and an adjacent PowerShell wrapper. It does not assume a username or
-drive. Native Windows Codex must be installed separately and is not fetched.
+drive. Either the separately installed Codex CLI or a healthy Codex desktop
+AppX package is sufficient for Baseline installation; neither is fetched.
+Desktop-app-only installation never depends on the app's private versioned
+executable paths.
 
 ## Existing configuration
 
@@ -86,7 +89,9 @@ narrow automatic config exception: on a fresh install it may add an absent
 `agents.max_concurrent_threads_per_session = 6` when agents are not explicitly
 disabled and neither a current nor legacy cap exists. Existing settings always
 win; `agents.enabled=false` and `features.multi_agent=false` both veto this
-exception and remain user-owned. Update never acquires a cap it did not
+exception and remain user-owned. The exception also requires an executable CLI
+for isolated strict-config validation. App-only installation skips the cap and
+leaves `config.toml` user-owned. Update never acquires a cap it did not
 previously own. Preview includes the
 planned key change. Use `codex-baseline optimize --check` to inspect and
 `optimize --restore --dry-run` to preview its key-level inverse.

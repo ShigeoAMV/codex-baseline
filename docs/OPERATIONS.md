@@ -46,7 +46,9 @@ A fresh install has one automatic exception: it may add a previously absent
 `agents.max_concurrent_threads_per_session = 6` if agents are not explicitly
 disabled and neither a current nor legacy cap exists. Existing values always
 win; `agents.enabled=false` and `features.multi_agent=false` both veto this
-exception and remain user-owned. Update does not acquire a previously unowned
+exception and remain user-owned. An executable CLI must validate the candidate;
+desktop-app-only installation skips the cap and keeps config ownership at zero.
+Update does not acquire a previously unowned
 cap. PowerShell uses the
 equivalent `-Check`, `-Apply`, `-DryRun`, `-Restore`, and `-Speed` spellings.
 
@@ -64,8 +66,9 @@ the candidate. Config is the separately versioned
 `codex-baseline-config-operations/v2` plane under the same lock. A fresh
 install's core and cap changes form one composite operation: both preflight,
 the composite intent is durable before core commit, and the allowlisted cap is
-applied only after core reaches the desired state. Recovery resumes the config
-delta after a committed core change or retains the source config when core
+applied only after core reaches the desired state. If no executable CLI is
+available, the composite completes without a config child transaction. Recovery
+resumes the config delta after a committed core change or retains the source config when core
 recovery returns to the source. Rollback and uninstall use the same core-first,
 config-second coordinator, so config ownership is not released ahead of a
 failed reverse core transaction.

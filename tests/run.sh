@@ -151,8 +151,10 @@ test_static_quality() {
   grep -Fq 'and SWARM for four' <<<"$global_block_text"
   grep -Fq 'equals useful lanes capped by six' "$TEST_ROOT/baseline/global/AGENTS.block.md"
   grep -Fq 'File count or keywords alone do not escalate' "$TEST_ROOT/baseline/global/AGENTS.block.md"
-  grep -Fq 'avoid `cmd /c` and nested `-Command` strings' "$TEST_ROOT/baseline/global/AGENTS.block.md"
-  grep -Fq 'after one parser/quoting failure' "$TEST_ROOT/baseline/global/AGENTS.stable.block.md"
+  grep -Fq 'keep compound PowerShell in one parse unit' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq '`catch`, or `finally` alone' "$TEST_ROOT/baseline/global/AGENTS.stable.block.md"
+  grep -Fq 'Avoid `cmd /c` and nested `-Command`' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'On parser/quoting failure' "$TEST_ROOT/baseline/global/AGENTS.stable.block.md"
   grep -Fq 'Do not trigger for read-only explanation, diagnosis, or architecture orientation' \
     "$TEST_ROOT/baseline/skills/codex-baseline-deep-work/SKILL.md"
   jq -e '

@@ -1,10 +1,11 @@
 # Codex Engineering Baseline
 
-A small, evidence-driven baseline for Codex CLI on Linux, WSL2, and native
-Windows. It adds universal engineering invariants, evaluation-gated autonomous
-execution-team selection, four progressively disclosed skills, safe repository onboarding,
-health/lifecycle operations, and a paired evaluation harness without installing
-an external orchestration framework.
+A small, evidence-driven baseline for Codex CLI on Linux and WSL2, plus Codex
+CLI or the Codex desktop app on native Windows. It adds universal engineering
+invariants, evaluation-gated autonomous execution-team selection, four
+progressively disclosed skills, safe repository onboarding, health/lifecycle
+operations, and a paired evaluation harness without installing an external
+orchestration framework.
 
 > **Status:** the source payload is `0.3.0`, release candidate `rc.1`. It is an
 > Apache-2.0-licensed, unsigned public preview. The autonomous routing and
@@ -18,7 +19,10 @@ an external orchestration framework.
 The baseline owns zero hooks and normally leaves `config.toml` alone. v0.3 has
 one narrow exception: a fresh install may add the previously absent
 `agents.max_concurrent_threads_per_session = 6` when agents are not disabled
-and neither a current nor legacy cap already exists. Existing settings win;
+and neither a current nor legacy cap already exists. This optional mutation
+also requires an executable CLI for isolated strict-config validation; an
+app-only install skips it and leaves `config.toml` user-owned. Existing settings
+win;
 `agents.enabled=false` or `features.multi_agent=false` explicitly vetoes the
 automatic cap and remains user-owned.
 Further key ownership is explicit through `optimize --apply`; parent model,
@@ -49,6 +53,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-baseline
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\codex-baseline.ps1 install -AcknowledgeUnverifiedSource
 & "$HOME\.local\bin\codex-baseline.ps1" doctor
 ```
+
+Native Windows supports both standalone-CLI and desktop-app-only hosts. The
+desktop app is detected through its healthy AppX package; Baseline never relies
+on the app's private versioned executable paths. CLI-specific Doctor checks and
+config optimization remain unverified or unavailable until an executable CLI
+exists, while guidance, skills, reviewer, runtime, lifecycle, and app use remain
+supported.
 
 The v0.3.0 candidate checkout is an unsigned local source. Both installers verify every
 installable file against the versioned path/byte/SHA-256 manifest, print source

@@ -18,6 +18,7 @@ blocked.
 | Native Windows PowerShell 7 compatibility | tested | The lifecycle matrix invokes PowerShell 7.6.3 for optimizer/config, quoted-key/veto, protected/unprotected DACL, recovery, and metadata-tamper cases; PowerShell 5.1 remains the minimum runtime |
 | Native Windows onboarding/benchmark contract | tested | The final payload passes 79 native onboarding/benchmark assertions under Windows PowerShell 5.1.26100.8875 |
 | Native Windows Codex CLI | tested | Native Codex 0.147.0 is discovered; Doctor exercises stable capabilities and strict-config validation without reading authentication/session files |
+| Native Windows desktop-app-only | tested | Doctor recognizes the healthy AppX package when no executable CLI is available; installation deploys guidance, skills, reviewer, and runtime while skipping unvalidated optional config ownership |
 | Codex CLI 0.147 prompt discovery | tested | `codex debug prompt-input` proved global, root, nested guidance and skill metadata |
 | Linux/WSL evaluation isolation | tested | Six positive/four serial benchmark fixtures plus deterministic four-arm, 16-case routing/four-case behavior, host-receipt, and containment-Canary mechanics execute with private source/tool copies, aggregate user cgroups, bounded tmpfs, and Bubblewrap; all real-model receipts remain pending |
 | Codex App / IDE discovery | partially tested | Official current contract supports AGENTS/skills; no full local cross-client execution probe |

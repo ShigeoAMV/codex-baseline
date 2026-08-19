@@ -253,6 +253,90 @@ function Test-AutoCapPreflightEngine {
     }
 }
 
+function Test-DesktopAppOnlyEngine {
+    param([string]$Engine, [string]$Label)
+    $root = Join-Path $script:TestRoot ("desktop-app-only-{0}" -f $Label)
+    $testHome = Set-TestEnvironment $root
+    $stubDirectory = Join-Path $root 'unusable-cli'
+    [System.IO.Directory]::CreateDirectory($stubDirectory) | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $stubDirectory 'codex.ps1'),
+        "throw 'Access is denied.'`n",
+        $script:Utf8NoBom
+    )
+    $savedPath = $env:PATH
+    $env:PATH = $stubDirectory + ';' + $savedPath
+    $env:CODEX_BASELINE_TESTING = '1'
+    $env:CODEX_BASELINE_TEST_DESKTOP_APP_VERSION = '26.814.5517.0'
+    try {
+        $before = Invoke-EngineBaseline $Engine @('doctor', '-Json') | ConvertFrom-Json
+        Assert-True ($before.codex_verification -eq 'detected-windows-desktop-app') ("{0}: Doctor must recognize an app-only host" -f $Label)
+        Assert-True ($before.codex -eq 'desktop-app 26.814.5517.0') ("{0}: Doctor must report the desktop package version" -f $Label)
+        Assert-True ($before.native_capabilities -eq 'unverified-desktop-app-only' -and $before.active_config.status -eq 'unverified-desktop-app-only') ("{0}: app-only checks must remain explicitly unverified" -f $Label)
+        Assert-True (@($before.failures).Count -eq 0) ("{0}: an unusable app-private CLI must not make app-only health fail" -f $Label)
+
+        $dryRun = Invoke-EngineBaseline $Engine @('install', '-DryRun', '-AcknowledgeUnverifiedSource')
+        Assert-True ($dryRun -match 'install-cap plan: no change \(Codex CLI unavailable; config remains user-owned\)') ("{0}: app-only dry-run must explain why automatic config is skipped" -f $Label)
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'config.toml'))) ("{0}: app-only dry-run must not create config.toml" -f $Label)
+
+        $install = Invoke-EngineBaseline $Engine @('install', '-AcknowledgeUnverifiedSource')
+        Assert-True ($install -match 'installed codex-baseline 0\.3\.0') ("{0}: app-only baseline install must succeed" -f $Label)
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'config.toml'))) ("{0}: app-only install must leave unvalidated config absent" -f $Label)
+        Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'AGENTS.md') -PathType Leaf) ("{0}: app-only install must deploy global guidance" -f $Label)
+        Assert-True ((Get-ChildItem -LiteralPath (Join-Path $env:AGENTS_HOME 'skills') -Directory).Count -eq 4) ("{0}: app-only install must deploy all skills" -f $Label)
+
+        $after = Invoke-EngineBaseline $Engine @('doctor', '-Json') | ConvertFrom-Json
+        Assert-True ($after.state -eq 'committed' -and $after.managed_objects.ok -eq $after.managed_objects.total) ("{0}: app-only Doctor must verify installed baseline objects" -f $Label)
+        Assert-True ($after.owned_config_keys -eq 0 -and @($after.optimizer.managed_keys).Count -eq 0) ("{0}: app-only install must claim no unvalidated config ownership" -f $Label)
+        Assert-True (@($after.failures).Count -eq 0) ("{0}: installed app-only baseline must remain healthy" -f $Label)
+
+        $python = @(Get-Command python.exe -CommandType Application -ErrorAction Stop)[0]
+        $artifacts = Join-Path $root 'release-artifacts'
+        [System.IO.Directory]::CreateDirectory($artifacts) | Out-Null
+        $build = (& $python.Path (Join-Path $script:RepositoryRoot 'scripts\release-update.py') '--output' $artifacts 2>&1 | Out-String).Trim()
+        Assert-True ($LASTEXITCODE -eq 0) ("{0}: current app-only release fixture must build: {1}" -f $Label, $build)
+        $archive = Join-Path $artifacts 'codex-baseline-0.3.0-rc.1.zip'
+        $wrapper = Join-Path $testHome '.local\bin\codex-baseline.ps1'
+        $offline = Invoke-EngineScriptCapture $Engine $wrapper @('update', '-Offline', $archive, '-DryRun')
+        Assert-True ($offline.ExitCode -eq 0 -and $offline.Output -match 'already installed; no changes') ("{0}: current offline archive must remain idempotent on an app-only install; output: {1}" -f $Label, $offline.Output)
+
+        $foreignConfigRoot = Join-Path $root 'foreign-config'
+        Set-TestEnvironment $foreignConfigRoot | Out-Null
+        [System.IO.Directory]::CreateDirectory($env:CODEX_HOME) | Out-Null
+        $foreignConfig = Join-Path $env:CODEX_HOME 'config.toml'
+        [System.IO.File]::WriteAllText($foreignConfig, "foreign = [`r`n", $script:Utf8NoBom)
+        $foreignHash = Get-TestSha256 ([System.IO.File]::ReadAllBytes($foreignConfig))
+        $foreignInstall = Invoke-EngineBaseline $Engine @('install', '-AcknowledgeUnverifiedSource')
+        Assert-True ($foreignInstall -match 'installed codex-baseline 0\.3\.0') ("{0}: app-only install must not parse or reject user-owned config: {1}" -f $Label, $foreignInstall)
+        Assert-True ((Get-TestSha256 ([System.IO.File]::ReadAllBytes($foreignConfig))) -eq $foreignHash) ("{0}: app-only install must preserve user-owned config bytes" -f $Label)
+    }
+    finally {
+        $env:PATH = $savedPath
+        Remove-Item Env:\CODEX_BASELINE_TEST_DESKTOP_APP_VERSION -ErrorAction SilentlyContinue
+        Remove-Item Env:\CODEX_BASELINE_TESTING -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-PowerShellCompoundParseUnitInvariant {
+    $split = [System.Management.Automation.PowerShell]::Create()
+    try {
+        $first = @($split.AddScript("if (`$true) { 'first' }").Invoke())
+        $split.Commands.Clear()
+        $second = @($split.AddScript("else { 'second' }").Invoke())
+        $splitErrors = @($split.Streams.Error)
+        Assert-True (($first -join ',') -eq 'first' -and $second.Count -eq 0 -and
+            $splitErrors.Count -eq 1 -and $splitErrors[0].FullyQualifiedErrorId -match 'CommandNotFoundException') 'separate interactive else must reproduce the PowerShell parse-unit failure'
+    }
+    finally { $split.Dispose() }
+
+    $complete = [System.Management.Automation.PowerShell]::Create()
+    try {
+        $output = @($complete.AddScript("if (`$true) { 'first' } else { 'second' }").Invoke())
+        Assert-True (($output -join ',') -eq 'first' -and $complete.Streams.Error.Count -eq 0) 'complete if/else parse unit must execute without parser or command errors'
+    }
+    finally { $complete.Dispose() }
+}
+
 function Test-ReleaseGuidanceSelectionEngine {
     param([string]$Engine,[string]$Label)
     $env:CODEX_BASELINE_TESTING='1'
@@ -263,6 +347,7 @@ function Test-ReleaseGuidanceSelectionEngine {
         $rc=Invoke-EngineBaseline $Engine @('install','-AcknowledgeUnverifiedSource')
         $rcGuidance=[IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'AGENTS.md'),$script:Utf8NoBom)
         Assert-True ($rc-match'installed codex-baseline 0\.3\.0'-and$rcGuidance-match'Release-candidate execution is SOLO'-and$rcGuidance-notmatch'Stable execution autonomously chooses SOLO, TEAM, or SWARM') ("{0}: rc.N must deterministically install only model-visible SOLO guidance"-f$Label)
+        Assert-True ($rcGuidance-match'keep compound PowerShell in one parse unit'-and$rcGuidance-match'never submit `else`,\s*`catch`, or `finally` alone') ("{0}: rc guidance must prevent split PowerShell continuation clauses"-f$Label)
 
         $stableSource=Join-Path $script:TestRoot ("guidance-stable-source-{0}"-f$Label)
         [IO.Directory]::CreateDirectory($stableSource)|Out-Null
@@ -277,6 +362,7 @@ function Test-ReleaseGuidanceSelectionEngine {
         Assert-True ($capture.ExitCode-eq0) ("{0}: stable guidance fixture must install: {1}"-f$Label,$capture.Output)
         $stableGuidance=[IO.File]::ReadAllText((Join-Path $env:CODEX_HOME 'AGENTS.md'),$script:Utf8NoBom)
         Assert-True ($stableGuidance-match'Stable execution autonomously chooses SOLO, TEAM, or SWARM'-and$stableGuidance-notmatch'Release-candidate execution is SOLO') ("{0}: stable status must deterministically install autonomous SOLO/TEAM/SWARM guidance"-f$Label)
+        Assert-True ($stableGuidance-match'keep compound PowerShell in one parse unit'-and$stableGuidance-match'never submit `else`,\s*`catch`, or `finally` alone') ("{0}: stable guidance must prevent split PowerShell continuation clauses"-f$Label)
     }
     finally{
         Remove-Item Env:\CODEX_BASELINE_TEST_SKIP_CONFIG_VALIDATION -ErrorAction SilentlyContinue
@@ -1094,6 +1180,7 @@ Assert-True ($productionScript -match 'PROTECTED_DACL_SECURITY_INFORMATION=0x800
     $productionScript -match 'SetDacl\(\$Path,\$desired\.GetSecurityDescriptorBinaryForm\(\),\[bool\]\$desired\.AreAccessRulesProtected\)') 'config ACL writes must set the native protected or unprotected DACL control flag explicitly'
 
 New-PrivateTestRoot $script:TestRoot
+Test-PowerShellCompoundParseUnitInvariant
 Test-ProductionStagingIgnoresMutableHomeEngine $script:PowerShell 'ps51'
 if ($null -ne $script:PowerShellCore) { Test-ProductionStagingIgnoresMutableHomeEngine $script:PowerShellCore 'ps7' }
 if ($env:CODEX_BASELINE_WINDOWS_TEST_GROUP -eq 'lifecycle-provenance') {
@@ -1101,6 +1188,18 @@ if ($env:CODEX_BASELINE_WINDOWS_TEST_GROUP -eq 'lifecycle-provenance') {
         Test-LifecycleProvenanceDoesNotInvokeGit $script:PowerShell 'ps51'
         if ($null -ne $script:PowerShellCore) { Test-LifecycleProvenanceDoesNotInvokeGit $script:PowerShellCore 'ps7' }
         Write-Output ("PASS: Windows lifecycle provenance ({0} assertions)" -f $script:Assertions)
+    }
+    finally {
+        Remove-Item Env:\CODEX_BASELINE_WINDOWS_TEST_GROUP -ErrorAction SilentlyContinue
+        Remove-TestRoot $script:TestRoot
+    }
+    exit 0
+}
+if ($env:CODEX_BASELINE_WINDOWS_TEST_GROUP -eq 'desktop-app-only') {
+    try {
+        Test-DesktopAppOnlyEngine $script:PowerShell 'ps51'
+        if ($null -ne $script:PowerShellCore) { Test-DesktopAppOnlyEngine $script:PowerShellCore 'ps7' }
+        Write-Output ("PASS: Windows desktop-app-only ({0} assertions)" -f $script:Assertions)
     }
     finally {
         Remove-Item Env:\CODEX_BASELINE_WINDOWS_TEST_GROUP -ErrorAction SilentlyContinue
@@ -1131,6 +1230,8 @@ try {
     }
     Test-AutoCapPreflightEngine $script:PowerShell 'ps51'
     if ($null -ne $script:PowerShellCore) { Test-AutoCapPreflightEngine $script:PowerShellCore 'ps7' }
+    Test-DesktopAppOnlyEngine $script:PowerShell 'ps51'
+    if ($null -ne $script:PowerShellCore) { Test-DesktopAppOnlyEngine $script:PowerShellCore 'ps7' }
     Test-CompositeRecoveryPhases
 
     $testHome = Set-TestEnvironment (Join-Path $script:TestRoot 'main')
@@ -1339,6 +1440,7 @@ exit 1
     $agentsText = [System.IO.File]::ReadAllText($agentsFile, $script:Utf8NoBom)
     Assert-True ($agentsText.StartsWith($originalText, [System.StringComparison]::Ordinal)) 'install must preserve existing guidance prefix'
     Assert-True ($agentsText -match '<!-- codex-baseline:begin version=0\.3\.0 -->') 'managed block must be installed'
+    Assert-True ($agentsText -match 'keep compound PowerShell in one parse unit'-and$agentsText-match'never submit `else`,\s*`catch`, or `finally` alone') 'installed guidance must prevent split PowerShell continuation clauses'
     Assert-True ((Get-ChildItem -LiteralPath (Join-Path $env:AGENTS_HOME 'skills') -Directory).Count -eq 4) 'exactly four baseline skills must be installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'agents\codex-baseline-reviewer.toml') -PathType Leaf) 'reviewer must be installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME 'codex-baseline\runtime\scripts\codex-baseline.ps1') -PathType Leaf) 'Windows runtime entry point must be installed'
@@ -1549,6 +1651,10 @@ exit 1
         Assert-True ($doctorJson.native_capabilities -eq 'verified') 'available native Codex must have its required stable capabilities verified'
         Assert-True ($doctorJson.active_config.status -eq 'accepted-by-strict-config') 'available native Codex must execute strict-config validation'
     }
+    elseif ($doctorJson.codex_verification -eq 'detected-windows-desktop-app') {
+        Assert-True ($doctorJson.native_capabilities -eq 'unverified-desktop-app-only') 'desktop-only Codex capabilities must remain explicitly unverified'
+        Assert-True ($doctorJson.active_config.status -eq 'unverified-desktop-app-only') 'desktop-only Codex must keep CLI config verification explicitly unverified'
+    }
     else {
         Assert-True ($doctorJson.codex_verification -eq 'unverified-native-codex-not-installed') 'missing native Codex must be labelled unverified'
         Assert-True ($doctorJson.active_config.status -eq 'unverified-native-codex-not-installed') 'missing native Codex must keep config verification explicitly unverified'
@@ -1557,8 +1663,12 @@ exit 1
     Assert-True ($doctorJson.skills.ok -eq 4 -and $doctorJson.skills.total -eq 4) 'doctor must report all skills through the shared shape'
     Assert-True ($doctorJson.runtime_dependencies.status -eq 'verified' -and @($doctorJson.runtime_dependencies.missing).Count -eq 0) 'doctor must report native runtime dependency health'
     Assert-True ($doctorJson.hook_state.baseline_owned -eq 0) 'doctor must report zero baseline-owned hooks independently of native Codex availability'
-    Assert-True ($doctorJson.owned_config_keys -eq 1) 'fresh install must own only the previously absent agent cap'
-    Assert-True ($doctorJson.optimizer.contract -eq 'codex-baseline-config-operations/v2' -and @($doctorJson.optimizer.managed_keys).Count -eq 1 -and @($doctorJson.optimizer.managed_keys)[0] -eq 'agents.max_concurrent_threads_per_session') 'doctor must report key-scoped optimizer ownership'
+    $expectedOwnedConfigKeys = if ($doctorJson.codex_verification -eq 'executed-native-windows') { 1 } else { 0 }
+    Assert-True ($doctorJson.owned_config_keys -eq $expectedOwnedConfigKeys) 'fresh install must own a config cap only when native CLI validation was available'
+    $managedConfigKeys = @($doctorJson.optimizer.managed_keys)
+    Assert-True ($doctorJson.optimizer.contract -eq 'codex-baseline-config-operations/v2' -and
+        $managedConfigKeys.Count -eq $expectedOwnedConfigKeys -and
+        ($managedConfigKeys.Count -eq 0 -or $managedConfigKeys[0] -eq 'agents.max_concurrent_threads_per_session')) 'doctor must report only validated key-scoped optimizer ownership'
     $expectedAgentCapability=if($doctorJson.native_capabilities-eq'verified'-and$doctorJson.active_config.status-eq'accepted-by-strict-config'){'available'}else{'unverified'}
     Assert-True (-not $doctorJson.optimizer.drift -and $doctorJson.optimizer.agents -eq $expectedAgentCapability -and $doctorJson.optimizer.fast -eq 'unverified' -and $doctorJson.optimizer.ultrafast -eq 'unavailable') 'doctor must report only invocation-verified optimizer capabilities and keep absent Fast config evidence unverified'
     Assert-True ($doctorJson.paths.codex_home -eq $env:CODEX_HOME -and $doctorJson.paths.agents_home -eq $env:AGENTS_HOME) 'doctor must report effective native managed paths'
@@ -1732,6 +1842,9 @@ finally {
     }
     if (Test-Path Env:\CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK) {
         Remove-Item Env:\CODEX_BASELINE_TEST_UPDATE_PAUSE_BEFORE_LOCK
+    }
+    if (Test-Path Env:\CODEX_BASELINE_TEST_DESKTOP_APP_VERSION) {
+        Remove-Item Env:\CODEX_BASELINE_TEST_DESKTOP_APP_VERSION
     }
     Remove-TestRoot $script:TestRoot
 }
