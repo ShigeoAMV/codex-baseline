@@ -64,6 +64,18 @@
     "added_blank_lines", "duplicate_added_lines", "pure_comment_diff", "hygiene_verification",
     "release_version", "payload_hash", "evaluation_profile_hash", "auto_overlay_hash", "agent_guidance_hash", "arm_config_hash"
   ],
+  "native_powershell_evaluation": {
+    "status": "manual-no-key",
+    "platform": "native-windows",
+    "engines": ["powershell-5.1", "powershell-7"],
+    "arms": ["vanilla", "baseline-solo"],
+    "default_repetitions": 3,
+    "task": "benchmarks/native-powershell/task.md",
+    "runner": "benchmarks/native-powershell/run.ps1",
+    "verifier": "benchmarks/native-powershell/verifier.ps1",
+    "metrics": ["task_pass", "failed_command_events", "parser_error_events"],
+    "evidence_limit": "Manual signed-in Codex runs are development evidence, not stable promotion evidence."
+  },
   "tasks": [
     {"id":"small-js-bug","class":"small","visibility":"development","parallelism_class":"serial-negative","expected_lanes":0,"allowed_changed_paths":["calc.js"]},
     {"id":"small-config-timeout","class":"small","visibility":"development","parallelism_class":"serial-negative","expected_lanes":0,"allowed_changed_paths":["config/service.json"]},

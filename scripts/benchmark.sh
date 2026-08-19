@@ -534,8 +534,24 @@ bench_validate_evaluation_contract() {
     (.profiles.vanilla == {guidance:"absent",agents_enabled:null,agent_cap:null,auto_overlay:false,child_model_policy:"account-default"}) and
     (.profiles["baseline-solo"] == {guidance:"installed",agents_enabled:false,agent_cap:0,auto_overlay:false,child_model_policy:"not-applicable"}) and
     (.profiles["auto-homogeneous"] == {guidance:"installed-plus-auto-overlay",agents_enabled:true,agent_cap:6,auto_overlay:true,child_model_policy:"inherit-parent"}) and
-    (.profiles["auto-routed"] == {guidance:"installed-plus-auto-overlay",agents_enabled:true,agent_cap:6,auto_overlay:true,child_model_policy:"automatic"})
+    (.profiles["auto-routed"] == {guidance:"installed-plus-auto-overlay",agents_enabled:true,agent_cap:6,auto_overlay:true,child_model_policy:"automatic"}) and
+    (.native_powershell_evaluation == {
+      status:"manual-no-key",platform:"native-windows",engines:["powershell-5.1","powershell-7"],
+      arms:["vanilla","baseline-solo"],default_repetitions:3,
+      task:"benchmarks/native-powershell/task.md",runner:"benchmarks/native-powershell/run.ps1",
+      verifier:"benchmarks/native-powershell/verifier.ps1",
+      metrics:["task_pass","failed_command_events","parser_error_events"],
+      evidence_limit:"Manual signed-in Codex runs are development evidence, not stable promotion evidence."
+    })
   ' "$manifest" >/dev/null || cb_die 'benchmark evaluation profile contract is invalid'
+  local native_key native_path
+  for native_key in task runner verifier; do
+    native_path=$(jq -er --arg key "$native_key" '.native_powershell_evaluation[$key]' "$manifest") ||
+      cb_die 'cannot resolve native PowerShell evaluation path'
+    [[ $native_path =~ ^benchmarks/native-powershell/[a-z0-9.-]+$ &&
+        -f $BENCH_EVAL_ROOT/$native_path && ! -L $BENCH_EVAL_ROOT/$native_path ]] ||
+      cb_die 'native PowerShell evaluation input is missing, linked, or unsafe'
+  done
   overlay_rel=$(jq -er '.auto_overlay.path' "$manifest") || cb_die 'cannot resolve benchmark AUTO overlay'
   [[ $overlay_rel != /* && $overlay_rel != .. && $overlay_rel != ../* && $overlay_rel != *'/../'* ]] ||
     cb_die 'benchmark AUTO overlay path is unsafe'

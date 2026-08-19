@@ -39,6 +39,18 @@ function Invoke-Baseline {
     return $output
 }
 
+function Invoke-ScriptCapture {
+    param([string]$Engine, [string]$Path, [string[]]$Arguments)
+    $savedPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = (& $Engine -NoProfile -ExecutionPolicy Bypass -File $Path @Arguments 2>&1 | Out-String).Trim()
+        $actualExit = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $savedPreference }
+    return [pscustomobject]@{ ExitCode = $actualExit; Output = $output }
+}
+
 function Remove-TestRoot {
     $full = [System.IO.Path]::GetFullPath($script:TestRoot)
     $base = [System.IO.Path]::GetFullPath($script:PrivateTestBase).TrimEnd('\') + '\'
@@ -303,6 +315,29 @@ try {
         'risk-sensitive' -in @($benchmarkReport.tasks | ForEach-Object { $_.class })) 'static benchmark must cover all four task classes'
     Assert-True (@($benchmarkReport.tasks | Where-Object { $_.fixture_contract -ne 'valid-static' -or $_.verifier_contract -ne 'valid-static' }).Count -eq 0) 'every fixture and verifier contract must validate'
     Assert-True (@($benchmarkReport.tasks | Where-Object { $_.starter_verifier_result -ne 'not-executed-native-static' }).Count -eq 0) 'starter verification limitation must be explicit per task'
+
+    $nativeEvaluation = $benchmarkManifest.native_powershell_evaluation
+    Assert-True ($nativeEvaluation.status -eq 'manual-no-key' -and $nativeEvaluation.platform -eq 'native-windows') 'native PowerShell evaluation must be explicitly manual and no-key'
+    Assert-True ((@($nativeEvaluation.engines) -join ',') -eq 'powershell-5.1,powershell-7' -and (@($nativeEvaluation.arms) -join ',') -eq 'vanilla,baseline-solo') 'native PowerShell evaluation must define both engines and paired arms'
+    Assert-True ((@($nativeEvaluation.metrics) -join ',') -eq 'task_pass,failed_command_events,parser_error_events') 'native PowerShell evaluation must measure command and parser failures'
+    $nativeRunner = Join-Path $script:RepositoryRoot ([string]$nativeEvaluation.runner).Replace('/', '\')
+    $nativeTask = Join-Path $script:RepositoryRoot ([string]$nativeEvaluation.task).Replace('/', '\')
+    $nativeVerifier = Join-Path $script:RepositoryRoot ([string]$nativeEvaluation.verifier).Replace('/', '\')
+    Assert-True ((Test-Path -LiteralPath $nativeRunner -PathType Leaf) -and (Test-Path -LiteralPath $nativeTask -PathType Leaf) -and (Test-Path -LiteralPath $nativeVerifier -PathType Leaf)) 'native PowerShell evaluation inputs must exist'
+    $nativeEngines = @([pscustomobject]@{ Path = $script:PowerShell; Label = 'ps51' })
+    $powerShellCore = @(Get-Command pwsh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($powerShellCore.Count -eq 1) { $nativeEngines += [pscustomobject]@{ Path = $powerShellCore[0].Path; Label = 'ps7' } }
+    foreach ($engine in $nativeEngines) {
+        $nativeWorkspace = Join-Path $script:TestRoot ("native evaluation ({0})" -f $engine.Label)
+        $prepared = Invoke-ScriptCapture $engine.Path $nativeRunner @('-Mode', 'Prepare', '-Workspace', $nativeWorkspace)
+        Assert-True ($prepared.ExitCode -eq 0 -and $prepared.Output -match 'prepared native PowerShell evaluation workspace') ("{0}: native evaluation prepare must succeed" -f $engine.Label)
+        $starter = Invoke-ScriptCapture $engine.Path $nativeRunner @('-Mode', 'Verify', '-Workspace', $nativeWorkspace)
+        Assert-True ($starter.ExitCode -ne 0 -and $starter.Output -match 'result.json') ("{0}: native evaluation starter must fail verification" -f $engine.Label)
+        $resultJson = '{"route":"app/(main)/page.tsx","port":4317,"filename":"O''Brien $value [draft].txt","literal":"a|b $HOME \"quoted\""}'
+        [System.IO.File]::WriteAllText((Join-Path $nativeWorkspace 'result.json'), $resultJson + "`n", $script:Utf8NoBom)
+        $verified = Invoke-ScriptCapture $engine.Path $nativeRunner @('-Mode', 'Verify', '-Workspace', $nativeWorkspace)
+        Assert-True ($verified.ExitCode -eq 0 -and $verified.Output -match 'PASS: native PowerShell command-generation evaluation') ("{0}: native evaluation verifier must accept the exact result" -f $engine.Label)
+    }
 
     $subsetReport = Invoke-Baseline @('benchmark', '-Json', '-Tasks', 'small-js-bug,risk-migration') | ConvertFrom-Json
     Assert-True (@($subsetReport.tasks).Count -eq 2) 'benchmark task selection must be bounded to requested IDs'

@@ -151,6 +151,8 @@ test_static_quality() {
   grep -Fq 'and SWARM for four' <<<"$global_block_text"
   grep -Fq 'equals useful lanes capped by six' "$TEST_ROOT/baseline/global/AGENTS.block.md"
   grep -Fq 'File count or keywords alone do not escalate' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'avoid `cmd /c` and nested `-Command` strings' "$TEST_ROOT/baseline/global/AGENTS.block.md"
+  grep -Fq 'after one parser/quoting failure' "$TEST_ROOT/baseline/global/AGENTS.stable.block.md"
   grep -Fq 'Do not trigger for read-only explanation, diagnosis, or architecture orientation' \
     "$TEST_ROOT/baseline/skills/codex-baseline-deep-work/SKILL.md"
   jq -e '
@@ -1179,7 +1181,13 @@ test_benchmark_contract() {
     (.tasks | length) == 10 and
     ([.tasks[] | select(.parallelism_class == "parallel-positive")] | length) == 6 and
     ([.tasks[] | select(.parallelism_class == "serial-negative")] | length) == 4 and
-    any(.tasks[]; .parallelism_class == "parallel-positive" and .expected_lanes == 6)
+    any(.tasks[]; .parallelism_class == "parallel-positive" and .expected_lanes == 6) and
+    .native_powershell_evaluation.status == "manual-no-key" and
+    .native_powershell_evaluation.platform == "native-windows" and
+    .native_powershell_evaluation.engines == ["powershell-5.1","powershell-7"] and
+    .native_powershell_evaluation.arms == ["vanilla","baseline-solo"] and
+    .native_powershell_evaluation.default_repetitions == 3 and
+    .native_powershell_evaluation.metrics == ["task_pass","failed_command_events","parser_error_events"]
   ' "$TEST_ROOT/benchmarks/manifest.json" >/dev/null
   (
     # shellcheck source=scripts/lib/evaluation.sh

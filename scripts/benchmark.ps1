@@ -77,6 +77,21 @@ function Read-BenchManifest {
     foreach ($requiredClass in @('small', 'medium', 'large', 'risk-sensitive')) {
         if ($requiredClass -notin $classes) { throw "Benchmark task class is missing: $requiredClass" }
     }
+    $native = $manifest.native_powershell_evaluation
+    if ([string]$native.status -ne 'manual-no-key' -or
+        [string]$native.platform -ne 'native-windows' -or
+        (@($native.engines) -join ',') -ne 'powershell-5.1,powershell-7' -or
+        (@($native.arms) -join ',') -ne 'vanilla,baseline-solo' -or
+        [int]$native.default_repetitions -lt 1 -or
+        (@($native.metrics) -join ',') -ne 'task_pass,failed_command_events,parser_error_events') {
+        throw 'Native PowerShell evaluation contract is invalid.'
+    }
+    foreach ($relativePath in @($native.task, $native.runner, $native.verifier)) {
+        if ([string]$relativePath -notmatch '^benchmarks/native-powershell/[a-z0-9.-]+$') {
+            throw "Unsafe native PowerShell evaluation path: $relativePath"
+        }
+        Get-BenchRegularItem (Join-Path $script:SourceRoot ([string]$relativePath)) 'file' | Out-Null
+    }
     return $manifest
 }
 
