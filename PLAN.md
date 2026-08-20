@@ -41,7 +41,7 @@ Implementation and deterministic verification are in progress. The numeric
 | 1. Evidence and challenged architecture | Complete | Five research records, 20 decisions, two independent critiques and disposition |
 | 2. Portable install and rollback core | Complete | Unix lifecycle suite and native PowerShell 5.1 lifecycle suite |
 | 3. Repository onboarding | Complete | Static untrusted-repo fixture; dry-run/apply/idempotence/link/secret/no-exec checks |
-| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, stable AUTO guidance bundled behind the RC gate, real prompt discovery, 16 classifications and four host-verified behavior cases; real-model telemetry remains unavailable |
+| 4. Adaptive workflows and reusable skills | In progress | Four validated skills, stable AUTO guidance bundled behind the RC gate, real prompt discovery, 16 classifications and six host-verified behavior cases including the two focused decision probes; real-model telemetry remains unavailable |
 | 5. Doctor, update, and lifecycle safety | Complete | Hash/drift health, freshness, update, uninstall/rollback, lock and crash recovery checks |
 | 6. Evaluation harness | In progress | Four arms, exact smallest-team gates, host-side verifiers, and deterministic containment pass; live paired promotion is unavailable on the current Codex telemetry contract |
 | 7. Dogfood and completion audit | In progress | Current v0.3 RC working tree passes the final local platform matrices and fresh combined C0/H0 review; an immutable revision remains |

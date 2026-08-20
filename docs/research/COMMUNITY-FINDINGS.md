@@ -32,6 +32,34 @@ recent 2026 preprints need replication.
 
 ## Primary research
 
+### Bounded GPT-5.6 work
+
+The official [GPT-5.6 model guide](https://developers.openai.com/api/docs/guides/latest-model)
+identifies Sol as the flagship route and says GPT-5.6 can be proactive and
+persistent on multi-step work. Its own mitigation is model-neutral: keep prompts
+lean, put autonomy and scope in one compact policy, specify stopping/retry limits,
+and do not repeat completed work.
+
+Independent evidence supports testing that shape, but not a claim that it cures
+all loops:
+
+| Evidence | Result | Design consequence |
+| --- | --- | --- |
+| [Same Task, Different Work](https://arxiv.org/abs/2608.01347), preregistered, 4,644 runs | A bounded-efficiency prompt emphasizing scope, the smallest sufficient change, relevant tests, and stopping after acceptance used about 0.85-0.93x baseline reasoning without a detected diagnosis/validation loss | Use a compact invariant and evaluate it on representative tasks |
+| [UnderSpecBench](https://arxiv.org/abs/2607.02294), 2,208 variants | Scope/goal violations remained common and generic blast-radius warnings had weak effect | Encode concrete evidence conditions and structured regression cases, not "avoid overengineering" prose alone |
+| [Infinite agent loops](https://arxiv.org/abs/2607.01641), 68 confirmed loops in 47 repositories | Loop risk is an observable agent-system failure surface | Require a new relevant change/failure before repeating completed verification |
+| [HANDBOOK.md](https://arxiv.org/abs/2607.25398) | Long policy adherence was weaker than compact policy adherence | Replace redundant wording rather than growing the global prompt |
+
+A direct [Sol community report](https://www.reddit.com/r/codex/comments/1uuo6x4/how_to_keep_gpt56_sol_high_from_overengineering/)
+reports improvement from an explicit smallest-sufficient-change rule. It is a
+useful fixture seed, not prevalence or causal proof.
+
+Design response: add the rule to both RC and stable guidance without changing
+model or effort settings. Add read-only structured `scope-trap` and
+`verification-loop` decision probes. These probes can prove contract selection
+when the contained evaluator runs; only repeated live paired runs can establish an effect
+on actual files, calls, turns, tokens, and task success.
+
 ### Static repository guidance
 
 | Evidence | Result | Strength and implication |

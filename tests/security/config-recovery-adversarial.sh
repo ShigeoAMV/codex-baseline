@@ -367,8 +367,11 @@ test_metadata_fail_closed() {
     missing-inspectors)
       printf 'answer = 42\n' >"$config"
       before=$(sha256sum -- "$config" | cut -d ' ' -f 1)
+      shim="$root/path-without-inspectors"; mkdir -- "$shim"
+      cp -as -- /usr/bin/. "$shim/"
+      rm -f -- "$shim/getfacl" "$shim/getfattr"
       set +e
-      output=$(PATH=/usr/bin:/bin run_baseline optimize --apply 2>&1)
+      output=$(PATH="$shim" run_baseline optimize --apply 2>&1)
       status=$?
       set -e
       [[ $status -ne 0 ]] || fail 'missing inspectors unexpectedly permitted config mutation'

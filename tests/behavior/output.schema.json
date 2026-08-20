@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["case_id", "execution_profile", "workflow", "high_risk", "selected_skills", "execution", "parallelism_reason", "planned_fanout", "planned_lanes", "child_limit", "wave_limit", "write_isolation", "runtime_receipt", "evidence_files", "material_question", "plan", "risk_controls", "onboarding", "conformance", "reason"],
+  "required": ["case_id", "execution_profile", "workflow", "high_risk", "selected_skills", "execution", "parallelism_reason", "planned_fanout", "planned_lanes", "child_limit", "wave_limit", "write_isolation", "runtime_receipt", "evidence_files", "material_question", "plan", "risk_controls", "onboarding", "conformance", "bounded_execution", "reason"],
   "properties": {
     "case_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
     "execution_profile": {"enum": ["production-rc", "auto-evaluation"]},
@@ -156,6 +156,28 @@
               }
             },
             "verdict": {"enum": ["accept", "accept-with-changes", "reject"]}
+          }
+        }
+      ]
+    },
+    "bounded_execution": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope_expansion", "adjacent_issue_action", "verification_action", "stop", "basis"],
+          "properties": {
+            "scope_expansion": {"type": "boolean"},
+            "adjacent_issue_action": {"enum": ["include", "report-only", "none"]},
+            "verification_action": {"enum": ["run", "repeat", "do-not-repeat"]},
+            "stop": {"type": "boolean"},
+            "basis": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"enum": ["acceptance-open", "acceptance-passed", "adjacent-unrelated", "relevant-change", "no-relevant-change", "new-failure", "no-new-failure", "new-relevant-evidence", "no-new-relevant-evidence"]}
+            }
           }
         }
       ]

@@ -138,6 +138,10 @@ The block contains only:
 - choose and briefly expose LEAN/STRICT/DEEP plus a risk axis;
 - reuse suitable repository, standard-library, and native platform mechanisms
   before adding dependencies or abstractions, without cutting required guards;
+- expand into adjacent work only on evidence that it blocks acceptance or was
+  caused by the scoped change, and otherwise report it;
+- verify after the last relevant edit, repeat only after a relevant change or
+  failure, and stop when scoped acceptance passes;
 - research discoverable facts before questions;
 - use deterministic checks and never claim an unrun check;
 - protect original acceptance criteria and authority boundaries;
@@ -327,6 +331,13 @@ maximum attempts/time/tokens when observable, no-diff/no-new-evidence detection,
 and an authority/blocker escape path.
 
 No Stop-hook continuation or "until perfect" loop is allowed.
+
+For ordinary scoped implementation, adjacent issues do not authorize more work
+unless evidence shows they block acceptance or were caused by the change. Run
+relevant checks after the last relevant edit; repeat a completed check only
+after a relevant change or failure/new evidence that can change its result.
+Passing scoped acceptance is a stopping condition, not an invitation to search
+for more work.
 
 ## D012 - Benchmark is a controlled product feature
 

@@ -279,7 +279,7 @@ test_static_quality() {
   validate_schema "$TEST_ROOT/contracts/routing-result.schema.json" "$schema_fixture"
   jq '.actual.planned_fanout = 1' "$schema_fixture" >"$schema_fixture.invalid"
   assert_schema_rejects "$TEST_ROOT/contracts/routing-result.schema.json" "$schema_fixture.invalid"
-  jq -n '{schema:2,contract:"codex-baseline-behavior-result/v2",id:"deep-risk-plan",repetition:1,pass:true,process_exit:0,verifier_exit:0,elapsed_ms:1,turns:1,commands:1,file_changes:0,input_tokens:null,output_tokens:null,source_hash:("0"*64),prompt_hash:("1"*64),actual:{case_id:"deep-risk-plan",workflow:"DEEP",high_risk:true,selected_skills:["codex-baseline-deep-work"],execution:"TEAM",execution_profile:"auto-evaluation",parallelism_reason:"Three independent read-only investigations.",planned_fanout:3,planned_lanes:[{id:"security",objective:"Review security boundary",kind:"exploration",writer:"none",write_scope:[],dependencies:[]},{id:"recovery",objective:"Review recovery boundary",kind:"exploration",writer:"none",write_scope:[],dependencies:[]},{id:"compatibility",objective:"Review compatibility boundary",kind:"exploration",writer:"none",write_scope:[],dependencies:[]}],child_limit:6,wave_limit:4,write_isolation:"single-writer",runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:1,depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"},evidence_files:[],material_question:null,plan:null,risk_controls:null,onboarding:null,conformance:null,reason:"schema-valid test receipt"}}' >"$schema_fixture"
+  jq -n '{schema:2,contract:"codex-baseline-behavior-result/v2",id:"deep-risk-plan",repetition:1,pass:true,process_exit:0,verifier_exit:0,elapsed_ms:1,turns:1,commands:1,file_changes:0,input_tokens:null,output_tokens:null,source_hash:("0"*64),prompt_hash:("1"*64),actual:{case_id:"deep-risk-plan",workflow:"DEEP",high_risk:true,selected_skills:["codex-baseline-deep-work"],execution:"TEAM",execution_profile:"auto-evaluation",parallelism_reason:"Three independent read-only investigations.",planned_fanout:3,planned_lanes:[{id:"security",objective:"Review security boundary",kind:"exploration",writer:"none",write_scope:[],dependencies:[]},{id:"recovery",objective:"Review recovery boundary",kind:"exploration",writer:"none",write_scope:[],dependencies:[]},{id:"compatibility",objective:"Review compatibility boundary",kind:"exploration",writer:"none",write_scope:[],dependencies:[]}],child_limit:6,wave_limit:4,write_isolation:"single-writer",runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:1,depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"},evidence_files:[],material_question:null,plan:null,risk_controls:null,onboarding:null,conformance:null,bounded_execution:null,reason:"schema-valid test receipt"}}' >"$schema_fixture"
   validate_schema "$TEST_ROOT/contracts/behavior-result.schema.json" "$schema_fixture"
   jq '.actual = {}' "$schema_fixture" >"$schema_fixture.invalid"
   assert_schema_rejects "$TEST_ROOT/contracts/behavior-result.schema.json" "$schema_fixture.invalid"
@@ -1558,7 +1558,7 @@ test_routing_contract() {
     .status == "completed" and .model_invoked and .host_checks_executed and
     .isolation == "os-sandboxed-local-cgroup" and .auth == "dedicated-api-key-stdin-pipe" and .repetitions == 1 and
     .resource_profile == "user-cgroup-memory2g-swap0-tasks128-cpu200-runtime-bounded-tmpfs" and
-    .routing_cases == 16 and .behavior_cases == 4 and
+    .routing_cases == 16 and .behavior_cases == 6 and
     (.source_hash | test("^[0-9a-f]{64}$")) and
     (.codex_binary_hash | test("^[0-9a-f]{64}$")) and .codex_identity == "caller-pinned-sha256" and
     (.node_binary_hash | test("^[0-9a-f]{64}$")) and
@@ -1574,7 +1574,7 @@ test_routing_contract() {
   jq -e '
     .schema == 2 and .contract == "codex-baseline-routing-summary/v2" and .execution_profile == "auto-evaluation" and .repetitions == 1 and
     .routing.runs == 16 and .routing.passes == 16 and all(.routing.by_case[]; .runs == 1 and .passes == 1) and
-    .behavior.runs == 4 and .behavior.passes == 4 and all(.behavior.by_case[]; .runs == 1 and .passes == 1)
+    .behavior.runs == 6 and .behavior.passes == 6 and all(.behavior.by_case[]; .runs == 1 and .passes == 1)
   ' "$output/summary.json" >/dev/null
   jq -s -e --slurpfile run "$output/run.json" --slurpfile summary "$output/summary.json" '
     length == 16 and all(.pass) and all(.process_exit == 0) and all(.commands == 0) and all(.file_changes == 0) and
@@ -1591,7 +1591,7 @@ test_routing_contract() {
     $summary[0].source_hash == $run[0].source_hash
   ' "$output/results.jsonl" >/dev/null
   jq -s -e --slurpfile run "$output/run.json" --slurpfile summary "$output/summary.json" '
-    length == 4 and all(.pass) and all(.process_exit == 0) and all(.verifier_exit == 0) and
+    length == 6 and all(.pass) and all(.process_exit == 0) and all(.verifier_exit == 0) and
     all(.schema == 2 and .contract == "codex-baseline-behavior-result/v2") and all(.commands == 1) and all(.file_changes == 0) and
     all(.actual.execution == "SOLO" or .actual.execution == "TEAM" or .actual.execution == "SWARM") and
     (map(.source_hash) | unique) == [$run[0].source_hash] and

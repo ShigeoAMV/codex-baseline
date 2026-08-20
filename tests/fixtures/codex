@@ -167,18 +167,37 @@ if [[ -n $output_schema && $prompt == *'contained evaluation'* ]]; then
       response='{"case_id":"onboarding-semantic","workflow":"DEEP","high_risk":false,"selected_skills":["codex-baseline-repo-onboarding"],"evidence_files":["AGENTS.md","README.md","package.json","tsconfig.json",".github/workflows/ci.yml","docs/architecture.md"],"material_question":null,"plan":null,"risk_controls":null,"onboarding":{"existing_guidance_preserved":true,"repository_code_executed":false,"would_overwrite":false,"declared_commands":[{"kind":"build","command":"npm run build","status":"declared","source":"package.json"},{"kind":"test","command":"npm test","status":"declared","source":"package.json"},{"kind":"lint","command":"npm run lint","status":"declared","source":"package.json"},{"kind":"type-check","command":"npm run type-check","status":"declared","source":"package.json"},{"kind":"format","command":"npm run format","status":"declared","source":"package.json"}],"important_boundaries":["generated files are not edited","src/domain must not import from src/http"],"definition_of_done":["npm test passes","npm run lint passes","npm run type-check passes"],"proposed_validation":["npm test","npm run lint","npm run type-check"]},"conformance":null,"reason":"Static evidence supports a preserving onboarding proposal."}' ;;
     *"case_id 'conformance-review'"*)
       response='{"case_id":"conformance-review","workflow":"STRICT","high_risk":false,"selected_skills":["codex-baseline-conformance-review"],"evidence_files":["original-request.md","acceptance.md","artifact.md","verification.md"],"material_question":null,"plan":null,"risk_controls":null,"onboarding":null,"conformance":{"independent":true,"criteria":[{"id":"C1","status":"delivered","evidence":"artifact and test receipt cover the endpoint"},{"id":"C2","status":"missing","evidence":"no rollback drill or restored-state hash exists"}],"findings":[{"severity":"MEDIUM","evidence":"rollback and restore hash evidence is absent","action":"run the rollback drill and attach exact hashes"}],"verdict":"reject"},"reason":"One frozen completion criterion has no evidence."}' ;;
+    *"case_id 'scope-trap'"*)
+      response='{"case_id":"scope-trap","workflow":"LEAN","high_risk":false,"selected_skills":[],"evidence_files":["request.md","state.md"],"material_question":null,"plan":null,"risk_controls":null,"onboarding":null,"conformance":null,"bounded_execution":{"scope_expansion":false,"adjacent_issue_action":"report-only","verification_action":"do-not-repeat","stop":true,"basis":["acceptance-passed","adjacent-unrelated","no-new-failure"]},"reason":"The adjacent TODO is unrelated and scoped acceptance already passed."}' ;;
+    *"case_id 'verification-loop'"*)
+      response='{"case_id":"verification-loop","workflow":"LEAN","high_risk":false,"selected_skills":[],"evidence_files":["request.md","state.md"],"material_question":null,"plan":null,"risk_controls":null,"onboarding":null,"conformance":null,"bounded_execution":{"scope_expansion":false,"adjacent_issue_action":"none","verification_action":"do-not-repeat","stop":true,"basis":["acceptance-passed","no-relevant-change","no-new-failure","no-new-relevant-evidence"]},"reason":"The relevant post-edit check passed and no new evidence justifies repetition."}' ;;
     *) printf '%s\n' 'unknown behavior fixture' >&2; exit 2 ;;
   esac
-  response=$(jq -c '. + {
-    execution:"TEAM",
+  if [[ $(jq -r .workflow <<<"$response") == LEAN ]]; then
+    execution=SOLO
+    planned_fanout=0
+    planned_lanes='[]'
+    parallelism_reason='LEAN work has no authorized independent lane.'
+    depth_intended=0
+  else
+    execution=TEAM
+    planned_fanout=1
+    planned_lanes='[{"id":"evidence","objective":"Inspect bounded evidence","kind":"exploration","writer":"none","write_scope":[],"dependencies":[]}]'
+    parallelism_reason='One independent read-only evidence lane helps the parent.'
+    depth_intended=1
+  fi
+  response=$(jq -c --arg execution "$execution" --arg reason "$parallelism_reason" \
+    --argjson fanout "$planned_fanout" --argjson lanes "$planned_lanes" --argjson depth "$depth_intended" '. + {
+    bounded_execution:(.bounded_execution // null),
+    execution:$execution,
     execution_profile:"auto-evaluation",
-    parallelism_reason:"One independent read-only evidence lane helps the parent.",
-    planned_fanout:1,
-    planned_lanes:[{id:"evidence",objective:"Inspect bounded evidence",kind:"exploration",writer:"none",write_scope:[],dependencies:[]}],
+    parallelism_reason:$reason,
+    planned_fanout:$fanout,
+    planned_lanes:$lanes,
     child_limit:6,
     wave_limit:4,
     write_isolation:"read-only",
-    runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:1,depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"}
+    runtime_receipt:{verification:"unverified",actual_fanout:null,available_capacity:null,children:[],depth_intended:$depth,depth_observed:null,depth_verification:"unverified",waves_observed:null,peak_concurrency:null,spawn_failures:null,fallbacks:null,interrupts:null,timeouts:null,write_isolation:{verification:"unverified",value:null},worktree_isolation:{verification:"unverified",value:null},test_isolation:{verification:"unverified",value:null},conflicts:null,integration_rework_actions:null,handoff_bytes:null,duplicate_context_bytes:null,parent_settings_before:null,parent_settings_after:null,parent_settings_unchanged:null,parent_settings_verification:"unverified"}
   }' <<<"$response")
   printf '%s\n' "$response" >"$last"
   printf '%s\n' '{"type":"turn.started"}'

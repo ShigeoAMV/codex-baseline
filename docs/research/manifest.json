@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "contract": "codex-baseline-research/v1",
-  "checked": "2026-08-16",
+  "checked": "2026-08-20",
   "review_by": "2026-09-15",
   "codex": {
     "stable_version": "0.147.0",
@@ -12,7 +12,7 @@
     {"id": "codex-docs", "tier": 1, "url": "https://developers.openai.com/codex/", "observed": "2026-08-15", "version": "live", "license": null},
     {"id": "codex-subagents", "tier": 1, "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents", "observed": "2026-08-15", "version": "live", "license": null},
     {"id": "codex-app-server", "tier": 1, "url": "https://learn.chatgpt.com/docs/app-server", "observed": "2026-08-16", "version": "0.147.0", "license": null},
-    {"id": "openai-latest-model-guide", "tier": 1, "url": "https://developers.openai.com/api/docs/guides/latest-model", "observed": "2026-08-15", "version": "live", "license": null},
+    {"id": "openai-latest-model-guide", "tier": 1, "url": "https://developers.openai.com/api/docs/guides/latest-model", "observed": "2026-08-20", "version": "live", "license": null},
     {"id": "codex-fast-mode", "tier": 1, "url": "https://learn.chatgpt.com/docs/agent-configuration/speed", "observed": "2026-08-15", "version": "live", "license": null},
     {"id": "openai-ultrafast-preview", "tier": 1, "url": "https://openai.com/index/previewing-ultrafast/", "observed": "2026-08-15", "version": "preview", "license": null},
     {"id": "codex-release-0147", "tier": 1, "url": "https://github.com/openai/codex/releases/tag/rust-v0.147.0", "observed": "2026-08-13", "version": "0.147.0", "license": "Apache-2.0"},
@@ -35,6 +35,10 @@
     {"id": "reddit-subagent-usage", "tier": 3, "url": "https://www.reddit.com/r/codex/comments/1tzv912/subagent_usage/", "observed": "2026-08-15", "version": "discussion", "license": null},
     {"id": "reddit-sol-luna", "tier": 3, "url": "https://www.reddit.com/r/codex/comments/1veqtnq/delegating_tasks_from_sol_to_luna_subagents_is/", "observed": "2026-08-15", "version": "discussion", "license": null},
     {"id": "reddit-token-burn", "tier": 3, "url": "https://www.reddit.com/r/codex/comments/1vfbgtp/if_you_experience_extensive_token_burn_and_use/", "observed": "2026-08-15", "version": "discussion", "license": null},
+    {"id": "reddit-sol-overengineering", "tier": 3, "url": "https://www.reddit.com/r/codex/comments/1uuo6x4/how_to_keep_gpt56_sol_high_from_overengineering/", "observed": "2026-08-20", "version": "discussion", "license": null},
+    {"id": "same-task-different-work", "tier": 4, "url": "https://arxiv.org/abs/2608.01347", "observed": "2026-08-20", "version": "v3", "license": null},
+    {"id": "infinite-agent-loops", "tier": 4, "url": "https://arxiv.org/abs/2607.01641", "observed": "2026-08-20", "version": "2026-07", "license": null},
+    {"id": "handbook-md", "tier": 4, "url": "https://arxiv.org/abs/2607.25398", "observed": "2026-08-20", "version": "2026-07", "license": null},
     {"id": "swe-skills-bench", "tier": 4, "url": "https://arxiv.org/abs/2606.20936", "observed": "2026-08-13", "version": "2026-06-24", "license": null},
     {"id": "agents-md-impact", "tier": 4, "url": "https://arxiv.org/abs/2601.20404", "observed": "2026-08-13", "version": "2026-03-30", "license": null},
     {"id": "e2edevbench", "tier": 4, "url": "https://arxiv.org/abs/2511.04064", "observed": "2026-08-13", "version": "2025-11-06", "license": null}
